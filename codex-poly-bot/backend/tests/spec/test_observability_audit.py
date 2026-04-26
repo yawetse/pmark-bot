@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from app.domain import Environment, ModelProvider, StructuredLogEvent, Venue
+import pytest
+
+from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
+from app.domain import (
+    Environment,
+    ModelProvider,
+    OrderEvent,
+    OrderEventType,
+    StructuredLogEvent,
+    Venue,
+)
 from tests.spec.helpers import pending
 
 
@@ -76,7 +86,28 @@ def test_req_obs_003_01_live_order_refused_submitted_filled_canceled_failed_orde
     When: the order event is handled
     Then: an audit event is produced
     """
-    pending("TST-REQ-OBS-003-01", "REQ-OBS-003")
+    registry = RepositoryRegistry()
+
+    for event_type in OrderEventType:
+        event = OrderEvent(
+            order_id=f"order-{event_type.value}",
+            event_type=event_type,
+            venue=Venue.POLYMARKET_US,
+            model_provider=ModelProvider.OPENAI,
+            message=f"order {event_type.value}",
+        )
+        result = registry.record_order_event_with_audit(
+            event,
+            environment=Environment.DEVELOPMENT,
+            actor="execution-worker",
+        )
+
+        assert result.order_event["order_id"] == event.order_id
+        assert result.audit_event["entity_id"] == event.order_id
+        assert result.audit_event["action"] == event_type.value
+
+    assert len(registry.state.rows("openai.order_events")) == len(OrderEventType)
+    assert len(registry.state.rows("shared.audit_events")) == len(OrderEventType)
 
 def test_req_obs_003_02_audit_event_persistence_fails_order_event_event_handled() -> None:
     """TST-REQ-OBS-003-02: Validates REQ-OBS-003
@@ -85,7 +116,18 @@ def test_req_obs_003_02_audit_event_persistence_fails_order_event_event_handled(
     When: the event is handled
     Then: failure is surfaced and not ignored
     """
-    pending("TST-REQ-OBS-003-02", "REQ-OBS-003")
+    registry = RepositoryRegistry(DatabaseState(fail_on_tables={"shared.audit_events"}))
+    event = OrderEvent(
+        order_id="order-1",
+        event_type=OrderEventType.FAILED,
+        venue=Venue.POLYMARKET_US,
+        model_provider=ModelProvider.OPENAI,
+        message="venue rejected the order",
+    )
+
+    with pytest.raises(PersistenceUnavailableError):
+        registry.record_order_event_with_audit(event, environment=Environment.PRODUCTION)
+    assert registry.state.rows("openai.order_events") == []
 
 def test_req_obs_004_01_dashboard_user_changes_config_toggles_live_mode_activates() -> None:
     """TST-REQ-OBS-004-01: Validates REQ-OBS-004
@@ -94,7 +136,36 @@ def test_req_obs_004_01_dashboard_user_changes_config_toggles_live_mode_activate
     When: the action succeeds
     Then: an audit event is produced
     """
-    pending("TST-REQ-OBS-004-01", "REQ-OBS-004")
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+
+    shared.record_audit_event(
+        event_type="dashboard_config_change",
+        actor="yaw",
+        action="config.update",
+        environment=Environment.DEVELOPMENT,
+        metadata={"field": "training_loop_seconds", "value": 60},
+    )
+    shared.record_audit_event(
+        event_type="dashboard_config_change",
+        actor="yaw",
+        action="live_mode.toggle",
+        environment=Environment.DEVELOPMENT,
+        metadata={"live_enabled": True},
+    )
+    shared.record_audit_event(
+        event_type="dashboard_config_change",
+        actor="yaw",
+        action="kill_switch.activate",
+        environment=Environment.DEVELOPMENT,
+        metadata={"enabled": True},
+    )
+
+    assert {row["action"] for row in registry.state.rows("shared.audit_events")} == {
+        "config.update",
+        "live_mode.toggle",
+        "kill_switch.activate",
+    }
 
 def test_req_obs_004_02_dashboard_action_denied_authorization_fails_security_relevant_audit() -> None:
     """TST-REQ-OBS-004-02: Validates REQ-OBS-004
@@ -103,7 +174,20 @@ def test_req_obs_004_02_dashboard_action_denied_authorization_fails_security_rel
     When: authorization fails
     Then: a security-relevant audit event is produced without applying the action
     """
-    pending("TST-REQ-OBS-004-02", "REQ-OBS-004")
+    registry = RepositoryRegistry()
+
+    audit_row = registry.shared().record_audit_event(
+        event_type="authorization_denied",
+        actor="not-allowed-user",
+        action="live_mode.toggle",
+        environment=Environment.PRODUCTION,
+        success=False,
+        metadata={"reason": "user not in allowlist", "applied": False},
+    )
+
+    assert audit_row["success"] is False
+    assert audit_row["metadata"]["applied"] is False
+    assert registry.state.rows("shared.config_versions") == []
 
 def test_req_obs_005_01_recent_audit_events_health_indicators_exist_dashboard_observability() -> None:
     """TST-REQ-OBS-005-01: Validates REQ-OBS-005

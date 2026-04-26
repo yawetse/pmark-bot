@@ -7,6 +7,18 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from app.db import (
+    DatabaseState,
+    PersistenceConfigurationError,
+    PersistenceUnavailableError,
+    RepositoryRegistry,
+    SchemaViolationError,
+    UnitOfWork,
+    create_session_factory,
+    live_order_persistence_gate,
+    migration_plan,
+    retention_policy,
+)
 from app.domain import (
     Environment,
     Instrument,
@@ -38,7 +50,39 @@ def test_req_db_001_01_live_dry_run_position_events_persistence_runs_both() -> N
     When: persistence runs
     Then: both position types are stored in Postgres
     """
-    pending("TST-REQ-DB-001-01", "REQ-DB-001")
+    registry = RepositoryRegistry()
+    repository = registry.for_model(ModelProvider.OPENAI)
+    live_transition = PositionTransition(
+        position_id="live-pos-1",
+        prior_state=PositionState.OPEN,
+        new_state=PositionState.CLOSED,
+        realized_pnl="2.25",
+        unrealized_pnl="0",
+        reason="live exit",
+    )
+    dry_run_transition = PositionTransition(
+        position_id="dry-pos-1",
+        prior_state=PositionState.OPEN,
+        new_state=PositionState.EXITING,
+        realized_pnl="0",
+        unrealized_pnl="1.50",
+        reason="dry-run exit check",
+    )
+
+    repository.record_position_event(
+        live_transition,
+        execution_mode="live",
+        idempotency_key="live-event-1",
+    )
+    repository.record_position_event(
+        dry_run_transition,
+        execution_mode="dry_run",
+        idempotency_key="dry-event-1",
+    )
+
+    rows = registry.state.rows("openai.position_events")
+    assert {row["execution_mode"] for row in rows} == {"live", "dry_run"}
+    assert {row["position_id"] for row in rows} == {"live-pos-1", "dry-pos-1"}
 
 def test_req_db_001_02_duplicate_position_events_same_idempotency_key_persistence_runs() -> None:
     """TST-REQ-DB-001-02: Validates REQ-DB-001
@@ -47,7 +91,30 @@ def test_req_db_001_02_duplicate_position_events_same_idempotency_key_persistenc
     When: persistence runs
     Then: the system avoids duplicate position rows
     """
-    pending("TST-REQ-DB-001-02", "REQ-DB-001")
+    registry = RepositoryRegistry()
+    repository = registry.for_model(ModelProvider.OPENAI)
+    transition = PositionTransition(
+        position_id="pos-1",
+        prior_state=PositionState.OPEN,
+        new_state=PositionState.CLOSED,
+        realized_pnl="1.00",
+        unrealized_pnl="0",
+        reason="closed once",
+    )
+
+    first = repository.record_position_event(
+        transition,
+        execution_mode="live",
+        idempotency_key="idem-1",
+    )
+    second = repository.record_position_event(
+        transition,
+        execution_mode="live",
+        idempotency_key="idem-1",
+    )
+
+    assert second == first
+    assert len(registry.state.rows("openai.position_events")) == 1
 
 def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_model() -> None:
     """TST-REQ-DB-002-01: Validates REQ-DB-002
@@ -56,7 +123,21 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     When: migrations and repositories run
     Then: each model provider uses its separate schema
     """
-    pending("TST-REQ-DB-002-01", "REQ-DB-002")
+    plan = migration_plan()
+    registry = RepositoryRegistry()
+
+    assert plan.schema_names == ("shared", "claude", "openai")
+    assert "claude.trade_decisions" in plan.table_names
+    assert "openai.trade_decisions" in plan.table_names
+    assert "openai.alpaca_reconciliation_mismatches" in plan.table_names
+    assert "shared.job_runs" in plan.table_names
+    assert "shared.comparison_metric_snapshots" in plan.table_names
+    assert "openai.order_intents" in plan.table_names
+    assert "openai.strategy_signals" in plan.table_names
+    assert all("..." not in statement for statement in plan.sql)
+    assert any("CREATE TABLE IF NOT EXISTS openai.trade_decisions" in statement for statement in plan.sql)
+    assert registry.for_model(ModelProvider.CLAUDE).schema_name == "claude"
+    assert registry.for_model(ModelProvider.OPENAI).schema_name == "openai"
 
 def test_req_db_002_02_repository_attempts_write_model_record_wrong_schema_validation() -> None:
     """TST-REQ-DB-002-02: Validates REQ-DB-002
@@ -65,7 +146,10 @@ def test_req_db_002_02_repository_attempts_write_model_record_wrong_schema_valid
     When: validation runs
     Then: the write is rejected
     """
-    pending("TST-REQ-DB-002-02", "REQ-DB-002")
+    registry = RepositoryRegistry()
+
+    with pytest.raises(SchemaViolationError):
+        registry.for_model(ModelProvider.OPENAI).ensure_schema("claude")
 
 def test_req_db_003_01_shared_config_audit_system_health_records_persistence_runs() -> None:
     """TST-REQ-DB-003-01: Validates REQ-DB-003
@@ -74,7 +158,26 @@ def test_req_db_003_01_shared_config_audit_system_health_records_persistence_run
     When: persistence runs
     Then: shared records are stored in the shared schema
     """
-    pending("TST-REQ-DB-003-01", "REQ-DB-003")
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+
+    shared.record_config_version(
+        environment=Environment.DEVELOPMENT,
+        version="v1",
+        payload={"global_execution_mode": "dry_run"},
+    )
+    shared.record_audit_event(
+        event_type="config_change",
+        actor="yaw",
+        action="risk_limit.update",
+        environment=Environment.DEVELOPMENT,
+        metadata={"max_position": "25"},
+    )
+    shared.record_system_health(component="postgres", status="healthy")
+
+    assert len(registry.state.rows("shared.config_versions")) == 1
+    assert len(registry.state.rows("shared.audit_events")) == 1
+    assert len(registry.state.rows("shared.system_health")) == 1
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003
@@ -83,7 +186,10 @@ def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_r
     When: repository validation runs
     Then: the write is rejected
     """
-    pending("TST-REQ-DB-003-02", "REQ-DB-003")
+    registry = RepositoryRegistry()
+
+    with pytest.raises(SchemaViolationError):
+        registry.shared().ensure_schema("openai")
 
 def test_req_db_004_01_trade_decision_all_required_fields_persistence_runs_provider() -> None:
     """TST-REQ-DB-004-01: Validates REQ-DB-004
@@ -103,16 +209,17 @@ def test_req_db_004_01_trade_decision_all_required_fields_persistence_runs_provi
         size=Decimal("12.50"),
     )
 
-    dumped = decision.model_dump()
-    assert dumped["model_provider"] == ModelProvider.OPENAI
-    assert dumped["venue"] == Venue.POLYMARKET_US
-    assert dumped["environment"] == Environment.LOCAL
-    assert decision.instrument.identifier == "market-1:yes"
-    assert dumped["signal_inputs"]["strategy_signal_ids"] == ["signal-1"]
-    assert dumped["decision"] == "buy"
-    assert dumped["order_type"] == OrderType.LIMIT
-    assert dumped["size"] == Decimal("12.50")
-    assert decision.created_at is not None
+    row = RepositoryRegistry().for_model(ModelProvider.OPENAI).record_trade_decision(decision)
+
+    assert row["model_provider"] == ModelProvider.OPENAI.value
+    assert row["venue"] == Venue.POLYMARKET_US.value
+    assert row["environment"] == Environment.LOCAL.value
+    assert row["instrument_identifier"] == "market-1:yes"
+    assert row["signal_inputs"]["strategy_signal_ids"] == ["signal-1"]
+    assert row["decision"] == "buy"
+    assert row["order_type"] == OrderType.LIMIT.value
+    assert row["size"] == Decimal("12.50")
+    assert row["created_at"] is not None
 
 def test_req_db_004_02_trade_decision_missing_required_field_persistence_runs_write() -> None:
     """TST-REQ-DB-004-02: Validates REQ-DB-004
@@ -160,12 +267,21 @@ def test_req_db_005_01_position_state_transition_persistence_runs_prior_state_ne
         unrealized_pnl="0",
         reason="profit target reached",
     )
+    registry = RepositoryRegistry()
 
-    assert transition.prior_state == PositionState.OPEN
-    assert transition.new_state == PositionState.CLOSED
-    assert transition.realized_pnl == Decimal("4.25")
-    assert transition.unrealized_pnl == Decimal("0")
-    assert transition.reason == "profit target reached"
+    row = registry.for_model(ModelProvider.OPENAI).record_position_event(
+        transition,
+        execution_mode="live",
+        idempotency_key="pos-event-1",
+    )
+    position = registry.state.rows("openai.positions")[0]
+
+    assert row["prior_state"] == PositionState.OPEN.value
+    assert row["new_state"] == PositionState.CLOSED.value
+    assert row["realized_pnl"] == Decimal("4.25")
+    assert row["unrealized_pnl"] == Decimal("0")
+    assert row["reason"] == "profit target reached"
+    assert position["state"] == PositionState.CLOSED.value
 
 def test_req_db_005_02_invalid_position_state_transition_persistence_runs_transition_rejected() -> None:
     """TST-REQ-DB-005-02: Validates REQ-DB-005
@@ -191,7 +307,11 @@ def test_req_db_006_01_no_later_archive_policy_configured_retention_settings_val
     When: retention settings are validated
     Then: audit, trade, and position history have no automatic deletion
     """
-    pending("TST-REQ-DB-006-01", "REQ-DB-006")
+    policy = retention_policy()
+
+    assert policy.audit_delete_after_days is None
+    assert policy.trade_delete_after_days is None
+    assert policy.position_delete_after_days is None
 
 def test_req_db_007_01_postgres_available_live_order_checks_require_persistence_persistence() -> None:
     """TST-REQ-DB-007-01: Validates REQ-DB-007
@@ -200,7 +320,18 @@ def test_req_db_007_01_postgres_available_live_order_checks_require_persistence_
     When: live order checks require persistence
     Then: persistence health passes
     """
-    pending("TST-REQ-DB-007-01", "REQ-DB-007")
+    state = DatabaseState(available=True)
+    gate = live_order_persistence_gate(state)
+    session_factory = create_session_factory("postgresql+psycopg://user:pass@localhost:5432/codex_poly_bot")
+
+    with UnitOfWork(state) as unit:
+        unit.commit()
+
+    assert gate.live_order_allowed
+    assert not gate.degraded
+    assert gate.system_health is not None
+    assert gate.system_health["status"] == "healthy"
+    assert session_factory.kw["expire_on_commit"] is False
 
 def test_req_db_007_02_postgres_unavailable_live_order_placement_requested_order_blocked() -> None:
     """TST-REQ-DB-007-02: Validates REQ-DB-007
@@ -209,4 +340,18 @@ def test_req_db_007_02_postgres_unavailable_live_order_placement_requested_order
     When: live order placement is requested
     Then: the order is blocked and logs plus dashboard status surface the failure
     """
-    pending("TST-REQ-DB-007-02", "REQ-DB-007")
+    state = DatabaseState(available=False)
+    gate = live_order_persistence_gate(state)
+
+    assert not gate.live_order_allowed
+    assert gate.degraded
+    assert gate.reason == "Postgres persistence is unavailable"
+    assert gate.system_health is not None
+    assert gate.system_health["status"] == "degraded"
+    assert gate.log_event is not None
+    assert gate.log_event["event_name"] == "postgres.persistence.unavailable"
+    with pytest.raises(PersistenceUnavailableError):
+        with UnitOfWork(state):
+            pass
+    with pytest.raises(PersistenceConfigurationError):
+        create_session_factory("sqlite:///local.db")

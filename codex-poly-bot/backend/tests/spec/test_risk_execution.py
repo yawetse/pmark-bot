@@ -14,6 +14,7 @@ from app.bootstrap import (
     safe_defaults,
     with_slippage_threshold,
 )
+from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
 from app.domain import (
     ModelProvider,
     OrderEvent,
@@ -327,6 +328,8 @@ def test_req_exe_016_01_order_refused_submitted_filled_canceled_failed_event_pro
     When: the event is processed
     Then: it is persisted and visible in dashboard status
     """
+    registry = RepositoryRegistry()
+
     for event_type in OrderEventType:
         event = OrderEvent(
             order_id=f"order-{event_type.value}",
@@ -335,10 +338,15 @@ def test_req_exe_016_01_order_refused_submitted_filled_canceled_failed_event_pro
             model_provider=ModelProvider.OPENAI,
             message=f"order {event_type.value}",
         )
+        row = registry.for_model(ModelProvider.OPENAI).record_order_event(event)
         result = record_order_event(event, persistence_ok=True)
+
+        assert row["order_id"] == event.order_id
+        assert row["event_type"] == event_type.value
         assert result.persisted
         assert result.dashboard_visible
         assert not result.degraded
+    assert len(registry.state.rows("openai.order_events")) == len(OrderEventType)
 
 def test_req_exe_016_02_event_persistence_fails_order_event_processed_system_reports() -> None:
     """TST-REQ-EXE-016-02: Validates REQ-EXE-016
@@ -354,6 +362,10 @@ def test_req_exe_016_02_event_persistence_fails_order_event_processed_system_rep
         model_provider=ModelProvider.OPENAI,
         message="venue failed",
     )
+    registry = RepositoryRegistry(DatabaseState(available=False))
+
+    with pytest.raises(PersistenceUnavailableError):
+        registry.for_model(ModelProvider.OPENAI).record_order_event(event)
 
     result = record_order_event(event, persistence_ok=False)
 

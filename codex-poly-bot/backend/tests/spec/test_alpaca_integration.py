@@ -9,7 +9,16 @@ from pydantic import ValidationError
 
 from tests.spec.helpers import pending
 from app.bootstrap import configured_slippage_threshold, market_order_slippage_allowed
-from app.domain import Instrument, InstrumentType, Venue, eligible_alpaca_instruments, supported_venues
+from app.db import AlpacaReconciliationSnapshot, RepositoryRegistry
+from app.domain import (
+    Environment,
+    Instrument,
+    InstrumentType,
+    ModelProvider,
+    Venue,
+    eligible_alpaca_instruments,
+    supported_venues,
+)
 
 
 def test_req_alp_001_01_alpaca_configured_enabled_venue_adapters_registered_alpaca_available() -> None:
@@ -325,7 +334,25 @@ def test_req_alp_016_01_distinct_alpaca_account_identifiers_each_model_in_same()
     When: duplicate checks run
     Then: Alpaca live trading remains eligible
     """
-    pending("TST-REQ-ALP-016-01", "REQ-ALP-016")
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+
+    openai = shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.OPENAI,
+        account_id="alpaca-openai-prod-live",
+    )
+    claude = shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="alpaca-claude-prod-live",
+    )
+
+    assert openai.live_trading_allowed
+    assert claude.live_trading_allowed
+    assert len(registry.state.rows("shared.alpaca_account_registry")) == 2
 
 def test_req_alp_016_02_two_model_providers_resolve_same_alpaca_account_identifier() -> None:
     """TST-REQ-ALP-016-02: Validates REQ-ALP-016
@@ -334,7 +361,29 @@ def test_req_alp_016_02_two_model_providers_resolve_same_alpaca_account_identifi
     When: checks run
     Then: live trading is blocked for the duplicate account
     """
-    pending("TST-REQ-ALP-016-02", "REQ-ALP-016")
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.OPENAI,
+        account_id="alpaca-shared-account",
+    )
+
+    result = shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="alpaca-shared-account",
+    )
+
+    assert not result.live_trading_allowed
+    assert result.refusal_reason == "duplicate Alpaca account identifier"
+    assert len(registry.state.rows("shared.alpaca_account_registry")) == 1
+    audit_row = registry.state.rows("shared.audit_events")[0]
+    assert audit_row["event_type"] == "alpaca_account_duplicate"
+    assert audit_row["success"] is False
+    assert audit_row["metadata"]["duplicate_model_provider"] == ModelProvider.CLAUDE.value
 
 def test_req_alp_017_01_alpaca_postgres_agree_on_positions_open_orders_buying() -> None:
     """TST-REQ-ALP-017-01: Validates REQ-ALP-017
@@ -343,7 +392,36 @@ def test_req_alp_017_01_alpaca_postgres_agree_on_positions_open_orders_buying() 
     When: reconciliation runs
     Then: Alpaca live orders may proceed to remaining checks
     """
-    pending("TST-REQ-ALP-017-01", "REQ-ALP-017")
+    repository = RepositoryRegistry().for_model(ModelProvider.OPENAI)
+    snapshot = AlpacaReconciliationSnapshot(
+        account_id="alpaca-openai-prod-live",
+        environment=Environment.PRODUCTION,
+        model_provider=ModelProvider.OPENAI,
+        account_mode="live",
+        configured_account_id="alpaca-openai-prod-live",
+        broker_account_id="alpaca-openai-prod-live",
+        account_status="active",
+        positions={"SPY": Decimal("2")},
+        open_orders=("order-1",),
+        buying_power=Decimal("500.00"),
+        freshness_seconds=30,
+    )
+
+    repository.record_alpaca_account_snapshot(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        snapshot=snapshot,
+    )
+    result = repository.reconcile_alpaca_state(snapshot, snapshot)
+
+    assert result.live_order_allowed
+    assert result.mismatch_reason is None
+    snapshot_row = repository.state.rows("openai.alpaca_account_snapshots")[0]
+    assert snapshot_row["configured_account_id"] == "alpaca-openai-prod-live"
+    assert snapshot_row["broker_account_id"] == "alpaca-openai-prod-live"
+    assert snapshot_row["account_status"] == "active"
+    assert snapshot_row["freshness_seconds"] == 30
+    assert snapshot_row["is_live_safe"] is True
 
 def test_req_alp_017_02_reconciliation_not_completed_alpaca_live_execution_requested_order() -> None:
     """TST-REQ-ALP-017-02: Validates REQ-ALP-017
@@ -352,7 +430,25 @@ def test_req_alp_017_02_reconciliation_not_completed_alpaca_live_execution_reque
     When: Alpaca live execution is requested
     Then: the order is blocked
     """
-    pending("TST-REQ-ALP-017-02", "REQ-ALP-017")
+    registry = RepositoryRegistry()
+    repository = registry.for_model(ModelProvider.OPENAI)
+    snapshot = AlpacaReconciliationSnapshot(
+        account_id="alpaca-openai-prod-live",
+        environment=Environment.PRODUCTION,
+        model_provider=ModelProvider.OPENAI,
+        account_mode="live",
+        positions={},
+        open_orders=(),
+        buying_power=Decimal("500.00"),
+        completed=False,
+    )
+
+    result = repository.reconcile_alpaca_state(snapshot, snapshot)
+
+    assert not result.live_order_allowed
+    assert result.mismatch_reason == "reconciliation incomplete"
+    mismatch_row = registry.state.rows("openai.alpaca_reconciliation_mismatches")[0]
+    assert mismatch_row["mismatch_reason"] == "reconciliation incomplete"
 
 def test_req_alp_018_01_reconciliation_detects_no_unresolved_mismatch_alpaca_live_checks() -> None:
     """TST-REQ-ALP-018-01: Validates REQ-ALP-018
@@ -361,7 +457,36 @@ def test_req_alp_018_01_reconciliation_detects_no_unresolved_mismatch_alpaca_liv
     When: Alpaca live checks run
     Then: the mismatch gate passes
     """
-    pending("TST-REQ-ALP-018-01", "REQ-ALP-018")
+    repository = RepositoryRegistry().for_model(ModelProvider.CLAUDE)
+    broker_snapshot = AlpacaReconciliationSnapshot(
+        account_id="alpaca-claude-dev-paper",
+        environment=Environment.DEVELOPMENT,
+        model_provider=ModelProvider.CLAUDE,
+        account_mode="paper",
+        configured_account_id="alpaca-claude-dev-paper",
+        broker_account_id="alpaca-claude-dev-paper",
+        account_status="active",
+        positions={"VTI": Decimal("1.25")},
+        open_orders=(),
+        buying_power=Decimal("250.00"),
+    )
+    postgres_snapshot = AlpacaReconciliationSnapshot(
+        account_id="alpaca-claude-dev-paper",
+        environment=Environment.DEVELOPMENT,
+        model_provider=ModelProvider.CLAUDE,
+        account_mode="paper",
+        configured_account_id="alpaca-claude-dev-paper",
+        broker_account_id="alpaca-claude-dev-paper",
+        account_status="active",
+        positions={"VTI": Decimal("1.25")},
+        open_orders=(),
+        buying_power=Decimal("250.00"),
+    )
+
+    result = repository.reconcile_alpaca_state(broker_snapshot, postgres_snapshot)
+
+    assert result.live_order_allowed
+    assert result.mismatch_details is None
 
 def test_req_alp_018_02_unresolved_broker_postgres_mismatch_alpaca_live_checks_run() -> None:
     """TST-REQ-ALP-018-02: Validates REQ-ALP-018
@@ -370,4 +495,49 @@ def test_req_alp_018_02_unresolved_broker_postgres_mismatch_alpaca_live_checks_r
     When: Alpaca live checks run
     Then: live orders are blocked for the affected provider and mismatch details are recorded
     """
-    pending("TST-REQ-ALP-018-02", "REQ-ALP-018")
+    registry = RepositoryRegistry()
+    repository = registry.for_model(ModelProvider.CLAUDE)
+    broker_snapshot = AlpacaReconciliationSnapshot(
+        account_id="alpaca-claude-dev-paper",
+        environment=Environment.DEVELOPMENT,
+        model_provider=ModelProvider.CLAUDE,
+        account_mode="paper",
+        configured_account_id="alpaca-claude-dev-paper",
+        broker_account_id="unexpected-broker-account",
+        account_status="restricted",
+        positions={"VTI": Decimal("1.25")},
+        open_orders=("broker-order",),
+        buying_power=Decimal("250.00"),
+        freshness_seconds=500,
+        is_live_safe=False,
+    )
+    postgres_snapshot = AlpacaReconciliationSnapshot(
+        account_id="alpaca-claude-dev-paper",
+        environment=Environment.DEVELOPMENT,
+        model_provider=ModelProvider.CLAUDE,
+        account_mode="paper",
+        configured_account_id="alpaca-claude-dev-paper",
+        broker_account_id="alpaca-claude-dev-paper",
+        account_status="active",
+        positions={"VTI": Decimal("1.00")},
+        open_orders=(),
+        buying_power=Decimal("240.00"),
+    )
+
+    result = repository.reconcile_alpaca_state(broker_snapshot, postgres_snapshot)
+
+    assert not result.live_order_allowed
+    assert result.mismatch_reason == "broker and Postgres state mismatch"
+    assert result.mismatch_details is not None
+    assert set(result.mismatch_details) == {
+        "account_id",
+        "account_status",
+        "buying_power",
+        "freshness_seconds",
+        "is_live_safe",
+        "open_orders",
+        "positions",
+    }
+    mismatch_row = registry.state.rows("claude.alpaca_reconciliation_mismatches")[0]
+    assert mismatch_row["mismatch_reason"] == "broker and Postgres state mismatch"
+    assert mismatch_row["mismatch_details"]["account_status"] == "restricted"

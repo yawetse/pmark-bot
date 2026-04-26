@@ -5,7 +5,9 @@ description = "Backend for codex-poly-bot"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.8.0",
+    "psycopg[binary]>=3.2.0",
     "pytest>=8.0.0",
+    "sqlalchemy>=2.0.0",
 ]
 
 [tool.pytest.ini_options]
