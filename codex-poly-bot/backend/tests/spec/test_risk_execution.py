@@ -14,6 +14,14 @@ from app.bootstrap import (
     safe_defaults,
     with_slippage_threshold,
 )
+from app.domain import (
+    ModelProvider,
+    OrderEvent,
+    OrderEventType,
+    Venue,
+    kelly_sized_notional,
+    record_order_event,
+)
 
 
 def test_req_exe_001_01_no_explicit_live_trading_override_environment_config_loaded() -> None:
@@ -153,7 +161,15 @@ def test_req_exe_008_01_positive_kelly_result_above_configured_risk_cap_sizing()
     When: sizing runs
     Then: final size is capped by the risk limit
     """
-    pending("TST-REQ-EXE-008-01", "REQ-EXE-008")
+    decision = kelly_sized_notional(
+        probability=Decimal("0.60"),
+        decimal_odds=Decimal("2.20"),
+        bankroll=Decimal("1000"),
+        risk_cap=Decimal("25"),
+    )
+
+    assert decision.approved
+    assert decision.approved_notional == Decimal("25")
 
 def test_req_exe_008_02_missing_probability_odds_bankroll_inputs_kelly_sizing_runs() -> None:
     """TST-REQ-EXE-008-02: Validates REQ-EXE-008
@@ -162,7 +178,15 @@ def test_req_exe_008_02_missing_probability_odds_bankroll_inputs_kelly_sizing_ru
     When: Kelly sizing runs
     Then: sizing fails safely and no order is created
     """
-    pending("TST-REQ-EXE-008-02", "REQ-EXE-008")
+    decision = kelly_sized_notional(
+        probability=None,
+        decimal_odds=Decimal("2.20"),
+        bankroll=Decimal("1000"),
+        risk_cap=Decimal("25"),
+    )
+
+    assert not decision.approved
+    assert decision.refusal_reason == "missing Kelly sizing input"
 
 def test_req_exe_009_01_kelly_calculation_returns_positive_size_execution_checks_run() -> None:
     """TST-REQ-EXE-009-01: Validates REQ-EXE-009
@@ -303,7 +327,18 @@ def test_req_exe_016_01_order_refused_submitted_filled_canceled_failed_event_pro
     When: the event is processed
     Then: it is persisted and visible in dashboard status
     """
-    pending("TST-REQ-EXE-016-01", "REQ-EXE-016")
+    for event_type in OrderEventType:
+        event = OrderEvent(
+            order_id=f"order-{event_type.value}",
+            event_type=event_type,
+            venue=Venue.POLYMARKET_US,
+            model_provider=ModelProvider.OPENAI,
+            message=f"order {event_type.value}",
+        )
+        result = record_order_event(event, persistence_ok=True)
+        assert result.persisted
+        assert result.dashboard_visible
+        assert not result.degraded
 
 def test_req_exe_016_02_event_persistence_fails_order_event_processed_system_reports() -> None:
     """TST-REQ-EXE-016-02: Validates REQ-EXE-016
@@ -312,7 +347,20 @@ def test_req_exe_016_02_event_persistence_fails_order_event_processed_system_rep
     When: an order event is processed
     Then: the system reports degraded status and avoids hiding the failure
     """
-    pending("TST-REQ-EXE-016-02", "REQ-EXE-016")
+    event = OrderEvent(
+        order_id="order-1",
+        event_type=OrderEventType.FAILED,
+        venue=Venue.POLYMARKET_US,
+        model_provider=ModelProvider.OPENAI,
+        message="venue failed",
+    )
+
+    result = record_order_event(event, persistence_ok=False)
+
+    assert not result.persisted
+    assert result.dashboard_visible
+    assert result.degraded
+    assert result.error_message == "order event persistence failed"
 
 def test_req_exe_017_01_dry_run_disabled_venue_enabled_account_mode_valid() -> None:
     """TST-REQ-EXE-017-01: Validates REQ-EXE-017

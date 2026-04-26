@@ -2,7 +2,27 @@
 
 from __future__ import annotations
 
+from app.domain import (
+    ExitTrigger,
+    ExitTriggerType,
+    Instrument,
+    InstrumentType,
+    PositionSnapshot,
+    PositionState,
+    Venue,
+    evaluate_exit_triggers,
+)
 from tests.spec.helpers import pending
+
+
+def prediction_instrument() -> Instrument:
+    return Instrument(
+        venue=Venue.POLYMARKET_US,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        market_id="market-1",
+        outcome_id="yes",
+        display_name="Will the event happen?",
+    )
 
 
 def test_req_ext_001_01_open_positions_configured_exit_triggers_exit_monitoring_runs() -> None:
@@ -12,7 +32,22 @@ def test_req_ext_001_01_open_positions_configured_exit_triggers_exit_monitoring_
     When: exit monitoring runs
     Then: positions are evaluated against the triggers
     """
-    pending("TST-REQ-EXT-001-01", "REQ-EXT-001")
+    position = PositionSnapshot(
+        position_id="pos-1",
+        instrument=prediction_instrument(),
+        state=PositionState.OPEN,
+        unrealized_pnl="8.50",
+    )
+    trigger = ExitTrigger(
+        trigger_type=ExitTriggerType.PROFIT_TARGET,
+        position_id="pos-1",
+        threshold="5",
+        observed_value="8.50",
+        reason="profit target reached",
+    )
+
+    assert evaluate_exit_triggers([position], [trigger]) == [trigger]
+    assert trigger.created_at is not None
 
 def test_req_ext_001_02_no_open_positions_exit_monitoring_runs_no_exit() -> None:
     """TST-REQ-EXT-001-02: Validates REQ-EXT-001
@@ -21,7 +56,15 @@ def test_req_ext_001_02_no_open_positions_exit_monitoring_runs_no_exit() -> None
     When: exit monitoring runs
     Then: no exit decisions are created and the loop records an empty result
     """
-    pending("TST-REQ-EXT-001-02", "REQ-EXT-001")
+    trigger = ExitTrigger(
+        trigger_type=ExitTriggerType.PROFIT_TARGET,
+        position_id="pos-1",
+        threshold="5",
+        observed_value="8.50",
+        reason="profit target reached",
+    )
+
+    assert evaluate_exit_triggers([], [trigger]) == []
 
 def test_req_ext_002_01_position_reaches_configured_profit_target_exit_monitoring_runs() -> None:
     """TST-REQ-EXT-002-01: Validates REQ-EXT-002

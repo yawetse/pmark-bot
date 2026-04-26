@@ -2,7 +2,26 @@
 
 from __future__ import annotations
 
+from app.domain import (
+    Instrument,
+    InstrumentType,
+    ModelProvider,
+    OrderSide,
+    StrategySignal,
+    Venue,
+    ensure_signals_persisted,
+)
 from tests.spec.helpers import pending
+
+
+def prediction_instrument() -> Instrument:
+    return Instrument(
+        venue=Venue.POLYMARKET_US,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        market_id="market-1",
+        outcome_id="yes",
+        display_name="Will the event happen?",
+    )
 
 
 def test_req_str_001_01_default_scheduler_config_worker_starts_trading_loop_interval() -> None:
@@ -120,7 +139,30 @@ def test_req_str_007_01_multiple_strategies_produce_signals_same_market_model_de
     When: decision creation starts
     Then: each strategy signal is recorded first
     """
-    pending("TST-REQ-STR-007-01", "REQ-STR-007")
+    signals = [
+        StrategySignal(
+            strategy_name="arbitrage",
+            model_provider=ModelProvider.OPENAI,
+            instrument=prediction_instrument(),
+            direction=OrderSide.BUY,
+            confidence="0.7",
+            inputs_hash="arb-inputs",
+            persisted=True,
+        ),
+        StrategySignal(
+            strategy_name="convergence",
+            model_provider=ModelProvider.OPENAI,
+            instrument=prediction_instrument(),
+            direction=OrderSide.BUY,
+            confidence="0.65",
+            inputs_hash="conv-inputs",
+            persisted=True,
+        ),
+    ]
+
+    assert ensure_signals_persisted(signals)
+    assert [signal.strategy_name for signal in signals] == ["arbitrage", "convergence"]
+    assert all(signal.created_at is not None for signal in signals)
 
 def test_req_str_007_02_signal_persistence_fails_decision_creation_starts_execution_decision() -> None:
     """TST-REQ-STR-007-02: Validates REQ-STR-007
@@ -129,7 +171,17 @@ def test_req_str_007_02_signal_persistence_fails_decision_creation_starts_execut
     When: decision creation starts
     Then: execution decision creation is blocked
     """
-    pending("TST-REQ-STR-007-02", "REQ-STR-007")
+    signal = StrategySignal(
+        strategy_name="arbitrage",
+        model_provider=ModelProvider.OPENAI,
+        instrument=prediction_instrument(),
+        direction=OrderSide.BUY,
+        confidence="0.7",
+        inputs_hash="arb-inputs",
+        persisted=False,
+    )
+
+    assert not ensure_signals_persisted([signal])
 
 def test_req_str_008_01_strategy_signals_disagree_consensus_rules_run_configured_rule() -> None:
     """TST-REQ-STR-008-01: Validates REQ-STR-008

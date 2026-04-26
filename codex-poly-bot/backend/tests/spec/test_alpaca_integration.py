@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from tests.spec.helpers import pending
 from app.bootstrap import configured_slippage_threshold, market_order_slippage_allowed
+from app.domain import Instrument, InstrumentType, Venue, eligible_alpaca_instruments, supported_venues
 
 
 def test_req_alp_001_01_alpaca_configured_enabled_venue_adapters_registered_alpaca_available() -> None:
@@ -15,7 +19,15 @@ def test_req_alp_001_01_alpaca_configured_enabled_venue_adapters_registered_alpa
     When: venue adapters are registered
     Then: Alpaca is available for stocks and ETFs
     """
-    pending("TST-REQ-ALP-001-01", "REQ-ALP-001")
+    assert Venue.ALPACA in supported_venues()
+
+    instrument = Instrument(
+        venue=Venue.ALPACA,
+        instrument_type=InstrumentType.STOCK,
+        symbol="SPY",
+        display_name="SPDR S&P 500 ETF",
+    )
+    assert instrument.identifier == "SPY"
 
 def test_req_alp_001_02_alpaca_not_enabled_trading_loop_evaluates_stock_etf() -> None:
     """TST-REQ-ALP-001-02: Validates REQ-ALP-001
@@ -24,7 +36,15 @@ def test_req_alp_001_02_alpaca_not_enabled_trading_loop_evaluates_stock_etf() ->
     When: the trading loop evaluates stock or ETF candidates
     Then: Alpaca scan and execution are skipped
     """
-    pending("TST-REQ-ALP-001-02", "REQ-ALP-001")
+    polymarket = Instrument(
+        venue=Venue.POLYMARKET_US,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        market_id="market-1",
+        outcome_id="yes",
+        display_name="Will it rain?",
+    )
+
+    assert eligible_alpaca_instruments([polymarket]) == []
 
 def test_req_alp_002_01_stock_etf_candidates_alpaca_filtering_runs_only_stocks() -> None:
     """TST-REQ-ALP-002-01: Validates REQ-ALP-002
@@ -33,7 +53,20 @@ def test_req_alp_002_01_stock_etf_candidates_alpaca_filtering_runs_only_stocks()
     When: Alpaca filtering runs
     Then: only stocks and ETFs remain eligible
     """
-    pending("TST-REQ-ALP-002-01", "REQ-ALP-002")
+    stock = Instrument(
+        venue=Venue.ALPACA,
+        instrument_type=InstrumentType.STOCK,
+        symbol="AAPL",
+        display_name="Apple",
+    )
+    etf = Instrument(
+        venue=Venue.ALPACA,
+        instrument_type=InstrumentType.ETF,
+        symbol="VTI",
+        display_name="Vanguard Total Stock Market ETF",
+    )
+
+    assert eligible_alpaca_instruments([stock, etf]) == [stock, etf]
 
 def test_req_alp_002_02_options_crypto_short_margin_candidates_alpaca_filtering_runs() -> None:
     """TST-REQ-ALP-002-02: Validates REQ-ALP-002
@@ -42,7 +75,22 @@ def test_req_alp_002_02_options_crypto_short_margin_candidates_alpaca_filtering_
     When: Alpaca filtering runs
     Then: each unsupported product is rejected with a reason
     """
-    pending("TST-REQ-ALP-002-02", "REQ-ALP-002")
+    with pytest.raises(ValidationError):
+        Instrument(
+            venue=Venue.ALPACA,
+            instrument_type=InstrumentType.PREDICTION_MARKET,
+            symbol="BTCUSD",
+            display_name="Bitcoin",
+        )
+    with pytest.raises(ValueError):
+        InstrumentType("option")
+    with pytest.raises(ValidationError):
+        Instrument(
+            venue=Venue.ALPACA,
+            instrument_type=InstrumentType.STOCK,
+            symbol="   ",
+            display_name="Whitespace Symbol",
+        )
 
 def test_req_alp_003_01_alpaca_account_market_data_position_order_operations_adapters() -> None:
     """TST-REQ-ALP-003-01: Validates REQ-ALP-003

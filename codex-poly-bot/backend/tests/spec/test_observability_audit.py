@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.domain import Environment, ModelProvider, StructuredLogEvent, Venue
 from tests.spec.helpers import pending
 
 
@@ -12,7 +13,19 @@ def test_req_obs_001_01_system_events_across_ingestion_scoring_strategy_risk_ord
     When: logging runs
     Then: structured logs are emitted
     """
-    pending("TST-REQ-OBS-001-01", "REQ-OBS-001")
+    event = StructuredLogEvent(
+        event_name="risk.check.completed",
+        correlation_id="corr-1",
+        environment=Environment.LOCAL,
+        venue=Venue.POLYMARKET_US,
+        model_provider=ModelProvider.OPENAI,
+        entity_id="order-1",
+        metadata={"check": "max_position", "passed": True},
+    )
+
+    assert event.event_name == "risk.check.completed"
+    assert event.correlation_id == "corr-1"
+    assert event.metadata["passed"] is True
 
 def test_req_obs_001_02_logging_payload_contains_secrets_structured_logging_runs_secrets() -> None:
     """TST-REQ-OBS-001-02: Validates REQ-OBS-001
@@ -21,7 +34,22 @@ def test_req_obs_001_02_logging_payload_contains_secrets_structured_logging_runs
     When: structured logging runs
     Then: secrets are redacted before emission
     """
-    pending("TST-REQ-OBS-001-02", "REQ-OBS-001")
+    event = StructuredLogEvent(
+        event_name="credential.loaded",
+        correlation_id="corr-1",
+        environment=Environment.LOCAL,
+        metadata={
+            "api_key": "sk-secret",
+            "nested": {"private_key": "abc"},
+            "items": [{"access_token": "tok-secret"}],
+            "safe": "ok",
+        },
+    )
+
+    assert event.metadata["api_key"] == "[REDACTED]"
+    assert event.metadata["nested"]["private_key"] == "[REDACTED]"
+    assert event.metadata["items"][0]["access_token"] == "[REDACTED]"
+    assert event.metadata["safe"] == "ok"
 
 def test_req_obs_002_01_aws_environment_config_app_logs_emitted_logs_sent() -> None:
     """TST-REQ-OBS-002-01: Validates REQ-OBS-002

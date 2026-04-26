@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Backend for codex-poly-bot"
 requires-python = ">=3.11"
 dependencies = [
+    "pydantic>=2.8.0",
     "pytest>=8.0.0",
 ]
 

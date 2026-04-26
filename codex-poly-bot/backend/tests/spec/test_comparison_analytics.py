@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from app.domain import (
+    ComparisonMetric,
+    Environment,
+    InstrumentType,
+    ModelProvider,
+    Venue,
+    calculate_return_to_risk,
+    metric_group_key,
+)
 from tests.spec.helpers import pending
 
 
@@ -12,7 +26,21 @@ def test_req_cmp_001_01_trades_positions_across_providers_venues_environments_in
     When: metrics are calculated
     Then: results are grouped by those dimensions
     """
-    pending("TST-REQ-CMP-001-01", "REQ-CMP-001")
+    metric = ComparisonMetric(
+        metric_name="realized_pnl",
+        model_provider=ModelProvider.CLAUDE,
+        venue=Venue.ALPACA,
+        environment=Environment.DEVELOPMENT,
+        instrument_type=InstrumentType.ETF,
+        value="12.5",
+    )
+
+    assert metric_group_key(metric) == (
+        ModelProvider.CLAUDE,
+        Venue.ALPACA,
+        Environment.DEVELOPMENT,
+        InstrumentType.ETF,
+    )
 
 def test_req_cmp_001_02_records_missing_grouping_dimensions_metrics_calculated_invalid_records() -> None:
     """TST-REQ-CMP-001-02: Validates REQ-CMP-001
@@ -21,7 +49,14 @@ def test_req_cmp_001_02_records_missing_grouping_dimensions_metrics_calculated_i
     When: metrics are calculated
     Then: invalid records are excluded or marked unavailable with a reason
     """
-    pending("TST-REQ-CMP-001-02", "REQ-CMP-001")
+    with pytest.raises(ValidationError):
+        ComparisonMetric(
+            metric_name="realized_pnl",
+            model_provider=ModelProvider.CLAUDE,
+            environment=Environment.DEVELOPMENT,
+            instrument_type=InstrumentType.ETF,
+            value="12.5",
+        )
 
 def test_req_cmp_002_01_claude_openai_performance_data_polymarket_alpaca_comparison_runs() -> None:
     """TST-REQ-CMP-002-01: Validates REQ-CMP-002
@@ -48,7 +83,17 @@ def test_req_cmp_003_01_complete_trade_position_model_cost_data_comparison_metri
     When: comparison metrics are calculated
     Then: documented formulas produce realized P&L, unrealized P&L, win rate, drawdown, cost, exposure, trade count, and return-to-risk
     """
-    pending("TST-REQ-CMP-003-01", "REQ-CMP-003")
+    metric = calculate_return_to_risk(
+        model_provider=ModelProvider.OPENAI,
+        venue=Venue.POLYMARKET_US,
+        environment=Environment.LOCAL,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        total_return="20",
+        max_drawdown="-5",
+    )
+
+    assert metric.value == Decimal("4")
+    assert metric.unavailable_reason is None
 
 def test_req_cmp_003_02_divide_zero_missing_input_documented_formula_metrics_calculated() -> None:
     """TST-REQ-CMP-003-02: Validates REQ-CMP-003
@@ -57,7 +102,17 @@ def test_req_cmp_003_02_divide_zero_missing_input_documented_formula_metrics_cal
     When: metrics are calculated
     Then: the metric is unavailable rather than invalid
     """
-    pending("TST-REQ-CMP-003-02", "REQ-CMP-003")
+    metric = calculate_return_to_risk(
+        model_provider=ModelProvider.OPENAI,
+        venue=Venue.POLYMARKET_US,
+        environment=Environment.LOCAL,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        total_return="20",
+        max_drawdown="0",
+    )
+
+    assert metric.value is None
+    assert metric.unavailable_reason == "drawdown is zero"
 
 def test_req_cmp_004_01_insufficient_data_metric_dashboard_api_comparison_output_produced() -> None:
     """TST-REQ-CMP-004-01: Validates REQ-CMP-004

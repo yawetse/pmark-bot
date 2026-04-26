@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from tests.spec.helpers import pending
 from app.bootstrap import load_runtime_defaults, safe_defaults, venue_operation_gate, with_venue_enabled
+from app.domain import Instrument, InstrumentType, Venue, supported_polymarket_venues
 
 
 def test_req_ven_001_01_supported_venue_configs_polymarket_us_international_venue_adapters() -> None:
@@ -13,7 +17,10 @@ def test_req_ven_001_01_supported_venue_configs_polymarket_us_international_venu
     When: venue adapters are registered
     Then: both venues are available as configurable trading venues
     """
-    pending("TST-REQ-VEN-001-01", "REQ-VEN-001")
+    assert supported_polymarket_venues() == {
+        Venue.POLYMARKET_US,
+        Venue.POLYMARKET_INTERNATIONAL,
+    }
 
 def test_req_ven_001_02_unknown_polymarket_venue_key_venue_adapters_resolved_system() -> None:
     """TST-REQ-VEN-001-02: Validates REQ-VEN-001
@@ -22,7 +29,16 @@ def test_req_ven_001_02_unknown_polymarket_venue_key_venue_adapters_resolved_sys
     When: venue adapters are resolved
     Then: the system rejects the venue and records a configuration error
     """
-    pending("TST-REQ-VEN-001-02", "REQ-VEN-001")
+    with pytest.raises(ValueError):
+        Venue("unknown_polymarket")
+    with pytest.raises(ValidationError):
+        Instrument(
+            venue=Venue.POLYMARKET_US,
+            instrument_type=InstrumentType.PREDICTION_MARKET,
+            market_id="   ",
+            outcome_id="yes",
+            display_name="Whitespace Market",
+        )
 
 def test_req_ven_002_01_no_explicit_venue_setting_app_loads_runtime_config() -> None:
     """TST-REQ-VEN-002-01: Validates REQ-VEN-002

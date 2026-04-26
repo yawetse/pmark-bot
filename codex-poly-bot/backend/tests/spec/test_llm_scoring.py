@@ -2,7 +2,23 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from app.domain import Instrument, InstrumentType, ModelProvider, ScoringOutput, Venue
 from tests.spec.helpers import pending
+
+
+def prediction_instrument() -> Instrument:
+    return Instrument(
+        venue=Venue.POLYMARKET_US,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        market_id="market-1",
+        outcome_id="yes",
+        display_name="Will the event happen?",
+    )
 
 
 def test_req_llm_001_01_eligible_polymarket_alpaca_candidates_scoring_runs_both_claude() -> None:
@@ -48,7 +64,26 @@ def test_req_llm_003_01_successful_model_evaluation_score_persisted_provider_pro
     When: the score is persisted
     Then: provider, prompt version, input summary, thesis, confidence, probability, and cost estimate are stored
     """
-    pending("TST-REQ-LLM-003-01", "REQ-LLM-003")
+    score = ScoringOutput(
+        model_provider=ModelProvider.CLAUDE,
+        prompt_version="pm-v1",
+        input_summary="market and price context",
+        output_thesis="price is below estimated probability",
+        confidence="0.71",
+        estimated_probability="0.64",
+        cost_estimate="0.013",
+        instrument=prediction_instrument(),
+    )
+
+    assert score.model_provider == ModelProvider.CLAUDE
+    assert score.prompt_version == "pm-v1"
+    assert score.input_summary
+    assert score.output_thesis
+    assert score.confidence == Decimal("0.71")
+    assert score.estimated_probability == Decimal("0.64")
+    assert score.cost_estimate == Decimal("0.013")
+    assert score.instrument.identifier == "market-1:yes"
+    assert score.created_at is not None
 
 def test_req_llm_003_02_model_response_missing_required_scoring_fields_parsing_runs() -> None:
     """TST-REQ-LLM-003-02: Validates REQ-LLM-003
@@ -57,7 +92,17 @@ def test_req_llm_003_02_model_response_missing_required_scoring_fields_parsing_r
     When: parsing runs
     Then: the score is marked failed and no live order can use it
     """
-    pending("TST-REQ-LLM-003-02", "REQ-LLM-003")
+    with pytest.raises(ValidationError):
+        ScoringOutput(
+            model_provider=ModelProvider.CLAUDE,
+            prompt_version="pm-v1",
+            input_summary="market and price context",
+            output_thesis="",
+            confidence="1.2",
+            estimated_probability="0.64",
+            cost_estimate="0.013",
+            instrument=prediction_instrument(),
+        )
 
 def test_req_llm_004_01_model_budget_exhausted_scoring_queues_built_no_new() -> None:
     """TST-REQ-LLM-004-01: Validates REQ-LLM-004

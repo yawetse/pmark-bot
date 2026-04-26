@@ -2,7 +2,33 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from app.domain import (
+    Environment,
+    Instrument,
+    InstrumentType,
+    ModelProvider,
+    OrderType,
+    PositionState,
+    PositionTransition,
+    TradeDecision,
+    Venue,
+)
 from tests.spec.helpers import pending
+
+
+def prediction_instrument() -> Instrument:
+    return Instrument(
+        venue=Venue.POLYMARKET_US,
+        instrument_type=InstrumentType.PREDICTION_MARKET,
+        market_id="market-1",
+        outcome_id="yes",
+        display_name="Will the event happen?",
+    )
 
 
 def test_req_db_001_01_live_dry_run_position_events_persistence_runs_both() -> None:
@@ -66,7 +92,27 @@ def test_req_db_004_01_trade_decision_all_required_fields_persistence_runs_provi
     When: persistence runs
     Then: provider, venue, environment, instrument, signal, decision, order type, size, and timestamp are saved
     """
-    pending("TST-REQ-DB-004-01", "REQ-DB-004")
+    decision = TradeDecision(
+        model_provider=ModelProvider.OPENAI,
+        venue=Venue.POLYMARKET_US,
+        environment=Environment.LOCAL,
+        instrument=prediction_instrument(),
+        signal_inputs={"strategy_signal_ids": ["signal-1"], "confidence": "0.72"},
+        decision="buy",
+        order_type=OrderType.LIMIT,
+        size=Decimal("12.50"),
+    )
+
+    dumped = decision.model_dump()
+    assert dumped["model_provider"] == ModelProvider.OPENAI
+    assert dumped["venue"] == Venue.POLYMARKET_US
+    assert dumped["environment"] == Environment.LOCAL
+    assert decision.instrument.identifier == "market-1:yes"
+    assert dumped["signal_inputs"]["strategy_signal_ids"] == ["signal-1"]
+    assert dumped["decision"] == "buy"
+    assert dumped["order_type"] == OrderType.LIMIT
+    assert dumped["size"] == Decimal("12.50")
+    assert decision.created_at is not None
 
 def test_req_db_004_02_trade_decision_missing_required_field_persistence_runs_write() -> None:
     """TST-REQ-DB-004-02: Validates REQ-DB-004
@@ -75,7 +121,29 @@ def test_req_db_004_02_trade_decision_missing_required_field_persistence_runs_wr
     When: persistence runs
     Then: the write fails and the omission is reported
     """
-    pending("TST-REQ-DB-004-02", "REQ-DB-004")
+    with pytest.raises(ValidationError):
+        TradeDecision(
+            model_provider=ModelProvider.OPENAI,
+            venue=Venue.POLYMARKET_US,
+            environment=Environment.LOCAL,
+            instrument=prediction_instrument(),
+            signal_inputs={},
+            decision="buy",
+            order_type=OrderType.LIMIT,
+            size=Decimal("12.50"),
+        )
+    with pytest.raises(ValidationError):
+        TradeDecision(
+            model_provider=ModelProvider.OPENAI,
+            venue=Venue.POLYMARKET_US,
+            environment=Environment.LOCAL,
+            instrument=prediction_instrument(),
+            signal_inputs={"strategy_signal_ids": ["signal-1"]},
+            decision="buy",
+            order_type=OrderType.LIMIT,
+            size=Decimal("12.50"),
+            misspelled_field="ignored would be unsafe",
+        )
 
 def test_req_db_005_01_position_state_transition_persistence_runs_prior_state_new() -> None:
     """TST-REQ-DB-005-01: Validates REQ-DB-005
@@ -84,7 +152,20 @@ def test_req_db_005_01_position_state_transition_persistence_runs_prior_state_ne
     When: persistence runs
     Then: prior state, new state, realized P&L, unrealized P&L, and reason are stored
     """
-    pending("TST-REQ-DB-005-01", "REQ-DB-005")
+    transition = PositionTransition(
+        position_id="pos-1",
+        prior_state=PositionState.OPEN,
+        new_state=PositionState.CLOSED,
+        realized_pnl="4.25",
+        unrealized_pnl="0",
+        reason="profit target reached",
+    )
+
+    assert transition.prior_state == PositionState.OPEN
+    assert transition.new_state == PositionState.CLOSED
+    assert transition.realized_pnl == Decimal("4.25")
+    assert transition.unrealized_pnl == Decimal("0")
+    assert transition.reason == "profit target reached"
 
 def test_req_db_005_02_invalid_position_state_transition_persistence_runs_transition_rejected() -> None:
     """TST-REQ-DB-005-02: Validates REQ-DB-005
@@ -93,7 +174,15 @@ def test_req_db_005_02_invalid_position_state_transition_persistence_runs_transi
     When: persistence runs
     Then: the transition is rejected and prior state remains intact
     """
-    pending("TST-REQ-DB-005-02", "REQ-DB-005")
+    with pytest.raises(ValidationError):
+        PositionTransition(
+            position_id="pos-1",
+            prior_state=PositionState.OPEN,
+            new_state=PositionState.OPEN,
+            realized_pnl="0",
+            unrealized_pnl="1.25",
+            reason="no state change",
+        )
 
 def test_req_db_006_01_no_later_archive_policy_configured_retention_settings_validated() -> None:
     """TST-REQ-DB-006-01: Validates REQ-DB-006
