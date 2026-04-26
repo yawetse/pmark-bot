@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: codex-poly-bot-backend
+Version: 0.1.0
+Summary: Backend for codex-poly-bot
+Requires-Python: >=3.11
+Requires-Dist: pytest>=8.0.0
