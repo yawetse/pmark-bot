@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 from tests.spec.helpers import pending
+from app.bootstrap import (
+    PROJECT_ROOT,
+    REQUIRED_DIRECTORIES,
+    REQUIRED_ENV_EXAMPLES,
+    codex_web_ready,
+    compose_services,
+    env_files_are_gitignored,
+    env_examples_have_no_secrets,
+    local_app_stack_services_ready,
+    load_runtime_defaults,
+    local_startup_check,
+    required_paths_exist,
+    safe_defaults,
+    scan_env_examples_for_secret_values,
+)
 
 
 def test_req_dep_001_01_local_docker_gitignored_env_files_local_startup_commands() -> None:
@@ -12,7 +27,15 @@ def test_req_dep_001_01_local_docker_gitignored_env_files_local_startup_commands
     When: local startup commands run
     Then: the app stack starts without production secrets
     """
-    pending("TST-REQ-DEP-001-01", "REQ-DEP-001")
+    assert required_paths_exist(PROJECT_ROOT)
+    assert (PROJECT_ROOT / "docker-compose.yml").is_file()
+    assert env_files_are_gitignored(PROJECT_ROOT)
+    assert local_app_stack_services_ready(PROJECT_ROOT)
+    assert {"postgres", "backend", "frontend"}.issubset(set(compose_services(PROJECT_ROOT)))
+
+    check = local_startup_check(PROJECT_ROOT, env={})
+    assert check.ok
+    assert not check.uses_production_secrets
 
 def test_req_dep_001_02_required_local_env_values_missing_local_startup_runs() -> None:
     """TST-REQ-DEP-001-02: Validates REQ-DEP-001
@@ -21,7 +44,11 @@ def test_req_dep_001_02_required_local_env_values_missing_local_startup_runs() -
     When: local startup runs
     Then: startup fails with safe dry-run defaults or clear setup errors
     """
-    pending("TST-REQ-DEP-001-02", "REQ-DEP-001")
+    check = local_startup_check(PROJECT_ROOT / "missing", env={})
+
+    assert not check.ok
+    assert check.errors
+    assert safe_defaults().global_execution_mode == "dry_run"
 
 def test_req_dep_002_01_cloudformation_parameters_us_east_1_infrastructure_templates_validated() -> None:
     """TST-REQ-DEP-002-01: Validates REQ-DEP-002
@@ -120,16 +147,27 @@ def test_req_dep_007_01_repo_setup_files_inspected_env_example_files_validated()
     When: `.env.example` files are validated
     Then: required local config keys are documented without secrets
     """
-    pending("TST-REQ-DEP-007-01", "REQ-DEP-007")
+    for relative_path in REQUIRED_ENV_EXAMPLES:
+        assert (PROJECT_ROOT / relative_path).is_file()
 
-def test_req_dep_007_02_env_example_contains_real_looking_secret_value_secret() -> None:
+    assert env_examples_have_no_secrets(PROJECT_ROOT)
+
+def test_req_dep_007_02_env_example_contains_real_looking_secret_value_secret(tmp_path) -> None:
     """TST-REQ-DEP-007-02: Validates REQ-DEP-007
 
     Given: `.env.example` contains a real-looking secret value
     When: secret scanning runs
     Then: validation fails
     """
-    pending("TST-REQ-DEP-007-02", "REQ-DEP-007")
+    for relative_path in REQUIRED_ENV_EXAMPLES:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("OPENAI_API_KEY=\n")
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=sk-real-looking-value\n")
+
+    findings = scan_env_examples_for_secret_values(tmp_path)
+
+    assert ".env.example:OPENAI_API_KEY" in findings
 
 def test_req_dep_008_01_codex_web_setup_docs_scripts_developer_follows_setup() -> None:
     """TST-REQ-DEP-008-01: Validates REQ-DEP-008
@@ -138,7 +176,14 @@ def test_req_dep_008_01_codex_web_setup_docs_scripts_developer_follows_setup() -
     When: a developer follows setup
     Then: dependencies, tests, and safe dry-run config are available
     """
-    pending("TST-REQ-DEP-008-01", "REQ-DEP-008")
+    assert (PROJECT_ROOT / "AGENTS.md").is_file()
+    assert (PROJECT_ROOT / "docs" / "local-setup.md").is_file()
+    setup_script = PROJECT_ROOT / "scripts" / "setup-local.sh"
+    assert setup_script.is_file()
+    script_text = setup_script.read_text()
+    assert "pip install -e" in script_text
+    assert "pytest" in script_text
+    assert codex_web_ready(PROJECT_ROOT)
 
 def test_req_dep_008_02_setup_runs_without_trading_secrets_dependency_install_tests() -> None:
     """TST-REQ-DEP-008-02: Validates REQ-DEP-008
@@ -147,7 +192,11 @@ def test_req_dep_008_02_setup_runs_without_trading_secrets_dependency_install_te
     When: dependency install and tests run
     Then: setup still succeeds with dry-run-safe defaults
     """
-    pending("TST-REQ-DEP-008-02", "REQ-DEP-008")
+    check = local_startup_check(PROJECT_ROOT, env={})
+
+    assert check.ok
+    assert not check.uses_production_secrets
+    assert safe_defaults().live_enabled is False
 
 def test_req_dep_009_01_codex_web_environment_without_production_trading_secrets_dependencies() -> None:
     """TST-REQ-DEP-009-01: Validates REQ-DEP-009
@@ -156,7 +205,12 @@ def test_req_dep_009_01_codex_web_environment_without_production_trading_secrets
     When: dependencies install, tests run, or code is inspected
     Then: those actions succeed
     """
-    pending("TST-REQ-DEP-009-01", "REQ-DEP-009")
+    defaults = load_runtime_defaults()
+    check = local_startup_check(PROJECT_ROOT, env={})
+
+    assert defaults.global_execution_mode == "dry_run"
+    assert check.ok
+    assert not check.uses_production_secrets
 
 def test_req_dep_009_02_code_tries_require_production_secrets_during_import_tests() -> None:
     """TST-REQ-DEP-009-02: Validates REQ-DEP-009
@@ -165,7 +219,10 @@ def test_req_dep_009_02_code_tries_require_production_secrets_during_import_test
     When: CI or Codex setup runs
     Then: the test fails
     """
-    pending("TST-REQ-DEP-009-02", "REQ-DEP-009")
+    defaults = load_runtime_defaults(live_enabled=None)
+
+    assert defaults.global_execution_mode == "dry_run"
+    assert all((PROJECT_ROOT / directory).exists() for directory in REQUIRED_DIRECTORIES)
 
 def test_req_dep_010_01_development_production_deployments_infrastructure_secret_names_validated_resources() -> None:
     """TST-REQ-DEP-010-01: Validates REQ-DEP-010

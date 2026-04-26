@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
+
 from tests.spec.helpers import pending
+from app.bootstrap import (
+    configured_slippage_threshold,
+    load_runtime_defaults,
+    market_order_slippage_allowed,
+    safe_defaults,
+    with_slippage_threshold,
+)
 
 
 def test_req_exe_001_01_no_explicit_live_trading_override_environment_config_loaded() -> None:
@@ -12,7 +23,10 @@ def test_req_exe_001_01_no_explicit_live_trading_override_environment_config_loa
     When: environment config is loaded
     Then: `LIVE_ENABLED=false` in all environments
     """
-    pending("TST-REQ-EXE-001-01", "REQ-EXE-001")
+    defaults = load_runtime_defaults()
+
+    assert defaults.live_enabled is False
+    assert defaults.global_execution_mode == "dry_run"
 
 def test_req_exe_001_02_explicit_live_trading_override_absent_invalid_config_validation() -> None:
     """TST-REQ-EXE-001-02: Validates REQ-EXE-001
@@ -21,7 +35,8 @@ def test_req_exe_001_02_explicit_live_trading_override_absent_invalid_config_val
     When: config validation runs
     Then: live trading remains disabled
     """
-    pending("TST-REQ-EXE-001-02", "REQ-EXE-001")
+    assert load_runtime_defaults(live_enabled=None).live_enabled is False
+    assert load_runtime_defaults(live_enabled="not-a-bool").live_enabled is False
 
 def test_req_exe_002_01_dry_run_mode_enabled_order_approved_simulated_order() -> None:
     """TST-REQ-EXE-002-01: Validates REQ-EXE-002
@@ -210,7 +225,9 @@ def test_req_exe_012_01_default_polymarket_config_market_order_slippage_threshol
     When: market order slippage threshold is loaded
     Then: it equals 2 percent
     """
-    pending("TST-REQ-EXE-012-01", "REQ-EXE-012")
+    assert configured_slippage_threshold("polymarket_us") == Decimal("0.02")
+    assert market_order_slippage_allowed("polymarket_us", Decimal("0.02"))
+    assert not market_order_slippage_allowed("polymarket_us", Decimal("0.0201"))
 
 def test_req_exe_012_02_dashboard_override_slippage_threshold_config_loaded_override_replaces() -> None:
     """TST-REQ-EXE-012-02: Validates REQ-EXE-012
@@ -219,7 +236,11 @@ def test_req_exe_012_02_dashboard_override_slippage_threshold_config_loaded_over
     When: config is loaded
     Then: the override replaces the 2 percent default only after validation
     """
-    pending("TST-REQ-EXE-012-02", "REQ-EXE-012")
+    overridden = with_slippage_threshold(safe_defaults(), "polymarket_us", "0.015")
+
+    assert configured_slippage_threshold("polymarket_us", overridden) == Decimal("0.015")
+    with pytest.raises(ValueError):
+        with_slippage_threshold(safe_defaults(), "polymarket_us", "-0.01")
 
 def test_req_exe_013_01_all_live_order_gates_pass_live_order_placement() -> None:
     """TST-REQ-EXE-013-01: Validates REQ-EXE-013

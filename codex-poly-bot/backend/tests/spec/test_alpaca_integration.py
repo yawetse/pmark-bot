@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from tests.spec.helpers import pending
+from app.bootstrap import configured_slippage_threshold, market_order_slippage_allowed
 
 
 def test_req_alp_001_01_alpaca_configured_enabled_venue_adapters_registered_alpaca_available() -> None:
@@ -228,7 +231,8 @@ def test_req_alp_013_01_default_alpaca_slippage_config_estimated_market_order_sl
     When: estimated market order slippage is exactly 0.5 percent
     Then: the market order passes the slippage boundary check
     """
-    pending("TST-REQ-ALP-013-01", "REQ-ALP-013")
+    assert configured_slippage_threshold("alpaca") == Decimal("0.005")
+    assert market_order_slippage_allowed("alpaca", Decimal("0.005"))
 
 def test_req_alp_013_02_default_alpaca_slippage_config_estimated_market_order_slippage() -> None:
     """TST-REQ-ALP-013-02: Validates REQ-ALP-013
@@ -237,7 +241,7 @@ def test_req_alp_013_02_default_alpaca_slippage_config_estimated_market_order_sl
     When: estimated market order slippage exceeds 0.5 percent
     Then: the market order is blocked
     """
-    pending("TST-REQ-ALP-013-02", "REQ-ALP-013")
+    assert not market_order_slippage_allowed("alpaca", Decimal("0.0051"))
 
 def test_req_alp_014_01_authorized_dashboard_user_alpaca_mode_enabled_flag_risk() -> None:
     """TST-REQ-ALP-014-01: Validates REQ-ALP-014

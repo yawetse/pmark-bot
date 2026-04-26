@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tests.spec.helpers import pending
+from app.bootstrap import load_runtime_defaults, safe_defaults, venue_operation_gate, with_venue_enabled
 
 
 def test_req_ven_001_01_supported_venue_configs_polymarket_us_international_venue_adapters() -> None:
@@ -30,7 +31,9 @@ def test_req_ven_002_01_no_explicit_venue_setting_app_loads_runtime_config() -> 
     When: the app loads runtime config
     Then: `polymarket_us` is selected as the default venue
     """
-    pending("TST-REQ-VEN-002-01", "REQ-VEN-002")
+    defaults = load_runtime_defaults()
+
+    assert defaults.default_selected_venue == "polymarket_us"
 
 def test_req_ven_002_02_explicit_supported_venue_setting_app_loads_runtime_config() -> None:
     """TST-REQ-VEN-002-02: Validates REQ-VEN-002
@@ -39,7 +42,9 @@ def test_req_ven_002_02_explicit_supported_venue_setting_app_loads_runtime_confi
     When: the app loads runtime config
     Then: the explicit setting is used instead of the default
     """
-    pending("TST-REQ-VEN-002-02", "REQ-VEN-002")
+    defaults = load_runtime_defaults(explicit_venue="alpaca")
+
+    assert defaults.default_selected_venue == "alpaca"
 
 def test_req_ven_003_01_venue_enabled_false_scan_score_trade_requested_system() -> None:
     """TST-REQ-VEN-003-01: Validates REQ-VEN-003
@@ -48,7 +53,10 @@ def test_req_ven_003_01_venue_enabled_false_scan_score_trade_requested_system() 
     When: scan, score, or trade is requested
     Then: the system refuses the operation before external calls
     """
-    pending("TST-REQ-VEN-003-01", "REQ-VEN-003")
+    for operation in ("scan", "score", "trade"):
+        gate = venue_operation_gate("polymarket_us", operation)
+        assert not gate.allowed
+        assert gate.refusal_reason == f"venue disabled for {operation}"
 
 def test_req_ven_003_02_venue_toggled_enabled_disabled_next_loop_starts_no() -> None:
     """TST-REQ-VEN-003-02: Validates REQ-VEN-003
@@ -57,7 +65,11 @@ def test_req_ven_003_02_venue_toggled_enabled_disabled_next_loop_starts_no() -> 
     When: the next loop starts
     Then: no stale enabled state allows scan, score, or trade
     """
-    pending("TST-REQ-VEN-003-02", "REQ-VEN-003")
+    enabled = with_venue_enabled(safe_defaults(), "polymarket_us", True)
+    disabled = with_venue_enabled(enabled, "polymarket_us", False)
+
+    assert venue_operation_gate("polymarket_us", "scan", enabled).allowed
+    assert not venue_operation_gate("polymarket_us", "scan", disabled).allowed
 
 def test_req_ven_004_01_live_mode_approved_polymarket_order_execution_submits_order() -> None:
     """TST-REQ-VEN-004-01: Validates REQ-VEN-004
