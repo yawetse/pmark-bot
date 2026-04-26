@@ -2316,3 +2316,1769 @@ For the Claude-vs-OpenAI experiment:
 - Verify OpenAI structured-output schema dialect compatibility with `model_json_schema()` (Finding #2).
 - Define `WebSearchProvider` adapter interface (deferred — not required for v1 if we use each provider's native search; may need our own if we add a 3rd provider later).
 - Decide on temperature: 0.0 deterministic vs slight (0.2) for diversity. Default 0.0 specified; Tier 1 configurable per check.
+
+---
+
+## Batch 5 — Bot Loops
+
+7 modules: `bot/runner.py`, `bot/state.py`, `bot/loops/{scanner.py, thesis.py, executor.py, exit.py, data_refresh.py}`.
+
+These wire together everything from Batches 1–4 into the long-running services. The runner is the entry point; it determines which loops to start based on service identity (scanner vs claude-bot vs openai-bot vs data-refresh).
+
+**Dependency order within batch:** `state` (no internal deps); `runner` (depends on state); each loop depends on adapters and ports from prior batches.
+
+---
+
+### 5.1 `bot/state.py`
+
+**File:** `python/claude_poly_bot/bot/state.py`
+**Responsibility:** Wire all dependencies for a service into a single state object passed to loops.
+**Requirements Covered:** REQ-INF-005 (5 always-on services).
+**Dependencies:** All adapters from Batches 1–4.
+
+#### 5.1.1 Public Interface
+
+```python
+@dataclass
+class ServiceState:
+    """All wired dependencies for a service. Constructed once at startup."""
+    service: Literal["scanner", "claude-bot", "openai-bot", "dashboard-api", "dashboard-ui", "data-refresh"]
+    env: Literal["dev", "prod"]
+    bot: Bot | None              # None for scanner / data-refresh / dashboard
+    clock: Clock
+    metrics: MetricsSink
+    alerts: AlertSink
+    config_service: ConfigService
+    venue_registry: VenueRegistry
+    strategist: Strategist | None        # None for scanner / data-refresh / dashboard
+    db: AsyncEngine
+    session_maker: async_sessionmaker
+    # repos
+    position_repo: PositionRepo
+    order_repo: OrderRepo
+    trade_repo: TradeRepo
+    decision_repo: DecisionRepo
+    thesis_repo: ThesisRepo
+    candidate_repo: CandidateRepo
+    audit_repo: AuditRepo
+    target_wallet_repo: TargetWalletRepo
+    risk_halt_repo: RiskHaltRepo
+    bankroll_repo: BankrollRepo
+    s3_store: S3Store
+    secret_store: SecretStore
+
+async def build_service_state(
+    service: str,
+    *,
+    env: Literal["dev", "prod"],
+    bot: Bot | None = None,
+    test_overrides: dict | None = None,
+) -> ServiceState:
+    """Factory. In tests, `test_overrides` injects mocks; in prod, all real adapters."""
+```
+
+#### 5.1.2 Internal Implementation Details
+
+- Reads Tier-2 settings (env vars) at startup: DB URL, AWS region, Polygon RPC URL.
+- Retrieves secrets via `SecretStore`.
+- Constructs `ConfigService`, then runs `defaults.py` seed if no config rows exist.
+- Wires venues:
+  - `PolymarketVenue(bot, ...)` and `AlpacaVenue(bot, ...)` for `claude-bot` / `openai-bot`.
+  - For `scanner`, both venue clients are constructed but **no orders are placed by scanner**; it only reads.
+- Wires strategist: `AnthropicStrategist` if bot=claude, `OpenAIStrategist` if bot=openai.
+- Returns frozen `ServiceState`.
+
+#### 5.1.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Required env var missing | `MisconfiguredServiceError` at startup | REQ-CFG-007 |
+| 2 | DB unreachable at startup | Fails fast with clear error | HLD §5.1 (startup is fail-fast) |
+| 3 | Secrets Manager refuses access | Fails fast | Security |
+| 4 | First-run with no config | Defaults seeded; service continues | REQ-CFG-001 |
+
+#### 5.1.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Testability | `test_overrides` lets tests inject any port | Factory parameter |
+| Correctness | Single construction path; loops can't accidentally use wrong adapters | Frozen dataclass |
+
+---
+
+### 5.2 `bot/runner.py`
+
+**File:** `python/claude_poly_bot/bot/runner.py`
+**Responsibility:** Process entry point; selects loops by service identity; manages `asyncio.TaskGroup` lifecycle.
+**Requirements Covered:** REQ-INF-005, HLD DD-009 (TaskGroup ownership).
+**Dependencies:** `bot/state.py`, all loops.
+
+#### 5.2.1 Public Interface
+
+```python
+async def main(service: str, env: str, bot: Bot | None = None) -> int:
+    """Entry point. Returns process exit code."""
+
+# Service-specific entry points (called by main):
+async def run_scanner(state: ServiceState) -> None: ...
+async def run_bot(state: ServiceState) -> None: ...     # claude-bot or openai-bot
+async def run_dashboard_api(state: ServiceState) -> None: ...
+async def run_dashboard_ui(state: ServiceState) -> None: ...   # delegates to next.js subprocess
+async def run_data_refresh(state: ServiceState) -> None: ...   # one-shot
+```
+
+#### 5.2.2 Internal Implementation Details
+
+**`main` flow:**
+1. Configure logging (service, env).
+2. `state = await build_service_state(service, env=env, bot=bot)`.
+3. Dispatch by `service`:
+   - `scanner` → `run_scanner(state)`
+   - `claude-bot` / `openai-bot` → `run_bot(state)`
+   - `dashboard-api` → `run_dashboard_api(state)`
+   - `dashboard-ui` → `run_dashboard_ui(state)`
+   - `data-refresh` → `run_data_refresh(state)` (one-shot, no infinite loop)
+4. Catch top-level exceptions: log, alert, return non-zero.
+5. Handle SIGTERM / SIGINT: cancel TaskGroup, wait for graceful drain, return 0.
+
+**`run_bot` flow:**
+1. **Startup reconciliation** (HLD §5.6): for each enabled venue:
+   - Pull `OrderRepo.list_pending(bot)` and reconcile via `venue.get_order(client_order_id)`.
+   - Pull `PositionRepo.list_open(bot, venue)` and cross-check with `venue.get_positions(bot)`.
+   - Subscribe streams for confirmed open positions.
+2. Open `asyncio.TaskGroup`:
+   - `thesis.thesis_loop(state)`
+   - `executor.executor_loop(state)`
+   - `exit.exit_loop(state)`
+   - `exit.websocket_workers(state)` (managed inside exit module)
+3. Block until any task raises (TaskGroup propagates) or SIGTERM received.
+
+**`run_scanner` flow:**
+1. Open TaskGroup with one coroutine per venue: `scanner.scanner_loop(state, venue)`.
+2. (No bot-level reconciliation needed — scanner owns no positions.)
+
+**`run_data_refresh` flow:**
+1. Run once, exit when done.
+2. Used by EventBridge-scheduled ECS task.
+
+#### 5.2.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Reconciliation finds an `ORPHANED` position | Mark in DB; alert; loops continue with the orphan flagged | HLD §5.6 |
+| 2 | Reconciliation finds an `ADOPTED` position | Insert into DB; alert; treat as managed going forward | HLD §5.6 |
+| 3 | `LOST` order (in DB pending, not on venue) | Mark `LOST`; alert; treat as cancelled for safety | HLD §5.6 |
+| 4 | SIGTERM during in-flight order placement | TaskGroup cancels tasks; in-flight place_order completes if mid-await; new orders refused via cancellation token | Reliability |
+| 5 | Loop crashes with unhandled exception | TaskGroup cancels siblings; main returns non-zero; Fargate restarts container | HLD §5.1 |
+
+#### 5.2.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Reliability | Graceful SIGTERM handling; reconciliation on startup | Signal handler + reconcile flow |
+| Observability | Service identity emitted in every log + metric | logging contextvar |
+
+---
+
+### 5.3 `bot/loops/scanner.py`
+
+**File:** `python/claude_poly_bot/bot/loops/scanner.py`
+**Responsibility:** Per-venue scanner loop. Fetch markets, score, filter, publish to candidate queue.
+**Requirements Covered:** REQ-SCAN-001..013, REQ-VEN-005.
+**Dependencies:** `domain/scoring.py`, `venues/`, `storage/repos/queue.py`, `storage/repos/scans.py`.
+
+#### 5.3.1 Public Interface
+
+```python
+async def scanner_loop(state: ServiceState, venue: Venue) -> None:
+    """Run forever (or until cancelled). One per venue."""
+
+# Internals (testable in isolation):
+async def scan_once(state: ServiceState, venue: Venue) -> ScanRunResult: ...
+
+@dataclass
+class ScanRunResult:
+    venue: VenueName
+    fetched: int
+    accepted: int
+    rejected: int
+    duration_sec: float
+    error: str | None
+```
+
+#### 5.3.2 Internal Implementation Details
+
+**`scanner_loop`:**
+```
+while True:
+  cadence = config.scanner_cadence_sec for venue (default 300)
+  if not await venue.is_market_open():
+    await sleep(min(cadence, 60))
+    continue
+  if await queue_depth_above_cap():
+    log "backpressure"; metric; sleep(cadence); continue
+  try:
+    async with retrying_db("scanner_run"):
+      result = await scan_once(state, venue)
+    metrics.incr("scanner.runs", tags={"venue": venue.name})
+  except VenueUnreachableError:
+    after 3 attempts in scan_once, propagate; emit alert
+  except Exception as e:
+    log error, alert, do NOT crash
+  await sleep_until_next_cadence(cadence, clock)
+```
+
+**`scan_once`:**
+1. Generate `scan_correlation_id = uuid4()`.
+2. Fetch active markets via `venue.list_active_markets(geo=config.geo)`.
+3. For each market: fetch book in parallel (bounded concurrency, e.g., 20).
+4. Score: dispatch by venue type.
+5. Apply filters; record rejections to `market_scans`.
+6. For accepted: insert `Candidate` rows into `candidate_queue`.
+7. Insert `MarketScanRun` summary row.
+8. Return `ScanRunResult`.
+
+**Backpressure check** (per HLD §5.6):
+- Sum `candidate_repo.queue_depth(bot)` across all bots.
+- If exceeds `max_queue_depth_per_bot` (default 50, configurable), pause publication.
+
+#### 5.3.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Alpaca scan called outside market hours | Skips scan, sleeps shortly | REQ-SCAN-013 |
+| 2 | Polymarket returns 0 markets | Empty scan run; not an error | REQ-SCAN-001 |
+| 3 | Single market's `get_book` fails | That market skipped (logged); other markets proceed | DD-005 |
+| 4 | Queue at cap | Skip publication this cycle; metric `scanner.backpressure_skips` | HLD §5.6 |
+| 5 | Cadence drift if scan takes longer than 5 min | Next scan starts immediately after this finishes (no compounding) | Performance |
+
+#### 5.3.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Reliability | Retries; per-market failure isolation; retrying_db | DD-005 + retry helpers |
+| Performance | Bounded book-fetch concurrency | Semaphore |
+| Observability | Per-run summary persisted | `market_scans` table |
+
+---
+
+### 5.4 `bot/loops/thesis.py`
+
+**File:** `python/claude_poly_bot/bot/loops/thesis.py`
+**Responsibility:** Per-bot thesis loop. Pull from candidate queue, run brain (4 checks × 3 sub-agents), generate thesis, hand to executor.
+**Requirements Covered:** REQ-BRN-001..018, REQ-EXE-004 (consensus input).
+**Dependencies:** `domain/thesis.py`, `domain/consensus.py`, `llm/`, `venues/`.
+
+#### 5.4.1 Public Interface
+
+```python
+async def thesis_loop(state: ServiceState) -> None:
+    """Run forever. Polls candidate queue at short cadence (default 5 sec)."""
+
+async def evaluate_candidate(
+    state: ServiceState,
+    candidate: Candidate,
+    claim: CandidateClaim,
+) -> ThesisOutcome:
+    """Process one candidate end-to-end. Persists decisions, thesis, queues executor."""
+```
+
+#### 5.4.2 Internal Implementation Details
+
+**`thesis_loop` flow:**
+```
+while True:
+  if await risk.is_halted(bot, venue=any):
+    sleep(5); continue
+  candidates = await candidate_repo.claim_next(bot, limit=5)
+  if not candidates:
+    sleep(5); continue
+  await asyncio.gather(*[
+    evaluate_candidate(state, candidate, claim)
+    for (candidate, claim) in candidates
+  ], return_exceptions=True)
+```
+
+**`evaluate_candidate` flow:**
+1. Bind correlation_id to context (logging).
+2. Determine the 4 checks for venue:
+   - Polymarket: base_rate, news, whale, disposition
+   - Alpaca: base_rate, news, unusual_volume, disposition
+3. For whale check (Polymarket): query target wallets currently holding this market via `venue.get_positions()` filtered by target list (cached 5 min).
+4. For unusual_volume check (Alpaca): compute relative volume + price momentum from market data (cached 5 min).
+5. Fan out 4 check calls in parallel via `strategist.evaluate(check_type, venue, market, context)`.
+6. Fan out 3 sub-agent calls in parallel — each is a strategist call with `sub_agent` set; uses different prompt template.
+7. Collect results.
+8. Call `domain/thesis.generate_thesis(input)` to produce ThesisOutcome.
+9. If `thesis_outcome.thesis is not None`: persist via `thesis_repo.save`; emit "thesis-generated" metric.
+10. Mark claim as `done` via `candidate_repo.complete`.
+11. The executor loop (5.5) picks up the thesis from the DB.
+
+**Sub-agent prompt content notes:**
+- Sub-agents are essentially "different framings of the same question": arbitrage looks for related markets; convergence looks for price-trend alignment; whale_copy/flow_copy looks for institutional/smart-money signals.
+- Each sub-agent's prompt includes the 4 check results as context (so it sees what the brain "knows" before voting on size).
+
+**Cost guardrail** (REQ-RISK-007 / REQ-BRN-016):
+- Before each LLM call, check daily LLM spend; if over cap, mark candidate as `error="LLM_SPEND_CAP"` and skip.
+
+#### 5.4.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | One of 4 checks raises | Returns SKIP for that check; thesis aggregator handles missing | REQ-LLM-008 |
+| 2 | All 4 checks SKIP | Thesis outcome = NO_CHECK_CONSENSUS; no thesis row | REQ-BRN-011 |
+| 3 | Sub-agent raises | Returns SKIP; sub-agent consensus may degrade to HALF/SKIP | REQ-EXE-004 |
+| 4 | Strategist hits sustained-error halt mid-evaluation | Bubble up `LLMSustainedErrorsError`; bot halt activated; in-flight evaluations cancelled | REQ-BRN-015 |
+| 5 | Spend cap reached mid-evaluation (after first 3 LLM calls but not all 7) | Continue this candidate (sunk cost); reject NEXT candidate | REQ-RISK-008 |
+| 6 | Claim succeeded but `evaluate_candidate` raised before completion | Claim left in `processing`; cleanup task rolls back stuck claims older than 10 min | Reliability |
+| 7 | Two `claim_next` calls find different candidates simultaneously (different processes can't happen — single bot service; but two coroutines in same process can) | `FOR UPDATE SKIP LOCKED` ensures distinct rows | DD-017 |
+
+#### 5.4.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Cost control | Pre-flight spend check | RISK integration |
+| Observability | Every LLM call logged with full context; correlation_id flows through | DecisionRepo + contextvars |
+| Throughput | Parallel checks + sub-agents; bounded concurrency | `asyncio.gather` |
+
+---
+
+### 5.5 `bot/loops/executor.py`
+
+**File:** `python/claude_poly_bot/bot/loops/executor.py`
+**Responsibility:** Per-bot executor loop. Pull approved theses, run RISK pre-trade check, compute size, place order via venue.
+**Requirements Covered:** REQ-EXE-001..015.
+**Dependencies:** `domain/risk.py`, `domain/kelly.py`, `venues/`.
+
+#### 5.5.1 Public Interface
+
+```python
+async def executor_loop(state: ServiceState) -> None:
+    """Run forever. Polls thesis queue at short cadence."""
+
+async def execute_thesis(state: ServiceState, thesis: Thesis) -> ExecutionOutcome:
+    """Process one thesis. Returns outcome (placed | risk-rejected | dry-run | error)."""
+
+@dataclass
+class ExecutionOutcome:
+    thesis_id: UUID
+    decision: Literal["PLACED_LIVE", "PLACED_SIMULATED", "RISK_REJECTED", "ERROR"]
+    order_id: UUID | None
+    reason: str | None
+```
+
+#### 5.5.2 Internal Implementation Details
+
+**`executor_loop` flow:**
+```
+while True:
+  pending_theses = await thesis_repo.list_pending_for_bot(bot)
+  if not pending_theses:
+    sleep(2); continue
+  for thesis in pending_theses:
+    await execute_thesis(state, thesis)
+    await thesis_repo.mark_executed(thesis.id)
+```
+
+**`execute_thesis` flow:**
+1. Load active risk halt: `await risk_halt_repo.is_halted(bot, venue=thesis.venue)`.
+2. Load bankroll snapshot for (bot, venue).
+3. Compute available capital = bankroll − (sum of open-position notional reserves).
+4. Build `PreTradeInput`; call `evaluate_pre_trade`.
+5. If `decision.allow == False`:
+   - Persist outcome to `executions` audit log (or `orders` row with status=REJECTED + reason).
+   - Return `RISK_REJECTED`.
+6. If `decision.allow == True`:
+   - Compute Kelly size: `kelly_size(SizingInput(p_win, market_price=thesis_implied_entry, bankroll, max_fraction, consensus, min_trade_size))`.
+   - If size == 0: return `RISK_REJECTED` with reason from Kelly output.
+   - Build `OrderSpec` (entry):
+     - `client_order_id = uuid4()`
+     - For Polymarket: `limit_price = midpoint ± slippage` based on side.
+     - For Alpaca: `limit_price = midpoint ± alpaca slippage`; bracket with `stop_price = thesis.stop_price`.
+   - Check `config.live_enabled` for (bot, venue):
+     - If True: `order = await venue.place_order(spec)` (real path; venue handles store-before-submit).
+     - If False (DRY_RUN): persist `Order` directly with `status=SIMULATED`; create simulated position.
+7. On real-path fill (sync return from `place_order` covers immediate fill or polls until TTL):
+   - Insert `Position` linked to thesis + order.
+   - For Alpaca: also submit bracket stop child order (REQ-EXE-015) AFTER entry fill.
+   - Subscribe to streaming updates for the new position (handed off to exit loop).
+
+**`config.live_enabled` semantics:**
+- Per (bot, venue), checked at the executor boundary. Risk evaluation passes; this gate determines REAL vs SIMULATED.
+- A `live_enabled=true` simulated trade fired in DRY_RUN: not allowed — live_enabled and dry_run are inverses; dashboard toggles one which sets the other.
+
+#### 5.5.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Kelly returns size=0 due to negative EV | Persist as `RISK_REJECTED` reason=NEGATIVE_EV; no order | REQ-EXE-003 |
+| 2 | Risk halt active when execute_thesis runs | `RISK_REJECTED` reason=RISK_HALT_ACTIVE | REQ-RISK-003 |
+| 3 | Available capital < min_trade_size | `RISK_REJECTED` reason=INSUFFICIENT_CAPITAL; first occurrence/day fires alert | HLD §5.2 |
+| 4 | Order placed real, venue returns 5xx | Stored as `PENDING`; reconciliation either adopts or marks LOST on next startup; alert fires immediately | HLD §5.6 |
+| 5 | Alpaca bracket stop fails to attach after entry filled | Position open but unprotected; alert fires immediately; client-side stop in exit loop is the fallback | DD-016 |
+| 6 | DRY_RUN flips to LIVE while a thesis is mid-execution | Thesis already in flight uses the value at the start of `execute_thesis`; new theses pick up the new value | REQ-CFG-009 |
+| 7 | Simulated order with `live_enabled=False` | Stored as `status=SIMULATED`; no venue call | REQ-EXE-007 |
+
+#### 5.5.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Correctness | Risk check before every trade; idempotent order ids | DD-020 |
+| Reliability | Failed bracket stop alerts AND exit-loop fallback | Defense in depth |
+| Auditability | Every decision (placed | rejected | simulated) recorded | Persistence |
+
+---
+
+### 5.6 `bot/loops/exit.py`
+
+**File:** `python/claude_poly_bot/bot/loops/exit.py`
+**Responsibility:** Per-bot exit loop + websocket workers. Evaluates triggers and closes positions.
+**Requirements Covered:** REQ-EXIT-001..014, REQ-RISK-003 (exits run during risk halt).
+**Dependencies:** `domain/clock.py`, `venues/`.
+
+#### 5.6.1 Public Interface
+
+```python
+async def exit_loop(state: ServiceState) -> None:
+    """Cadence-driven (default 60s). Evaluates triggers across all open positions."""
+
+async def websocket_workers(state: ServiceState) -> None:
+    """Manages WebSocket subscriptions per (venue × open-position).
+    Reconnect logic; maintains rolling 10-min volume window."""
+
+async def evaluate_exit_triggers(
+    state: ServiceState,
+    position: Position,
+    book: Book,
+    volume_window: VolumeWindow,
+    now_utc: datetime,
+    now_et: datetime,
+) -> ExitDecision: ...
+
+@dataclass
+class VolumeWindow:
+    """Rolling 10-min volume + 20-day average for a market/symbol."""
+    last_10_min_volume: Decimal
+    rolling_avg_volume: Decimal
+
+@dataclass
+class ExitDecision:
+    should_exit: bool
+    reason: ExitReason | None
+    rationale: str
+```
+
+#### 5.6.2 Internal Implementation Details
+
+**`exit_loop`:**
+```
+while True:
+  positions = await position_repo.list_open(bot)
+  for position in positions:
+    book = await get_cached_book(position.market_id)  # WebSocket-fed
+    volume_window = await get_volume_window(position.market_id)
+    decision = evaluate_exit_triggers(...)
+    if decision.should_exit:
+      await trigger_close(position, decision.reason)
+  await sleep(config.exit_cadence_sec)
+```
+
+**`evaluate_exit_triggers` order** (first match wins):
+1. **STOP_LOSS** (Alpaca only): if `current_price <= position.stop_price` and side=BUY (or `>=` for sell-side) → STOP_LOSS.
+2. **HORIZON_EXIT** (Alpaca only): if `now_utc >= position.horizon_ends_at` → HORIZON_EXIT.
+3. **EOD_FLATTEN** (Alpaca only): if venue==alpaca and `eod_flatten_threshold(now_et)` and not `allow_overnight_holds` → EOD_FLATTEN.
+4. **TARGET_HIT**: if `current_price ≥ entry + (target − entry) × target_hit_multiplier` (BUY side) → TARGET_HIT.
+5. **VOLUME_EXIT**: if `volume_window.last_10_min_volume ≥ volume_exit_multiplier × volume_window.rolling_avg_volume` → VOLUME_EXIT.
+6. **STALE_THESIS**: if `(now_utc − position.opened_at) > stale_window_hours` and `|current_price − entry|/entry < stale_price_change_pct` → STALE_THESIS.
+7. **MARKET_RESOLVED** (Polymarket only): if market resolved → MARKET_RESOLVED.
+
+If multiple match: first match wins (stop-loss highest priority).
+
+**`trigger_close`:**
+1. Build `OrderSpec` (exit, `is_entry=False`, `parent_position_id=position.id`).
+2. Determine close price: market for STOP_LOSS / EOD_FLATTEN / HORIZON_EXIT; limit at favorable price for TARGET_HIT / VOLUME_EXIT / STALE_THESIS.
+3. Update `position.status = CLOSING`.
+4. Place via `venue.place_order(spec)` (respects `live_enabled` for simulated path).
+5. On fill: position closed via `position_repo.close`; bankroll updated via `bankroll_repo`.
+
+**`websocket_workers`:**
+- Maintains a registry of `(market_id → subscription)` keyed on currently-open positions.
+- On position open: subscribe.
+- On position close: unsubscribe.
+- Maintains `VolumeWindow` per market via rolling 10-min trade aggregation.
+- On disconnect: exponential backoff reconnect; alerts after 5 failures.
+- Provides cached book + volume window to exit loop.
+
+#### 5.6.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Risk halt active | Exit loop continues; halts only block NEW entries | REQ-RISK-003 |
+| 2 | WebSocket dropped, REST fallback active, exit triggers on stale data | Exit decision based on REST poll (last 60s); accepted as a degradation mode | REQ-EXIT-008, REQ-EXIT-011 |
+| 3 | Alpaca position at 15:54:59 ET on a trading day | Not yet flattened | REQ-EXIT-014 |
+| 4 | Alpaca position at 15:55:00 ET on a trading day | EOD_FLATTEN fires | REQ-EXIT-014 |
+| 5 | Polymarket market resolves while position open | MARKET_RESOLVED reason recorded; PnL settled at resolution price | REQ-EXIT-013 |
+| 6 | Stop-loss fires server-side (Alpaca bracket) and our client-side check would also fire | Server-side wins (idempotency: client-side check sees position already in CLOSING state and skips) | DD-016 |
+| 7 | Multiple triggers fire simultaneously (e.g., target_hit + volume_exit) | First match in priority order wins; logged with details | DD-005 |
+| 8 | Exit order itself fails to place | Position remains OPEN; alert; retry next cycle (60s); after 5 cycles → critical alert | Reliability |
+
+#### 5.6.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Reliability | Multiple defense layers (server-side bracket + client-side stop + EOD flatten) | DD-016 + this loop |
+| Correctness | Trigger priority deterministic | Explicit ordering |
+| Observability | Every exit decision logged with reason | `position_repo.close` |
+
+---
+
+### 5.7 `bot/loops/data_refresh.py`
+
+**File:** `python/claude_poly_bot/bot/loops/data_refresh.py`
+**Responsibility:** One-shot job. Refresh the Polymarket trade dataset to S3 and recompute target-wallet ranking.
+**Requirements Covered:** REQ-DATA-001..009.
+**Dependencies:** `venues/polymarket/` (read-only API), `storage/s3.py`, `storage/repos/target_wallets.py`.
+
+#### 5.7.1 Public Interface
+
+```python
+async def run_data_refresh(state: ServiceState) -> RefreshResult: ...
+
+@dataclass
+class RefreshResult:
+    started_at: datetime
+    ended_at: datetime
+    trades_fetched: int
+    target_wallets_count: int
+    s3_key: str
+    error: str | None
+```
+
+#### 5.7.2 Internal Implementation Details
+
+**Flow:**
+1. Generate `s3_key = polymarket-trades/yyyy=YYYY/mm=MM/dd=DD/trades.parquet`.
+2. Page Polymarket trades endpoint (incremental — start cursor from last refresh + 1 day buffer).
+3. Stream into a Polars LazyFrame; write to local Parquet.
+4. Upload Parquet to S3.
+5. Read back (or in-memory) and compute target wallet ranking:
+   - Group by maker; aggregate trades, win rate (sum of profitable trades / total).
+   - Filter: trades ≥ `min_trades`, win_rate ≥ `min_win_rate`.
+   - Sort by total P&L descending; top N.
+6. Atomic update of `target_wallets` table:
+   - **Sanity guard** (HLD R12): if new list shrinks by > 50% vs current, ABORT and alert (likely upstream bug).
+   - Otherwise: `BEGIN; DELETE; INSERT N rows; COMMIT;` in single transaction with `target_wallet_repo.upsert_all`.
+7. Emit metric `data_refresh.completed`.
+8. Return `RefreshResult`.
+
+**Failure handling:**
+- Any step raise → catch, log, alert, persist `RefreshResult.error`, exit non-zero.
+- Existing `target_wallets` left untouched.
+
+#### 5.7.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Polymarket API rate-limited | Honor retry-after; backoff | REQ-POLY-005 |
+| 2 | Result list shrinks > 50% | ABORT; alert; previous list preserved | REQ-DATA-005, R12 |
+| 3 | First-ever run (no prior dataset) | Full historical fetch (long-running, may take >1h); subsequent runs incremental | REQ-DATA-001 |
+| 4 | S3 throttle | boto3 retries; if exhausted, alert | REQ-DATA-005 |
+| 5 | Concurrent run started while previous still running | Detect via Postgres advisory lock; second run exits with "already running" | REQ-DATA-008 |
+
+#### 5.7.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Reliability | Sanity guard; advisory lock; transactional update | Multiple |
+| Performance | Incremental fetch; Polars streaming | Avoid full re-pull |
+| Auditability | Every run produces a RefreshResult row in `data_refresh_runs` table | Persistence |
+
+---
+
+## Cross-Cutting — Batch 5
+
+### Loop Cadence Summary
+
+| Loop | Service | Cadence | Source |
+|---|---|---|---|
+| `scanner_loop` | scanner | 300s (configurable) | `config.scanner_cadence_sec` |
+| `thesis_loop` | claude-bot, openai-bot | 5s polling | hardcoded short interval |
+| `executor_loop` | claude-bot, openai-bot | 2s polling | hardcoded short interval |
+| `exit_loop` | claude-bot, openai-bot | 60s (configurable) | `config.exit_cadence_sec` |
+| `websocket_workers` | claude-bot, openai-bot | event-driven | n/a |
+| `run_data_refresh` | data-refresh (scheduled) | one-shot, daily 06:00 UTC | EventBridge |
+
+### Backpressure & Concurrency
+
+- Scanner: queue-depth-cap pause (50 per bot).
+- Thesis: bounded `claim_next` (5 per cycle); LLM call concurrency is the natural rate limiter.
+- Executor: serialized within bot (one thesis at a time).
+- Exit: positions evaluated sequentially each cycle (typically ≤20 across both venues).
+
+### Self-Review Findings (Batch 5)
+
+| # | Severity | Module | Finding | Resolution |
+|---|---|---|---|---|
+| 1 | HIGH | `bot/loops/executor.py` | `live_enabled` checked at `execute_thesis` start, but a config change mid-thesis could cause confusion. Specified that thesis-start is the snapshot point | Documented in §5.5.3 edge case 6; behavior is correct (config snapshot at thesis start, new theses see new config) |
+| 2 | MED | `bot/loops/thesis.py` | "Stuck claims" cleanup task mentioned in edge case 6 but not specified anywhere | Add a periodic janitor coroutine in `bot/runner.py`'s TaskGroup that resets `processing` claims older than 10 min back to `new` (or marks `error`); alert on every reset |
+| 3 | MED | `bot/loops/data_refresh.py` | "Concurrent run" guard via Postgres advisory lock; lock name not specified | Use lock id `hash("data_refresh") % 2^31`; documented |
+| 4 | MED | `bot/loops/exit.py` | "MARKET_RESOLVED" needs a way to detect — Polymarket WebSocket emits resolution events, REST polling otherwise | Specify: WebSocket subscription includes resolution events; on disconnect during resolution, REST poll picks it up next cycle |
+| 5 | LOW | `bot/loops/scanner.py` | Cadence drift handling — what if a scan takes 6 min (>5 min cadence)? Specified "next scan starts immediately" — confirmed acceptable; no compounding |
+| 6 | LOW | `bot/loops/exit.py` | Volume window calculation — what's the rolling-average source? 20-day avg from Polymarket trades endpoint? Or from streaming aggregation? | Specify: 20-day rolling avg fetched at position open and refreshed daily; 10-min volume from streaming aggregation |
+
+### Open Items (Batch 5)
+
+- Janitor coroutine for stuck claims to be specified concretely (location: `bot/runner.py`).
+- 20-day rolling-average volume source for VOLUME_EXIT trigger needs concrete data path (Finding #6).
+- Confirm Polymarket exposes resolution events on WebSocket vs requiring REST poll.
+
+---
+
+## Batch 6 — API + CLI
+
+11 modules: `api/main.py`, `api/deps.py`, `api/routes/{bots,markets,config,health,auth}.py`, `api/websocket.py`, `api/middleware/`, `cli/__main__.py`, `cli/{setup_wallets,setup_alpaca,setup_oauth,refresh_data}.py`.
+
+API surface = the dashboard backend (FastAPI). CLI = operator setup tools. Both rely on Batch 1–4 adapters.
+
+---
+
+### 6.1 `api/main.py`
+
+**File:** `python/claude_poly_bot/api/main.py`
+**Responsibility:** FastAPI app construction, lifespan, middleware, route registration.
+**Requirements Covered:** REQ-DASH-001, REQ-DASH-006, REQ-DASH-007.
+**Dependencies:** `fastapi`, `uvicorn`, `bot/state.py`.
+
+#### 6.1.1 Public Interface
+
+```python
+def create_app(state: ServiceState) -> FastAPI:
+    """Constructs the FastAPI app with state pre-wired."""
+
+# Process entry: bot/runner.run_dashboard_api uses uvicorn.Server(create_app(state)).run()
+```
+
+#### 6.1.2 Internal Implementation Details
+
+- Lifespan handler: builds session pool warmup, registers Prometheus / EMF metrics emitter.
+- Middlewares (in order):
+  1. `RequestIdMiddleware` — generate UUID, attach to logger contextvar.
+  2. `LoggingMiddleware` — log each request with method, path, status, latency.
+  3. `AuthMiddleware` — verify session cookie, re-check allowlist, set `request.state.user`.
+  4. `ErrorMiddleware` — catch unhandled, return RFC 7807 problem details.
+  5. CORS — restricted to dashboard's own origin (no third-party).
+  6. CSP — sets `Content-Security-Policy` per HLD §5.4 on all HTML responses.
+- Routers: `bots`, `markets`, `config`, `health`, `auth` mounted under `/api`.
+- WebSocket: `/api/live` registered separately with its own auth.
+- OpenAPI: auto-generated; UI redirects `/api/docs` to `/docs` (FastAPI default).
+
+#### 6.1.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | App startup with bad config | Lifespan logs error, exits non-zero | Reliability |
+| 2 | Request with no session cookie to a protected endpoint | 401 with `Location: /api/auth/login` hint | REQ-DASH-002 |
+| 3 | Request with expired session | 401; UI redirects to login | REQ-AUTH-004 |
+| 4 | Unhandled exception | Logged, returned as RFC 7807 with correlation_id | REQ-DASH-006 |
+
+#### 6.1.4 NFRs
+
+| NFR | Requirement | Addressed by |
+|---|---|---|
+| Security | Auth + CSP middleware | Layered middleware |
+| Observability | Per-request logs with correlation_id | `RequestIdMiddleware` |
+
+---
+
+### 6.2 `api/deps.py`
+
+**File:** `python/claude_poly_bot/api/deps.py`
+**Responsibility:** FastAPI Depends helpers — inject repos, services, current user.
+**Dependencies:** `fastapi`, `bot/state.py`.
+
+#### 6.2.1 Public Interface
+
+```python
+def get_state(request: Request) -> ServiceState: ...      # from app state
+def get_session_maker(state: ServiceState = Depends(get_state)) -> async_sessionmaker: ...
+def get_position_repo(...) -> PositionRepo: ...
+def get_decision_repo(...) -> DecisionRepo: ...
+def get_config_service(...) -> ConfigService: ...
+def get_current_user(request: Request) -> User: ...   # raises 401 if not authenticated
+
+@dataclass(frozen=True)
+class User:
+    email: str
+    github_login: str
+```
+
+#### 6.2.2 Internal Implementation Details
+
+- All Depends are sync; the underlying repos are async (called from route handlers).
+- `get_current_user` reads `request.state.user` set by AuthMiddleware; raises `HTTPException(401)` if absent.
+
+---
+
+### 6.3 `api/routes/bots.py`
+
+**File:** `python/claude_poly_bot/api/routes/bots.py`
+**Responsibility:** Per-bot read endpoints.
+**Requirements Covered:** REQ-DASH-003.
+**Dependencies:** repos via Depends.
+
+#### 6.3.1 Endpoints
+
+```
+GET  /api/bots
+GET  /api/bots/{name}
+GET  /api/bots/{name}/venues/{venue}/positions
+GET  /api/bots/{name}/venues/{venue}/trades?from=&to=&limit=
+GET  /api/bots/{name}/decisions?venue=&check_type=&date_from=&date_to=&verdict=&limit=&cursor=
+```
+
+#### 6.3.2 Response Shapes (Pydantic models)
+
+```python
+class BotSummary(BaseModel):
+    bot: Bot
+    venues: list[VenueState]
+
+class VenueState(BaseModel):
+    venue: VenueName
+    live_enabled: bool
+    bankroll: Money
+    daily_pnl: Money
+    open_positions_count: int
+    risk_halt: RiskHalt | None
+
+class PositionsPage(BaseModel):
+    items: list[Position]
+    total: int
+
+class TradesPage(BaseModel):
+    items: list[Trade]
+    cursor: str | None
+
+class DecisionsPage(BaseModel):
+    items: list[CheckResult]
+    cursor: str | None
+```
+
+#### 6.3.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Unknown bot name | 404 with detail "unknown_bot" | REQ-DASH-006 |
+| 2 | Bot has venue not in registry | 404 "unknown_venue" | REQ-DASH-006 |
+| 3 | Pagination with invalid cursor | 400 with detail | REQ-DASH-006 |
+| 4 | Decision query for a private prompt | LLM-output text-only rendered (no HTML); CSP enforced upstream | HLD §5.4 |
+
+---
+
+### 6.4 `api/routes/markets.py`
+
+#### 6.4.1 Endpoints
+
+```
+GET /api/markets/queue?venue=          # current candidate queue (per venue)
+GET /api/markets/scans?venue=&limit=   # recent scan-run summaries with rejection reasons
+```
+
+#### 6.4.2 Response Shapes
+
+```python
+class CandidateQueueView(BaseModel):
+    venue: VenueName
+    items: list[Candidate]              # joined with both bots' claim status
+    queue_depth_by_bot: dict[Bot, int]
+
+class ScanRunsPage(BaseModel):
+    items: list[MarketScanRun]
+```
+
+---
+
+### 6.5 `api/routes/config.py`
+
+**Responsibility:** Read + patch Tier-1 config; serve audit log.
+**Requirements Covered:** REQ-DASH-004, REQ-CFG-009..012.
+
+#### 6.5.1 Endpoints
+
+```
+GET   /api/config?bot=&venue=
+PATCH /api/config
+GET   /api/config/audit?limit=
+```
+
+#### 6.5.2 PATCH body
+
+```python
+class ConfigPatch(BaseModel):
+    bot: Bot | None
+    venue: VenueName | None
+    field: str
+    value: Any
+    confirmation_checksum: str   # sha256(field + str(value))[:8]
+```
+
+#### 6.5.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | PATCH unknown field | 400 with "unknown_field" | REQ-CFG-011 |
+| 2 | PATCH invalid value type | 400 with Pydantic validation details | REQ-CFG-011 |
+| 3 | PATCH wrong checksum | 400 "checksum_mismatch" — defends against UI race | DD safety |
+| 4 | PATCH `live_enabled` | 200 + audit row + SES alert fires | REQ-CFG-012 |
+| 5 | GET audit | Read-only paginated rows | REQ-CFG-007 |
+
+---
+
+### 6.6 `api/routes/health.py`
+
+**Responsibility:** System health surface — used by dashboard `/health` page and ALB health checks.
+**Requirements Covered:** REQ-UI-009, REQ-RISK-011.
+
+#### 6.6.1 Endpoints
+
+```
+GET /api/health        (authenticated; full snapshot)
+GET /api/health/ping   (unauthenticated; ALB target health probe)
+```
+
+#### 6.6.2 `/api/health` Response
+
+```python
+class HealthSnapshot(BaseModel):
+    timestamp: datetime
+    venues: dict[VenueName, HealthStatus]
+    bots: dict[Bot, BotHealth]
+    last_data_refresh: datetime | None
+    last_scanner_run_per_venue: dict[VenueName, datetime | None]
+    queue_depth_per_bot: dict[Bot, int]
+    db_ok: bool
+
+class BotHealth(BaseModel):
+    bot: Bot
+    venues: dict[VenueName, VenueBotHealth]
+    daily_llm_spend: Money
+    llm_consecutive_errors: int
+
+class VenueBotHealth(BaseModel):
+    venue: VenueName
+    live_enabled: bool
+    bankroll: Money
+    daily_pnl: Money
+    open_positions: int
+    risk_halt: RiskHalt | None
+    # Polymarket-only:
+    usdc_balance: Money | None
+    matic_balance: Money | None
+    # Alpaca-only:
+    alpaca_equity: Money | None
+    alpaca_buying_power: Money | None
+    alpaca_day_trade_count: int | None
+```
+
+---
+
+### 6.7 `api/routes/auth.py`
+
+**Responsibility:** OAuth endpoints, login/logout.
+**Requirements Covered:** REQ-AUTH-001..007.
+
+#### 6.7.1 Endpoints
+
+```
+GET  /api/auth/login            # 302 to GitHub authorize_url
+GET  /api/auth/callback?code=&state=
+POST /api/auth/logout
+GET  /api/auth/me               # current session user (authenticated)
+```
+
+#### 6.7.2 Internal Implementation Details
+
+- `/login` writes a CSRF state cookie and redirects.
+- `/callback` exchanges code; on success, issues session JWT; on failure, redirects to a denial page.
+- `/logout` clears session cookie; logs `auth_event`.
+- All auth events recorded via AuditRepo.
+
+---
+
+### 6.8 `api/websocket.py`
+
+**Responsibility:** `/api/live` WebSocket — real-time P&L + decision stream.
+**Requirements Covered:** REQ-DASH-005, HLD §5.4 (WS auth).
+
+#### 6.8.1 Public Interface
+
+```python
+@router.websocket("/api/live")
+async def live_stream(websocket: WebSocket, ...): ...
+```
+
+#### 6.8.2 Internal Implementation Details
+
+- On connection: validate session cookie (HLD §5.4); validate `Origin` header against allowlist; close 1008 on failure.
+- Re-check allowlist on accept (REQ-AUTH-003).
+- Subscribe to in-process pub/sub (asyncio.Queue) where loops publish events:
+  - `pnl_update` — every position close emits.
+  - `decision_recorded` — every CheckResult emits a summary.
+  - `risk_halt_change` — when halt triggered or lifted.
+  - `config_changed` — when PATCH config returns.
+  - `health_tick` — every 5s heartbeat.
+- Outbound messages: JSON with `type`, `data`, `timestamp`.
+- On disconnect: clean up subscriptions; no resource leak.
+
+#### 6.8.3 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Cookie missing | Close 1008 (policy violation) | HLD §5.4 |
+| 2 | Origin not in allowlist | Close 1008 | HLD §5.4 |
+| 3 | Allowlist removed user mid-session | Next allowlist re-check (every 5 min via heartbeat) closes the WS | REQ-AUTH-003 |
+| 4 | Slow client (back-pressure) | Drop oldest non-critical events; never drop `risk_halt_change` | Reliability |
+| 5 | Server-side queue overflow | Bounded queue with drop-oldest policy | Performance |
+
+---
+
+### 6.9 `api/middleware/`
+
+**Files:** `python/claude_poly_bot/api/middleware/{auth.py, errors.py, request_id.py, csp.py}`
+
+#### 6.9.1 `AuthMiddleware`
+
+- Reads session cookie; validates JWT.
+- Re-checks `auth_allowlist` config on every request (REQ-AUTH-003 enforced everywhere).
+- Sets `request.state.user`.
+- Bypasses for `/api/auth/*`, `/api/health/ping`, OPTIONS preflights.
+
+#### 6.9.2 `ErrorMiddleware`
+
+- Catches uncaught exceptions, maps to RFC 7807 problem details.
+- Maps domain exceptions:
+  - `ConfigValidationError` → 400
+  - `VenueNotRegisteredError` → 404
+  - `Auth*Error` → 401/403
+  - `InvariantViolationError` → 500 + alert (programmer bug)
+- Emits `api.errors{type}` metric.
+
+#### 6.9.3 `RequestIdMiddleware`
+
+- Generates UUID per request; attaches to logging contextvar.
+- Adds `x-request-id` to response headers.
+
+#### 6.9.4 `CspMiddleware`
+
+- Adds `Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'` to all HTML responses.
+- HLD §5.4 XSS defense.
+
+---
+
+### 6.10 `cli/__main__.py`
+
+**File:** `python/claude_poly_bot/cli/__main__.py`
+**Responsibility:** Typer CLI entry point.
+**Requirements Covered:** REQ-WAL-001, REQ-ALPC-004, REQ-AUTH-005, REQ-DATA-009.
+
+#### 6.10.1 Public Commands
+
+```
+claude-poly-bot setup-wallets [--env=dev|prod]
+claude-poly-bot setup-alpaca [--env=dev|prod] [--bot=claude|openai]
+claude-poly-bot setup-oauth [--env=dev|prod]
+claude-poly-bot refresh-data [--env=dev|prod]
+claude-poly-bot db migrate [--env=dev|prod]            # alembic upgrade head wrapper
+claude-poly-bot db seed-defaults [--env=dev|prod]      # writes config defaults
+claude-poly-bot doctor [--env=dev|prod]                # health check from local: DB connect, AWS auth, secrets accessible
+```
+
+All commands respect `CLAUDE_POLY_BOT_ENV` env var if `--env` not supplied; default `dev`.
+
+---
+
+### 6.11 `cli/setup_wallets.py`
+
+**Responsibility:** Generate fresh EVM wallets per bot, store keys in Secrets Manager / `.env`.
+**Requirements Covered:** REQ-WAL-001, REQ-WAL-002, REQ-WAL-009.
+
+#### 6.11.1 Flow
+
+1. Pre-flight checklist (REQ-WAL-009):
+   - Polygon RPC reachable.
+   - Secrets Manager write permission verified (try a dry-run put).
+   - Confirm with operator: "This will generate new keys for {claude, openai}. Existing keys at these names will be overwritten. Continue? [y/N]".
+2. For each bot in [claude, openai]:
+   - Generate via `WalletGenerator.new()` → (address, private_key).
+   - Write key to `claude-poly-bot-{env}-wallet-{bot}` secret (or `.env` for `dev` if `LOCAL=1`).
+   - Print public address.
+3. Print final instructions: "Fund both addresses on Polymarket via your main wallet before starting the bot."
+
+---
+
+### 6.12 `cli/setup_alpaca.py`
+
+**Responsibility:** Walk operator through Alpaca account setup; ingest API keys.
+**Requirements Covered:** REQ-ALPC-004.
+
+#### 6.12.1 Flow
+
+For each bot in [claude, openai] and each mode in [paper, live]:
+1. Print instructions: "Go to alpaca.markets, create a {paper|live} account named '{bot}-bot', generate API keys, paste below."
+2. Prompt for `key_id`, `secret`.
+3. Validate by calling `GET /v2/account` against the appropriate endpoint.
+4. On success: write to Secrets Manager at `claude-poly-bot-{env}-alpaca-{bot}-{paper|live}`.
+5. Print account number + equity for confirmation.
+
+#### 6.12.2 Edge Cases
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|---|---|---|
+| 1 | Wrong key tier (paper key for live endpoint) | 401; CLI prints clear error and prompts again | REQ-ALPC-002 |
+| 2 | Account restricted (e.g., region-blocked) | API returns 403; CLI surfaces details and aborts | REQ-ALPC-010 |
+
+---
+
+### 6.13 `cli/setup_oauth.py`
+
+**Responsibility:** Walk operator through GitHub OAuth app creation; ingest credentials.
+**Requirements Covered:** REQ-AUTH-005, REQ-AUTH-006.
+
+#### 6.13.1 Flow
+
+1. Print step-by-step instructions:
+   - Go to https://github.com/settings/developers
+   - Click "New OAuth App"
+   - Fill in:
+     - Application name: `claude-poly-bot ({env})`
+     - Homepage URL: dashboard URL for env (printed by CLI)
+     - Authorization callback URL: `{dashboard_url}/api/auth/callback`
+   - Generate client secret.
+2. Prompt for `client_id`, `client_secret`.
+3. Validate format (client_id is 20 chars, secret 40+ chars).
+4. Write to Secrets Manager: `claude-poly-bot-{env}-oauth-client-id`, `-client-secret`.
+5. Print configuration confirmation.
+
+---
+
+### 6.14 `cli/refresh_data.py`
+
+**Responsibility:** Manually trigger data refresh.
+**Requirements Covered:** REQ-DATA-009.
+
+#### 6.14.1 Flow
+
+1. Confirm with operator: "This will refetch the Polymarket trade dataset and may take >1h on first run. Continue? [y/N]".
+2. Build minimal ServiceState (only what data_refresh needs).
+3. Call `bot/loops/data_refresh.run_data_refresh(state)`.
+4. Print `RefreshResult` summary.
+
+---
+
+## Cross-Cutting — Batch 6
+
+### Authentication & Authorization Summary
+
+- All `/api/*` except `/api/auth/*` and `/api/health/ping` require auth.
+- `AuthMiddleware` re-checks allowlist on every request.
+- WebSocket inherits cookie from upgrade handshake; allowlist re-checked at accept and on heartbeat.
+- All mutating endpoints require confirmation field (PATCH config) and emit audit + alert.
+
+### Self-Review Findings (Batch 6)
+
+| # | Severity | Module | Finding | Resolution |
+|---|---|---|---|---|
+| 1 | MED | `api/websocket.py` | Re-checking allowlist every 5 min via heartbeat is insufficient for "instant" allowlist removal | Acceptable for v1 (single-user); documented as known property |
+| 2 | MED | `api/routes/config.py` | PATCH endpoint accepts `value: Any` — relies on pydantic discriminated validation downstream. Could leak through if discriminator missing | `ConfigService.validate` does field-level type check; reject unknown field early; fields without explicit schema rejected |
+| 3 | LOW | `cli/setup_wallets.py` | Confirmation prompt overwrites existing keys — risk of accidental key loss | Add a "If you have funded these addresses, ABORT now" warning; require typing "yes" not just "y" |
+| 4 | LOW | `api/main.py` | CORS allowlist not specified explicitly | Set CORS to dashboard's own ALB origin only; no third-party origins permitted |
+| 5 | LOW | `cli/__main__.py` | `LOCAL=1` env var for `.env` writes is implicit | Document in README; otherwise ambiguous |
+
+### Open Items (Batch 6)
+
+- WebSocket pub/sub mechanism: in-process `asyncio.Queue` is fine for dashboard-api as a single Fargate task (no horizontal scale). Document this.
+- Frontend's expected response shape locked here; frontend LLD (Batch 7) confirms.
+- `claude-poly-bot doctor` command: nice-to-have; consider deferring to v2.
+
+---
+
+## Batch 7 — Frontend (Next.js)
+
+Modules under `frontend/`. Implements the dashboard UI per REQ-UI-001..012 against the API contract from Batch 6.
+
+**Stack:**
+- Next.js 15 App Router with SSR
+- React 18 + TypeScript strict mode
+- TailwindCSS for styling
+- TanStack Query (React Query) for server state
+- React WebSocket hook for `/api/live`
+- Recharts for P&L + decision-rate charts
+- Zod for client-side response validation
+- Playwright for E2E tests
+
+**Module groups:** layouts/pages, components, lib (API client + WS client + types).
+
+---
+
+### 7.1 `frontend/app/layout.tsx` + `frontend/app/page.tsx` — Root + Overview
+
+#### 7.1.1 `app/layout.tsx`
+
+**Responsibility:** Root layout, providers, global navigation, DRY/LIVE banner.
+**Requirements Covered:** REQ-UI-001, REQ-UI-010, REQ-UI-012.
+
+**Internals:**
+- Wraps with `<QueryClientProvider>` and `<WebSocketProvider>` (custom).
+- Global header: `<NavBar>` with links to overview, bots, decisions, markets, config, health; user dropdown with logout.
+- Global banner: `<ModeBanner>` reading `/api/health` on SSR; renders 4 colored chips per (bot, venue) showing DRY/LIVE state. Banner is sticky on top.
+- Auth guard: SSR fetches `/api/auth/me`; if 401, redirects to `/api/auth/login`.
+- CSP: meta tag for client-side enforcement (server sets header too).
+
+#### 7.1.2 `app/page.tsx` — Overview
+
+**Responsibility:** Side-by-side P&L + summary stats for all 4 (bot, venue) pairs.
+**Requirements Covered:** REQ-UI-003, REQ-UI-004, REQ-UI-011.
+
+**Layout:**
+```
+┌─────────────────────────────────────────────────────┐
+│ [Combined cumulative P&L chart — 4 series]          │
+└─────────────────────────────────────────────────────┘
+┌──────────────────┬──────────────────┐
+│ Claude×Polymarket│ Claude×Alpaca    │   Per-pair P&L cards
+├──────────────────┼──────────────────┤   in 2×2 grid
+│ OpenAI×Polymarket│ OpenAI×Alpaca    │
+└──────────────────┴──────────────────┘
+┌─────────────────────────────────────────────────────┐
+│ Summary table: bot │ venue │ P&L │ trades │ win%   │
+│                    │       │     │        │ Sharpe │
+└─────────────────────────────────────────────────────┘
+```
+
+**Data sources:**
+- `GET /api/bots` (SSR) — initial load.
+- `/api/live` WS subscription — `pnl_update` events update charts in real time.
+
+**Components used:** `<PnLChart>`, `<PairPnLCard>`, `<SummaryTable>`, `<ModeBanner>`.
+
+---
+
+### 7.2 `frontend/app/bots/[name]/page.tsx` — Per-Bot Detail
+
+**Responsibility:** Detail view for one bot, with a tab per venue.
+**Requirements Covered:** REQ-UI-005.
+
+**Layout:**
+- Top: `<BotHeader>` with bot name, total P&L across venues.
+- Tabs: `[Polymarket]` `[Alpaca]` — venue selector.
+- Per-venue tab content:
+  - Open positions table (sortable; click row → details modal).
+  - Trade history (paginated; cursor-based).
+  - Recent decisions (last 50, with each decision's full prompt + LLM response in expandable rows).
+  - Per-(bot, venue) config snapshot (read-only quick view; "Edit" button → /config).
+
+**Data sources:**
+- SSR: `/api/bots/{name}/venues/{venue}/positions`, `/trades`, `/decisions`.
+- Live: WS `pnl_update` and `decision_recorded` events filtered by bot+venue.
+
+---
+
+### 7.3 `frontend/app/decisions/page.tsx` — Decision Log
+
+**Responsibility:** Searchable list of every LLM decision across both bots.
+**Requirements Covered:** REQ-UI-006.
+
+**Layout:**
+- Top: filter bar: bot, venue, check_type, sub_agent, verdict, date range (default last 24h).
+- Below: paginated infinite-scroll table; each row collapsible to show full prompt + response.
+
+**Data:** `GET /api/bots/{bot}/decisions?venue=&check_type=&...`. Two parallel calls (one per bot) merged client-side and sorted by `created_at` desc.
+
+**Cross-bot diff view (optional v1.1):** select a single market; show side-by-side what Claude said vs OpenAI said for the same `scan_correlation_id`. Powered by `decision_correlation_id = uuid5(scan_correlation_id, bot)` (DD-019).
+
+---
+
+### 7.4 `frontend/app/markets/page.tsx` — Scanner Output
+
+**Responsibility:** Current candidate queue + recent rejected markets per venue.
+**Requirements Covered:** REQ-UI-007.
+
+**Layout:**
+- Tabs: Polymarket, Alpaca.
+- Top: candidate queue table (current pending candidates, with both bots' claim status).
+- Bottom: recent rejected markets with rejection reason (last 100).
+
+**Data:** `GET /api/markets/queue?venue=`, `GET /api/markets/scans?venue=&limit=100`.
+
+---
+
+### 7.5 `frontend/app/config/page.tsx` — Config Editor
+
+**Responsibility:** Tier-1 config editor with validation, confirmation, and audit log.
+**Requirements Covered:** REQ-UI-008, REQ-CFG-009..012.
+
+**Layout:**
+- Section: "Bot-global config" (per bot).
+- Section: "Per-(bot, venue) config" — 4 sub-sections, one per pair.
+- Each field: typed input (text, number, decimal, boolean toggle, dropdown), client-side validation matching backend Pydantic constraints, "Save" button per group.
+- "Save" flow:
+  1. Compute `confirmation_checksum = sha256(field + str(value))[:8]` client-side.
+  2. Open confirmation modal: "You're about to change `{field}` from `{old}` to `{new}` on `{bot, venue}`. This may affect live trading. Type `CONFIRM` to proceed."
+  3. PATCH `/api/config` with body.
+  4. On 200: refresh data + audit log.
+  5. On 4xx: show error inline.
+- Right sidebar: paginated `config_audit` log.
+
+**`live_enabled` toggle** is the most sensitive field:
+- Visually styled distinctively (red border, danger icon).
+- Confirmation modal copy: "TOGGLING TO LIVE WILL PLACE REAL ORDERS WITH REAL MONEY."
+
+---
+
+### 7.6 `frontend/app/health/page.tsx` — System Health
+
+**Responsibility:** Operational health dashboard.
+**Requirements Covered:** REQ-UI-009.
+
+**Layout:**
+- Top row: per-venue API health (latency, last-success).
+- Per-bot panels:
+  - Daily LLM spend bar with cap line.
+  - Consecutive LLM errors counter.
+  - Per-venue: USDC/MATIC (Polymarket) or equity/buying-power/day-trades (Alpaca).
+  - Risk halt status with "lift" button (out of scope v1; show only).
+  - LIVE_ENABLED current value (link to /config to change).
+- Bottom: last-scanner-run, last-data-refresh, queue depths.
+
+**Data:** `GET /api/health` (5s polling refresh), supplemented by WS `health_tick` events.
+
+---
+
+### 7.7 `frontend/components/`
+
+**Files:** `frontend/components/{NavBar.tsx, ModeBanner.tsx, PnLChart.tsx, PairPnLCard.tsx, SummaryTable.tsx, BotHeader.tsx, PositionsTable.tsx, TradesTable.tsx, DecisionsTable.tsx, ConfigField.tsx, ConfirmationModal.tsx, AuditLogPanel.tsx, ScannerScoreCell.tsx, RiskHaltChip.tsx, PromptResponseViewer.tsx, ...}`
+
+Key shared components:
+
+#### `PnLChart`
+- Recharts `LineChart`. 4 series (one per bot×venue). X-axis: time. Y-axis: cumulative P&L USD. Live-updated via WS.
+- Toggle: cumulative vs daily delta.
+
+#### `ConfigField`
+- Wraps each Tier-1 field with type-appropriate input + label + tooltip explaining the field + min/max indicator + dirty-state outline.
+- Validates client-side using a Zod schema mirroring Pydantic models.
+
+#### `ConfirmationModal`
+- Reusable for any mutating action. Requires typing a confirmation phrase (defaults to "CONFIRM"). Disabled "Submit" button until phrase matches.
+
+#### `PromptResponseViewer`
+- Renders LLM prompts and responses **as text only** (defense in depth — XSS HLD §5.4). Uses `<pre>` with `whitespace-pre-wrap`. NEVER `dangerouslySetInnerHTML`. ESLint rule `react/no-danger: error` enforces this repo-wide.
+- Optional code-block highlighting via `react-syntax-highlighter` (no HTML injection — uses className-based highlighting).
+
+---
+
+### 7.8 `frontend/lib/`
+
+**Files:** `frontend/lib/{api.ts, ws.ts, types.ts, hooks.ts}`
+
+#### `lib/api.ts`
+- Wraps `fetch` with cookie-based auth, JSON parsing, error mapping (RFC 7807 → typed errors).
+- Provides typed methods for every endpoint (one-to-one with backend routes).
+- TanStack Query `queryFn` wrappers — `useBotsQuery`, `usePositionsQuery`, etc.
+
+#### `lib/ws.ts`
+- WebSocket client wrapping `/api/live`.
+- Reconnect with exponential backoff (1, 2, 4, 8, 16 s; max 30).
+- Event-typed: `PnLUpdate`, `DecisionRecorded`, `RiskHaltChange`, `ConfigChanged`, `HealthTick`.
+- Provides `<WebSocketProvider>` context + `useWebSocketEvent(type, callback)` hook.
+
+#### `lib/types.ts`
+- TypeScript types mirroring backend Pydantic models, generated from OpenAPI spec via `openapi-typescript` at build time.
+- Zod schemas for runtime validation of API responses.
+
+#### `lib/hooks.ts`
+- `useAuth()` — session state + redirect.
+- `useLiveBotPnL(bot, venue)` — combines query result with WS updates.
+- `useConfigField(bot, venue, field)` — reads + computes dirty state.
+
+---
+
+### 7.9 Frontend Build & Deploy
+
+- Built as a Next.js standalone server (`output: 'standalone'`).
+- Dockerfile includes `next build` then a slim runtime image.
+- ECS Fargate task runs `node server.js` (Next.js standalone entry).
+- ALB routes `/` (and other non-`/api/*` paths) to the dashboard-ui task; `/api/*` to dashboard-api.
+
+---
+
+## Cross-Cutting — Batch 7
+
+### Type Safety End-to-End
+
+- Backend FastAPI publishes OpenAPI 3.1 spec (REQ-DASH-007).
+- Frontend's CI runs `openapi-typescript` to generate `lib/types.ts` from the spec.
+- Compile-time check: any backend response shape change breaks the frontend build immediately.
+- Zod runtime validation of API responses on top, in case generated types lag.
+
+### Accessibility
+
+- All interactive components use semantic HTML.
+- `<dialog>` for modals (or Radix UI alternative).
+- WCAG 2.1 AA color contrast.
+- Keyboard navigation for tables and dropdowns.
+
+### Performance
+
+- SSR for first paint; React Query for client-side hydration.
+- Charts: memoize series arrays; data-window cap at last 1000 points per series for browser perf.
+- Live WS updates throttled to ≤2 / second (debounce).
+
+### Self-Review Findings (Batch 7)
+
+| # | Severity | Module | Finding | Resolution |
+|---|---|---|---|---|
+| 1 | MED | `app/decisions/page.tsx` | Cross-bot diff view labelled v1.1 — should it be v1? Decision logs are core to the comparison goal | Re-read REQ-UI-006: "list every LLM call with filters" — diff view is a usability enhancement, not a requirement. Keeping as v1.1 (post-MVP) but easy add. |
+| 2 | MED | `lib/types.ts` | `openapi-typescript` codegen at build time — what about the dev loop? | Add a `npm run codegen` script + GitHub Action that fails CI if generated types are out of date with the published OpenAPI |
+| 3 | MED | `app/config/page.tsx` | Toggle to LIVE shown the same way as toggle to DRY — but the asymmetry of risk warrants different UX treatments | Toggle to LIVE: red border + danger banner + typing confirmation phrase + extra "I understand real money is at risk" checkbox. Toggle to DRY: standard confirmation only. |
+| 4 | LOW | `components/PnLChart.tsx` | 4 series on one chart can be visually busy | Provide toggle for "all in one" vs "2×2 small multiples"; default to small multiples |
+| 5 | LOW | `frontend/lib/ws.ts` | WS reconnect storms not throttled cross-tab if user opens dashboard in 2 tabs | Acceptable for single-user solo operator; not a correctness issue |
+
+### Open Items (Batch 7)
+
+- Decide between Recharts and visx for charts (Recharts simpler, visx more flexible). Default to **Recharts**.
+- Generate types from OpenAPI continuously vs on-demand: default **continuously in CI**, on-demand locally via `npm run codegen`.
+- Consider Storybook for component dev — defer to v2.
+
+---
+
+## Batch 8 — Infrastructure (CloudFormation, Docker, CI/CD, devcontainer)
+
+Deployment + local dev parity. All AWS infra in CloudFormation per HLD DD-008. CI/CD per REQ-CICD-001..009.
+
+---
+
+### 8.1 `infra/cloudformation/root.yaml` — Root Stack
+
+**Responsibility:** Orchestrates nested stacks for one environment. Parameterized.
+**Requirements Covered:** REQ-INF-001..010, REQ-INF-002 (env prefix), REQ-INF-004 (dev/prod parity).
+
+#### 8.1.1 Parameters
+
+```yaml
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+  Region:
+    Type: String
+    Default: us-east-1
+  DomainName:
+    Type: String   # e.g., bot-dev.example.com or bot.example.com
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+  ImageTag:
+    Type: String   # ECR tag for ECS task definitions
+  AlertEmails:
+    Type: CommaDelimitedList
+    Default: yaw.etse@gmail.com
+```
+
+#### 8.1.2 Nested Stacks
+
+```yaml
+Resources:
+  NetworkStack:        AWS::CloudFormation::Stack  # network.yaml
+  EcrStack:            AWS::CloudFormation::Stack  # ecr.yaml
+  SecretsStack:        AWS::CloudFormation::Stack  # secrets.yaml
+  RdsStack:            AWS::CloudFormation::Stack  # rds.yaml (DependsOn: NetworkStack)
+  EcsStack:            AWS::CloudFormation::Stack  # ecs.yaml (DependsOn: Network, Rds, Secrets, Ecr)
+  AlbStack:            AWS::CloudFormation::Stack  # alb.yaml (DependsOn: Network, Ecs)
+  SesStack:            AWS::CloudFormation::Stack  # ses.yaml
+  EventBridgeStack:    AWS::CloudFormation::Stack  # eventbridge.yaml (DependsOn: Ecs)
+  S3Stack:             AWS::CloudFormation::Stack  # s3 + lifecycle for trade data + log archives
+  IamStack:            AWS::CloudFormation::Stack  # roles + policies (referenced by Ecs)
+  Route53Stack:        AWS::CloudFormation::Stack  # ACM cert + DNS A record → ALB
+```
+
+Outputs from root: ALB DNS, dashboard URL, RDS endpoint, ECR URI.
+
+#### 8.1.3 Naming Convention
+
+All resources prefixed with `${AWS::StackName}-` which CFN sets to `claude-poly-bot-{env}`. So:
+- VPC: `claude-poly-bot-dev-vpc`
+- RDS: `claude-poly-bot-dev-db`
+- ECR: `claude-poly-bot/bot`, `claude-poly-bot/api`, `claude-poly-bot/ui` (account-level shared across envs; tags differentiate)
+- Secrets: `claude-poly-bot-dev-{name}`
+
+---
+
+### 8.2 `infra/cloudformation/network.yaml`
+
+**Resources:**
+- VPC: 10.0.0.0/16 (dev) or 10.1.0.0/16 (prod).
+- 3 public subnets (one per AZ in us-east-1a/b/c) for ALB + NAT.
+- 3 private subnets for ECS tasks.
+- 3 DB subnets for RDS.
+- IGW + NAT gateway (single NAT for cost; not HA at AZ level — accepted per HLD non-goal "no HA").
+- Route tables wired appropriately.
+- VPC endpoints for S3, ECR, Secrets Manager, CloudWatch Logs (avoid NAT for AWS API traffic).
+
+**Outputs:** VpcId, public/private/db subnet IDs.
+
+---
+
+### 8.3 `infra/cloudformation/rds.yaml`
+
+**Resources:**
+- `AWS::RDS::DBSubnetGroup` (DB subnets).
+- `AWS::EC2::SecurityGroup` (ingress 5432 from ECS SG only).
+- `AWS::RDS::DBInstance`:
+  - `DBInstanceClass: db.t4g.micro`
+  - `Engine: postgres`
+  - `EngineVersion: 16.x` (latest minor)
+  - `AllocatedStorage: 20`, `MaxAllocatedStorage: 100`
+  - `BackupRetentionPeriod: 7` (prod) / `1` (dev)
+  - `MultiAZ: false` (cost; HLD non-goal)
+  - `MasterUsername: claude_poly_bot`
+  - `MasterUserPassword: { Ref: DbMasterPassword }` (referenced from Secrets Manager via dynamic reference)
+  - `EnablePerformanceInsights: true`
+  - `DeletionProtection: true` (prod) / `false` (dev)
+  - `StorageEncrypted: true`
+
+**Outputs:** Endpoint, Port, DbSecretArn.
+
+---
+
+### 8.4 `infra/cloudformation/secrets.yaml`
+
+**Resources:** One `AWS::SecretsManager::Secret` per:
+- `claude-poly-bot-{env}-db-master-password` (auto-generated)
+- `claude-poly-bot-{env}-anthropic-api-key` (manual put after stack create)
+- `claude-poly-bot-{env}-openai-api-key` (manual)
+- `claude-poly-bot-{env}-wallet-claude` (filled by `setup-wallets`)
+- `claude-poly-bot-{env}-wallet-openai`
+- `claude-poly-bot-{env}-alpaca-claude-paper`
+- `claude-poly-bot-{env}-alpaca-claude-live`
+- `claude-poly-bot-{env}-alpaca-openai-paper`
+- `claude-poly-bot-{env}-alpaca-openai-live`
+- `claude-poly-bot-{env}-oauth-client-id`
+- `claude-poly-bot-{env}-oauth-client-secret`
+- `claude-poly-bot-{env}-session-secret` (auto-generated, 64 random bytes)
+- `claude-poly-bot-{env}-polygon-rpc-url`
+
+Secrets without `GenerateSecretString` are created with placeholder content; operator populates via CLI before bot startup.
+
+---
+
+### 8.5 `infra/cloudformation/ecs.yaml`
+
+**Resources:**
+- `AWS::ECS::Cluster`: `claude-poly-bot-{env}`
+- `AWS::ECS::TaskDefinition` × 6 (5 always-on services + 1 scheduled task):
+
+| Task | CPU | Memory | Image | Command |
+|---|---|---|---|---|
+| scanner | 256 | 512 | `claude-poly-bot/bot:{tag}` | `python -m claude_poly_bot scanner` |
+| claude-bot | 512 | 1024 | `claude-poly-bot/bot:{tag}` | `python -m claude_poly_bot claude-bot` |
+| openai-bot | 512 | 1024 | `claude-poly-bot/bot:{tag}` | `python -m claude_poly_bot openai-bot` |
+| dashboard-api | 512 | 1024 | `claude-poly-bot/api:{tag}` | `python -m claude_poly_bot dashboard-api` |
+| dashboard-ui | 512 | 1024 | `claude-poly-bot/ui:{tag}` | `node server.js` |
+| data-refresh | 1024 | 2048 | `claude-poly-bot/bot:{tag}` | `python -m claude_poly_bot data-refresh` |
+
+- `AWS::ECS::Service` for each always-on task: `desired_count=1`, `launch_type=FARGATE`, `LaunchType=FARGATE`. (`scanner` is one service; both bots are individual services.)
+- Task IAM roles: per-service execution role + task role (least privilege per HLD §5.4):
+  - bot tasks can read their own bot-scoped secrets only
+  - dashboard-api can read config secrets but NOT wallet keys
+  - dashboard-ui has no AWS perms
+- Container env vars: `CLAUDE_POLY_BOT_ENV`, `BOT` (claude/openai), `POLYGON_RPC_URL` (from Secrets Manager via valueFrom), DB URL (constructed from RDS outputs + secret), AWS_REGION.
+- Container `secrets[]` references for each secret consumed.
+- Health checks: HTTP for dashboard-api (`/api/health/ping`); custom command for bots (`python -c 'import sys; sys.exit(0)'`).
+- Deployment config: `MinimumHealthyPercent=0` for solo bot services (so update can fully replace), `MaximumPercent=100`. For dashboard-api/ui: `MinimumHealthyPercent=50, MaximumPercent=200` (zero-downtime rolling).
+- Logs: CloudWatch Logs with `/ecs/claude-poly-bot-{env}/{task}` log group.
+
+**Outputs:** Cluster name, service ARNs, task-def ARNs.
+
+---
+
+### 8.6 `infra/cloudformation/ecr.yaml`
+
+**Resources:** 3 ECR repos: `claude-poly-bot/bot`, `claude-poly-bot/api`, `claude-poly-bot/ui`.
+
+Each with:
+- Lifecycle policy: keep last 10 untagged + last 30 tagged images; delete older.
+- Image scanning on push enabled.
+- Repository policy: read access from the AWS account's ECS task execution role.
+
+---
+
+### 8.7 `infra/cloudformation/alb.yaml`
+
+**Resources:**
+- `AWS::ElasticLoadBalancingV2::LoadBalancer` (internet-facing).
+- HTTPS listener (443) with ACM cert.
+- HTTP listener (80) → 301 redirect to HTTPS.
+- 2 target groups:
+  - `dashboard-api-tg` (path `/api/*`)
+  - `dashboard-ui-tg` (default catch-all)
+- Listener rules route `/api/*` to api TG, everything else to ui TG.
+- Health check: `/api/health/ping` for api TG, `/` for ui TG.
+- WAF: AWS managed rules — common attack patterns (out of scope for v1 detail; documented as a hook).
+
+**Outputs:** ALB DNS, listener ARNs.
+
+---
+
+### 8.8 `infra/cloudformation/ses.yaml`
+
+**Resources:**
+- `AWS::SES::EmailIdentity` for sender (verified domain or address — operator-owned; documented prerequisite).
+- Configuration set with reputation tracking.
+- Identity policy permitting bot tasks to send.
+
+(Domain verification is a manual one-time setup step documented in README.)
+
+---
+
+### 8.9 `infra/cloudformation/eventbridge.yaml`
+
+**Resources:**
+- `AWS::Events::Rule` `claude-poly-bot-{env}-data-refresh-daily`:
+  - Schedule: `cron(0 6 * * ? *)` — 06:00 UTC daily.
+  - Target: ECS RunTask of `data-refresh` task definition.
+  - Input: env vars passed.
+
+---
+
+### 8.10 `infra/params/{dev,prod}.json`
+
+Per-environment parameter files:
+
+```json
+// dev.json
+{
+  "Environment": "dev",
+  "DomainName": "bot-dev.yaw.example",
+  "HostedZoneId": "...",
+  "AlertEmails": "yaw.etse@gmail.com"
+}
+
+// prod.json (same shape, different values)
+```
+
+---
+
+### 8.11 `docker/Dockerfile.bot`
+
+Multi-stage build:
+
+```dockerfile
+FROM python:3.12-slim as builder
+WORKDIR /app
+RUN pip install uv
+COPY python/pyproject.toml python/uv.lock ./
+RUN uv pip install --system --no-cache -e .
+
+FROM python:3.12-slim
+WORKDIR /app
+COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY python/claude_poly_bot ./claude_poly_bot
+COPY python/alembic.ini ./
+COPY python/alembic ./alembic
+ENV PYTHONUNBUFFERED=1
+USER 1000:1000
+ENTRYPOINT ["python", "-m", "claude_poly_bot"]
+```
+
+The bot image runs scanner, claude-bot, openai-bot, and data-refresh — discriminated by CMD args.
+
+---
+
+### 8.12 `docker/Dockerfile.api` and `Dockerfile.ui`
+
+- `Dockerfile.api`: thin wrapper around the bot image but ENTRYPOINT runs `dashboard-api` service.
+- `Dockerfile.ui`: separate Node 22 base; multi-stage with `next build` then `next start` standalone runtime.
+
+In practice, `Dockerfile.api` and `Dockerfile.bot` could be the same image with different commands — leaning that way to halve build time. To be confirmed in impl phase.
+
+---
+
+### 8.13 `docker-compose.yml` — Local Dev
+
+Defines:
+- `db` — Postgres 16 with persistent volume.
+- `bot` — runs both bots in parallel (or one container per bot, configurable).
+- `dashboard-api` and `dashboard-ui` — same images as prod.
+- `mailhog` (or similar) — local SMTP catch-all so SES alerts go somewhere visible.
+- LocalStack (optional) — for S3 + Secrets Manager local fakes.
+
+`.env` file (gitignored) provides:
+- `DATABASE_URL`
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
+- `LOCAL=1` (signals CLI to write to `.env` instead of Secrets Manager)
+- `LIVE_ENABLED=false` (always; local never goes live)
+
+---
+
+### 8.14 `.github/workflows/pr.yml`
+
+**Trigger:** `on: pull_request`
+
+**Jobs:**
+1. `lint`:
+   - Python: `ruff check`, `mypy --strict`.
+   - Frontend: `eslint`, `tsc --noEmit`.
+2. `test-python`:
+   - Spin up Postgres testcontainer.
+   - Run `pytest tests/unit tests/integration`.
+3. `test-frontend`:
+   - Run `vitest`.
+4. `build`:
+   - Build Docker images (bot, api, ui) — verify they build, do NOT push.
+5. `cfn-lint`:
+   - Lint all CloudFormation templates.
+
+All jobs run in parallel (matrix where applicable).
+
+---
+
+### 8.15 `.github/workflows/deploy-dev.yml`
+
+**Trigger:** `on: push: branches: [develop]`
+
+**Jobs:**
+1. `lint+test` — same as PR.
+2. `build-and-push`:
+   - OIDC assume-role to deploy IAM role.
+   - Build images.
+   - Tag with `git sha`.
+   - Push to ECR.
+3. `deploy`:
+   - `aws cloudformation deploy --template-file infra/cloudformation/root.yaml --parameter-overrides ImageTag=$SHA Environment=dev ... --capabilities CAPABILITY_NAMED_IAM`.
+4. `smoke-test`:
+   - Wait for ECS service stability (max 10 min).
+   - Hit `/api/health/ping` until 200.
+   - Hit `/api/health` (with synthesized session — restricted CI cookie).
+   - Verify both bots' tasks are RUNNING.
+5. `rollback-on-failure`:
+   - If smoke-test fails, redeploy previous ImageTag (saved as artifact from prior successful run).
+   - Send SES alert.
+
+---
+
+### 8.16 `.github/workflows/deploy-prod.yml`
+
+**Trigger:** `on: push: branches: [main]`
+
+Same shape as deploy-dev, but:
+- Targets `prod` environment with prod params.
+- Adds an explicit "manual approval" environment gate (GitHub Environment with required reviewers — defaults to operator).
+- Smoke-test includes verifying that LIVE_ENABLED is **NOT** unintentionally true on bots that should be DRY (alert if mismatch).
+
+---
+
+### 8.17 `.github/workflows/rollback.yml`
+
+**Trigger:** `on: workflow_dispatch` (manual).
+
+**Inputs:** environment (dev/prod), target ImageTag.
+
+**Job:** redeploy the specified ImageTag using the same CFN template.
+
+---
+
+### 8.18 `.devcontainer/devcontainer.json`
+
+For Codespaces / Claude Code Web:
+
+```json
+{
+  "name": "claude-poly-bot",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "pip install uv && cd python && uv pip install --system -e '.[dev]' && cd ../frontend && npm ci",
+  "forwardPorts": [3000, 8000, 5432],
+  "containerEnv": {
+    "CLAUDE_POLY_BOT_ENV": "dev",
+    "LOCAL": "1"
+  }
+}
+```
+
+GitHub Codespaces uses this; Claude Code Web inherits.
+
+---
+
+## Cross-Cutting — Batch 8
+
+### Deployment Sequence (first-time setup)
+
+1. Operator creates AWS account, sets up IAM identity-center.
+2. Run `gh secret set AWS_DEPLOY_ROLE_ARN ...` with OIDC role ARN.
+3. Manual one-time: ACM cert validation + Route 53 hosted zone + SES domain verification.
+4. Push to `develop` → `deploy-dev.yml` builds infra + secrets are created with placeholders.
+5. Operator runs `claude-poly-bot setup-wallets`, `setup-alpaca`, `setup-oauth` — populates secrets.
+6. Manually puts Anthropic + OpenAI keys in Secrets Manager (or via CLI extension).
+7. Restart bot ECS services so they pick up the secrets.
+8. Hit dashboard, log in, verify health, run a few decisions in DRY mode.
+9. When confident: flip LIVE_ENABLED via dashboard.
+
+### Cost Estimate (us-east-1, prod, monthly)
+
+- ECS Fargate: 5 always-on × ~$8/mo = **$40**
+- RDS db.t4g.micro: ~$15/mo
+- ALB: ~$20/mo
+- NAT Gateway: ~$30/mo
+- Data transfer: ~$5/mo
+- Secrets Manager: 13 secrets × $0.40 = ~$5/mo
+- S3 + EBS: ~$5/mo
+- CloudWatch Logs: ~$5/mo
+- SES: < $1/mo
+- Route 53: ~$1/mo
+- **Total: ~$125/mo prod**, similar for dev (~$80/mo with smaller ECS sizes)
+- **Combined: ~$200/mo** (matches Batch 5 estimate window)
+
+This exceeds the original $25/mo VPS goal but matches the spec's full CI/CD + dev/prod parity + dashboard requirements.
+
+### Self-Review Findings (Batch 8)
+
+| # | Severity | Module | Finding | Resolution |
+|---|---|---|---|---|
+| 1 | HIGH | `cloudformation/ecs.yaml` | `MinimumHealthyPercent=0` for bot services means a deploy briefly has 0 running bots. For Polymarket/Alpaca with open positions, that's a window where exit logic doesn't fire | Document that deploys that affect bot containers should be done during low-volatility periods or in DRY_RUN mode; alternative: rolling deploy with 100/200 percent (briefly running 2 bot containers — but they'd race on candidate claims). Stick with `0/100` and rely on server-side stops for exit safety during deploy windows. |
+| 2 | HIGH | `cloudformation/network.yaml` | Single NAT Gateway = single point of failure; HLD non-goal "no HA" allows this; cost ~$30/mo | Documented; HA NAT (per AZ) deferred |
+| 3 | MED | `cloudformation/secrets.yaml` | Anthropic/OpenAI keys created with placeholders; require operator to populate manually | Add `claude-poly-bot setup-llm-keys` CLI command (post-MVP) to streamline; acceptable manual step for v1 |
+| 4 | MED | `cloudformation/ecs.yaml` | bot tasks have **shared** image but different commands — could break least privilege if container env grants broader access | IAM is per-task-role, not per-image. Each task definition has its own role. Confirmed. |
+| 5 | MED | `.github/workflows/deploy-prod.yml` | Smoke-test verifying LIVE_ENABLED isn't unexpectedly true requires querying production DB | Add a smoke-test script that hits `/api/health` (authenticated with a CI-restricted cookie) and asserts LIVE_ENABLED matches expected (defaults: false) |
+| 6 | LOW | `docker-compose.yml` | LocalStack optional — without it, S3 + Secrets calls fail locally | Default to LocalStack ON in compose; document opt-out for operators with real AWS access from local |
+
+### Open Items (Batch 8)
+
+- Confirm whether to use one Dockerfile (`Dockerfile.bot`) for all Python services or separate `Dockerfile.api` (per Finding §8.12). Lean toward shared.
+- Verify ACM + Route 53 + SES domain verification can be partially automated via CFN (some pieces require manual DNS validation).
+- Identify the OIDC trust policy template for GitHub Actions → AWS — well-documented elsewhere; will commit a sample.
+
+---
+
+## Phase 3B Final Summary
+
+All 8 batches of LLDs complete:
+
+| Batch | Modules | LLD Section Range |
+|---|---|---|
+| 1 | Core domain (8) | §1.1–§1.8 |
+| 2 | Storage, config, observability, wallet, auth (10) | §2.1–§2.10 |
+| 3 | Venues (4) | §3.1–§3.4 |
+| 4 | LLM adapters (4) | §4.1–§4.4 |
+| 5 | Bot loops (7) | §5.1–§5.7 |
+| 6 | API + CLI (14) | §6.1–§6.14 |
+| 7 | Frontend (Next.js) | §7.1–§7.9 |
+| 8 | Infrastructure (CFN + Docker + GHA) | §8.1–§8.18 |
+
+**Total modules designed: ~70 across 18 components.**
+
+All requirements (REQ-DATA-*, REQ-SCAN-*, REQ-BRN-*, REQ-EXE-*, REQ-EXIT-*, REQ-RISK-*, REQ-WAL-*, REQ-CFG-*, REQ-POLY-*, REQ-ALPC-*, REQ-VEN-*, REQ-LLM-*, REQ-DASH-*, REQ-UI-*, REQ-AUTH-*, REQ-OBS-*, REQ-INF-*, REQ-CICD-*) traced to module(s).
