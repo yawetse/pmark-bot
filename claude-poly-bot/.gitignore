@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.hypothesis/
+*.egg
+dist/
+build/
+
+# venvs
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets - NEVER commit
+.env
+.env.*
+!.env.example
+
+# Build / generated
+frontend/lib/api-types.ts
+python/openapi.json
+
+# Logs
+*.log
+
+# Terraform / CFN intermediate
+.terraform/
+*.tfstate
+*.tfstate.*

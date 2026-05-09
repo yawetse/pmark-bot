@@ -1,0 +1,102 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: claude_poly_bot
+      POSTGRES_PASSWORD: dev_password
+      POSTGRES_DB: claude_poly_bot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claude_poly_bot"]
+      interval: 5s
+      retries: 5
+
+  mailhog:
+    # Local SMTP catch-all so SES alerts during dev land somewhere visible.
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  scanner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    command: ["scanner"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://claude_poly_bot:dev_password@db:5432/claude_poly_bot
+      CLAUDE_POLY_BOT_ENV: dev
+      LOCAL: "1"
+      DRY_RUN: "true"
+      LIVE_ENABLED: "false"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  claude-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    command: ["claude-bot"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://claude_poly_bot:dev_password@db:5432/claude_poly_bot
+      CLAUDE_POLY_BOT_ENV: dev
+      LOCAL: "1"
+      BOT: claude
+      DRY_RUN: "true"
+      LIVE_ENABLED: "false"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  openai-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bot
+    command: ["openai-bot"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://claude_poly_bot:dev_password@db:5432/claude_poly_bot
+      CLAUDE_POLY_BOT_ENV: dev
+      LOCAL: "1"
+      BOT: openai
+      DRY_RUN: "true"
+      LIVE_ENABLED: "false"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    command: ["dashboard-api"]
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://claude_poly_bot:dev_password@db:5432/claude_poly_bot
+      CLAUDE_POLY_BOT_ENV: dev
+      LOCAL: "1"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard-ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - dashboard-api
+
+volumes:
+  pgdata:

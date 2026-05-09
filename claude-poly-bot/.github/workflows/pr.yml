@@ -1,0 +1,107 @@
+name: PR Checks
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-lint:
+    name: Python lint + type-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-poly-bot/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv==0.5.4
+      - run: uv pip install --system -e ".[dev]"
+      - run: ruff check claude_poly_bot tests
+      - run: ruff format --check claude_poly_bot tests
+      - run: mypy claude_poly_bot
+
+  python-tests:
+    name: Python unit + integration tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-poly-bot/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install uv==0.5.4
+      - run: uv pip install --system -e ".[dev]"
+      - name: Run pytest
+        run: pytest -v --cov=claude_poly_bot --cov-report=term-missing
+
+  frontend-lint:
+    name: Frontend lint + type-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-poly-bot/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: claude-poly-bot/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run type-check
+
+  frontend-tests:
+    name: Frontend unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-poly-bot/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: claude-poly-bot/frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  docker-build:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-poly-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -f docker/Dockerfile.bot -t claude-poly-bot/bot:ci .
+      - run: docker build -f docker/Dockerfile.api -t claude-poly-bot/api:ci .
+      - run: docker build -f docker/Dockerfile.ui -t claude-poly-bot/ui:ci .
+
+  cfn-lint:
+    name: CloudFormation lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint==1.20.0
+      - run: |
+          if [ -d claude-poly-bot/infra/cloudformation ] && \
+             [ -n "$(ls -A claude-poly-bot/infra/cloudformation 2>/dev/null)" ]; then
+            cfn-lint claude-poly-bot/infra/cloudformation/*.yaml
+          else
+            echo "No CloudFormation templates yet (lands in M10)"
+          fi
