@@ -16,12 +16,21 @@ from app.bootstrap import (
 )
 from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
 from app.domain import (
+    Environment,
     ModelProvider,
     OrderEvent,
     OrderEventType,
     Venue,
     kelly_sized_notional,
     record_order_event,
+)
+from app.services import (
+    ActorContext,
+    AuthService,
+    ConfigAuthorizationError,
+    ConfigPatchOperation,
+    ConfigService,
+    ConfigValidationError,
 )
 
 
@@ -72,7 +81,19 @@ def test_req_exe_003_01_authorized_dashboard_user_toggles_dry_run_live_next() ->
     When: the next trading loop starts
     Then: live mode config is applied
     """
-    pending("TST-REQ-EXE-003-01", "REQ-EXE-003")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[ConfigPatchOperation("replace", "live_enabled", True)],
+    )
+
+    assert result.mutation.config_version["payload"]["live_enabled"] is True
 
 def test_req_exe_003_02_unauthorized_user_attempts_toggle_dry_run_live_dashboard() -> None:
     """TST-REQ-EXE-003-02: Validates REQ-EXE-003
@@ -81,7 +102,20 @@ def test_req_exe_003_02_unauthorized_user_attempts_toggle_dry_run_live_dashboard
     When: the dashboard request is processed
     Then: the change is rejected
     """
-    pending("TST-REQ-EXE-003-02", "REQ-EXE-003")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    with pytest.raises(ConfigAuthorizationError):
+        service.save_config_patches(
+            actor=ActorContext(username="not-allowed", ip_address="198.51.100.42"),
+            access=auth.authorize_request(auth.create_session_token(username="not-allowed")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "live_enabled", True)],
+        )
+
+    assert auth.registry.state.rows("shared.config_versions") == []
 
 def test_req_exe_004_01_default_polymarket_risk_config_order_size_exactly_25() -> None:
     """TST-REQ-EXE-004-01: Validates REQ-EXE-004
@@ -144,7 +178,25 @@ def test_req_exe_007_01_authorized_dashboard_user_updates_max_position_daily_los
     When: config is saved
     Then: risk limits are persisted
     """
-    pending("TST-REQ-EXE-007-01", "REQ-EXE-007")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "risk.polymarket.max_position_usd", "35.00"),
+            ConfigPatchOperation("replace", "risk.polymarket.max_daily_loss_usd", "75.00"),
+            ConfigPatchOperation("replace", "risk.polymarket.max_open_positions", 4),
+        ],
+    )
+    payload = result.mutation.config_version["payload"]["risk"]["polymarket"]
+
+    assert payload["max_position_usd"] == "35.00"
+    assert payload["max_daily_loss_usd"] == "75.00"
+    assert payload["max_open_positions"] == 4
 
 def test_req_exe_007_02_invalid_risk_limit_values_dashboard_config_saved_validation() -> None:
     """TST-REQ-EXE-007-02: Validates REQ-EXE-007
@@ -153,7 +205,18 @@ def test_req_exe_007_02_invalid_risk_limit_values_dashboard_config_saved_validat
     When: dashboard config is saved
     Then: validation rejects the values
     """
-    pending("TST-REQ-EXE-007-02", "REQ-EXE-007")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    with pytest.raises(ConfigValidationError):
+        service.save_config_patches(
+            actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+            access=auth.authorize_request(auth.create_session_token(username="yaw")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "risk.polymarket.max_position_usd", "-1.00")],
+        )
 
 def test_req_exe_008_01_positive_kelly_result_above_configured_risk_cap_sizing() -> None:
     """TST-REQ-EXE-008-01: Validates REQ-EXE-008

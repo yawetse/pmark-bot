@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.domain import (
+    Environment,
     Instrument,
     InstrumentType,
     ModelProvider,
@@ -11,6 +14,7 @@ from app.domain import (
     Venue,
     ensure_signals_persisted,
 )
+from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService, ConfigValidationError
 from tests.spec.helpers import pending
 
 
@@ -49,7 +53,18 @@ def test_req_str_002_01_authorized_dashboard_update_loop_interval_config_saved_n
     When: config is saved
     Then: the new interval is persisted
     """
-    pending("TST-REQ-STR-002-01", "REQ-STR-002")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[ConfigPatchOperation("replace", "trading_loop_interval_seconds", 120)],
+    )
+
+    assert result.mutation.config_version["payload"]["trading_loop_interval_seconds"] == 120
 
 def test_req_str_002_02_invalid_loop_interval_dashboard_config_saved_validation_rejects() -> None:
     """TST-REQ-STR-002-02: Validates REQ-STR-002
@@ -58,7 +73,18 @@ def test_req_str_002_02_invalid_loop_interval_dashboard_config_saved_validation_
     When: dashboard config is saved
     Then: validation rejects the value
     """
-    pending("TST-REQ-STR-002-02", "REQ-STR-002")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    with pytest.raises(ConfigValidationError):
+        service.save_config_patches(
+            actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+            access=auth.authorize_request(auth.create_session_token(username="yaw")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "trading_loop_interval_seconds", 0)],
+        )
 
 def test_req_str_003_01_enabled_venues_markets_pass_deterministic_filters_trading_loop() -> None:
     """TST-REQ-STR-003-01: Validates REQ-STR-003

@@ -10,8 +10,11 @@ from app.services import (
     ActorContext,
     AuditService,
     AuthService,
+    ConfigAuthorizationError,
     ConfigChange,
+    ConfigPatchOperation,
     ConfigService,
+    ConfigValidationError,
     KillSwitchService,
 )
 from tests.spec.helpers import pending
@@ -141,7 +144,35 @@ def test_req_ui_005_01_authorized_user_changes_supported_config_fields_dashboard
     When: the dashboard saves them
     Then: venue flags, dry-run/live, loop, strategy, budget, risk, slippage, and notification settings persist
     """
-    pending("TST-REQ-UI-005-01", "REQ-UI-005")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    access = auth.authorize_request(auth.create_session_token(username="yaw"))
+    service = ConfigService(auth.registry)
+
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=access,
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "venues.polymarket_us.enabled", True),
+            ConfigPatchOperation("replace", "trading_loop_interval_seconds", 60),
+            ConfigPatchOperation("replace", "strategies.arbitrage.enabled", False),
+            ConfigPatchOperation("replace", "llm.openai.budget_usd", "25.00"),
+            ConfigPatchOperation("replace", "risk.polymarket.max_position_usd", "30.00"),
+            ConfigPatchOperation("replace", "risk.polymarket.market_order_slippage_threshold", "0.03"),
+            ConfigPatchOperation("replace", "notifications.cooldown_seconds", 900),
+        ],
+    )
+    payload = result.mutation.config_version["payload"]
+
+    assert payload["venues"]["polymarket_us"]["enabled"] is True
+    assert payload["trading_loop_interval_seconds"] == 60
+    assert payload["strategies"]["arbitrage"]["enabled"] is False
+    assert payload["llm"]["openai"]["budget_usd"] == "25.00"
+    assert payload["risk"]["polymarket"]["max_position_usd"] == "30.00"
+    assert payload["risk"]["polymarket"]["market_order_slippage_threshold"] == "0.03"
+    assert payload["notifications"]["cooldown_seconds"] == 900
 
 def test_req_ui_005_02_invalid_unauthorized_config_changes_dashboard_saves_them_changes() -> None:
     """TST-REQ-UI-005-02: Validates REQ-UI-005
@@ -150,7 +181,30 @@ def test_req_ui_005_02_invalid_unauthorized_config_changes_dashboard_saves_them_
     When: the dashboard saves them
     Then: the changes are rejected and existing config remains
     """
-    pending("TST-REQ-UI-005-02", "REQ-UI-005")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    unauthorized = auth.authorize_request(auth.create_session_token(username="not-allowed"))
+    service = ConfigService(auth.registry)
+
+    with pytest.raises(ConfigAuthorizationError):
+        service.save_config_patches(
+            actor=ActorContext(username="not-allowed", ip_address="198.51.100.42"),
+            access=unauthorized,
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "live_enabled", True)],
+        )
+    with pytest.raises(ConfigValidationError):
+        service.save_config_patches(
+            actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+            access=auth.authorize_request(auth.create_session_token(username="yaw")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "unsupported.path", True)],
+        )
+
+    assert auth.registry.state.rows("shared.config_versions") == []
 
 def test_req_ui_006_01_authorized_dashboard_config_change_saved_user_old_value() -> None:
     """TST-REQ-UI-006-01: Validates REQ-UI-006

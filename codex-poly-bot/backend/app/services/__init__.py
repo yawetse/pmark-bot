@@ -15,11 +15,15 @@ from app.services.audit_service import (
     ObservabilitySnapshot,
 )
 from app.services.config_service import (
+    ConfigAuthorizationError,
     ConfigConflictError,
+    ConfigPatchOperation,
     ConfigReloadResult,
     ConfigSaveResult,
     ConfigService,
+    ConfigValidationError,
     RuntimeConfigSnapshot,
+    default_config_payload,
 )
 from app.services.control_service import KillSwitchActivationResult, KillSwitchService, KillSwitchState
 
@@ -28,12 +32,15 @@ __all__ = [
     "AuditService",
     "AuthService",
     "CloudWatchLogSink",
+    "ConfigAuthorizationError",
     "ConfigChange",
     "ConfigConflictError",
     "ConfigMutationResult",
+    "ConfigPatchOperation",
     "ConfigReloadResult",
     "ConfigSaveResult",
     "ConfigService",
+    "ConfigValidationError",
     "DashboardAccessResult",
     "KillSwitchActivationResult",
     "KillSwitchService",
@@ -42,4 +49,5 @@ __all__ = [
     "MutationContextResult",
     "ObservabilitySnapshot",
     "RuntimeConfigSnapshot",
+    "default_config_payload",
 ]

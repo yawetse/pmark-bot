@@ -8,11 +8,13 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.db import PersistenceUnavailableError, RepositoryRegistry, UnitOfWork
-from app.domain import Environment
+from app.domain import Environment, ModelProvider, Venue
 from app.services.audit_service import ActorContext, AuditService, ConfigChange, ConfigMutationResult
+from app.services.auth_service import DashboardAccessResult
 
 
 class ConfigConflictError(ValueError):
@@ -20,6 +22,32 @@ class ConfigConflictError(ValueError):
 
     REQ: REQ-UI-007
     """
+
+
+class ConfigValidationError(ValueError):
+    """Raised when a dashboard config patch is not supported or safe.
+
+    REQ: REQ-UI-005
+    """
+
+
+class ConfigAuthorizationError(PermissionError):
+    """Raised when a dashboard config save is attempted without authorization.
+
+    REQ: REQ-UI-005, REQ-UI-006
+    """
+
+
+@dataclass(frozen=True)
+class ConfigPatchOperation:
+    """One dashboard configuration patch operation.
+
+    REQ: REQ-UI-005
+    """
+
+    op: str
+    path: str
+    value: Any
 
 
 @dataclass(frozen=True)
@@ -62,10 +90,57 @@ class ConfigSaveResult:
 class ConfigService:
     """Persist dashboard config changes and load stable loop snapshots."""
 
+    SAFE_MINIMUM_LOOP_INTERVAL_SECONDS = 5
+    KNOWN_STRATEGIES = {"arbitrage", "convergence", "whale_copy"}
+
     def __init__(self, registry: RepositoryRegistry | None = None):
         self.registry = registry or RepositoryRegistry()
         self.audit_service = AuditService(self.registry)
         self._last_good_snapshots: dict[Environment, RuntimeConfigSnapshot] = {}
+
+    def save_config_patches(
+        self,
+        *,
+        actor: ActorContext,
+        access: DashboardAccessResult,
+        environment: Environment,
+        expected_version: str | None,
+        version: str,
+        patches: list[ConfigPatchOperation],
+    ) -> ConfigSaveResult:
+        """Validate and persist dashboard config patches.
+
+        REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007
+        """
+
+        if not access.authorized:
+            raise ConfigAuthorizationError(access.reason or "dashboard access denied")
+        if not patches:
+            raise ConfigValidationError("config update requires at least one patch")
+
+        current_payload = self._current_payload(environment)
+        next_payload = deepcopy(current_payload)
+        first_change: ConfigChange | None = None
+        for patch in patches:
+            old_value = self._value_at_path(next_payload, patch.path)
+            validated_value = self._validated_patch_value(patch)
+            self._apply_patch(next_payload, patch, validated_value)
+            if first_change is None:
+                first_change = ConfigChange(
+                    path=patch.path,
+                    old_value=old_value,
+                    new_value=validated_value,
+                )
+
+        assert first_change is not None
+        return self.save_config_change(
+            actor=actor,
+            environment=environment,
+            change=first_change,
+            version=version,
+            payload=next_payload,
+            expected_version=expected_version,
+        )
 
     def save_config_change(
         self,
@@ -153,6 +228,146 @@ class ConfigService:
             if row["environment"] == environment.value:
                 row["active"] = False
 
+    def _current_payload(self, environment: Environment) -> dict[str, Any]:
+        row = self._latest_config_row(environment)
+        if row is not None:
+            return deepcopy(row["payload"])
+        return default_config_payload()
+
+    def _validated_patch_value(self, patch: ConfigPatchOperation) -> Any:
+        if patch.op not in {"add", "replace", "remove"}:
+            raise ConfigValidationError("unsupported config patch operation")
+        if patch.op == "remove":
+            return None
+
+        parts = patch.path.split(".")
+        value = patch.value
+        if patch.path == "default_selected_venue":
+            if value not in {venue.value for venue in Venue}:
+                raise ConfigValidationError("unsupported default venue")
+            return value
+        if patch.path == "live_enabled":
+            return self._bool(value, patch.path)
+        if parts[:1] == ["venues"] and len(parts) == 3 and parts[2] == "enabled":
+            self._require_supported_venue(parts[1])
+            return self._bool(value, patch.path)
+        if patch.path == "trading_loop_interval_seconds":
+            interval = self._positive_int(value, patch.path)
+            if interval < self.SAFE_MINIMUM_LOOP_INTERVAL_SECONDS:
+                raise ConfigValidationError("trading loop interval is below safe minimum")
+            return interval
+        if parts[:1] == ["strategies"] and len(parts) >= 3:
+            self._require_strategy(parts[1])
+            if len(parts) == 3 and parts[2] == "enabled":
+                return self._bool(value, patch.path)
+            if len(parts) >= 4 and parts[2] == "settings":
+                return value
+        if parts[:1] == ["llm"] and len(parts) >= 3:
+            self._require_model_provider(parts[1])
+            if len(parts) == 3 and parts[2] == "budget_usd":
+                return str(self._positive_decimal(value, patch.path))
+            if len(parts) >= 4 and parts[2] == "settings":
+                if value is None:
+                    raise ConfigValidationError(f"{patch.path} cannot be null")
+                return value
+        if patch.path in {
+            "risk.polymarket.max_position_usd",
+            "risk.polymarket.max_daily_loss_usd",
+            "risk.alpaca.max_position_usd",
+            "risk.alpaca.max_daily_loss_usd",
+        }:
+            return str(self._positive_decimal(value, patch.path))
+        if patch.path in {
+            "risk.polymarket.max_open_positions",
+            "risk.alpaca.max_open_positions",
+            "notifications.cooldown_seconds",
+        }:
+            return self._positive_int(value, patch.path)
+        if patch.path in {
+            "risk.polymarket.market_order_slippage_threshold",
+            "risk.alpaca.max_portfolio_allocation_per_symbol",
+            "risk.alpaca.market_order_slippage_threshold",
+        }:
+            return str(self._ratio(value, patch.path))
+        if patch.path == "alpaca.account_mode":
+            if value not in {"paper", "live"}:
+                raise ConfigValidationError("alpaca account mode must be paper or live")
+            return value
+        if patch.path == "alpaca.symbol_universe":
+            if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
+                raise ConfigValidationError("alpaca symbol universe must be a non-empty list")
+            return [item.strip().upper() for item in value]
+        if patch.path == "notifications.recipients":
+            if not isinstance(value, dict) or not value:
+                raise ConfigValidationError("notification recipients must be a non-empty mapping")
+            return value
+        if parts[:2] == ["notifications", "thresholds"] and len(parts) == 3:
+            return str(self._positive_decimal(value, patch.path))
+        if patch.path == "notifications.digest_schedule_utc":
+            if not isinstance(value, str) or not _valid_hhmm(value):
+                raise ConfigValidationError("digest schedule must be HH:MM UTC")
+            return value
+        raise ConfigValidationError(f"unsupported config path: {patch.path}")
+
+    def _apply_patch(self, payload: dict[str, Any], patch: ConfigPatchOperation, value: Any) -> None:
+        parts = patch.path.split(".")
+        target = payload
+        for part in parts[:-1]:
+            child = target.get(part)
+            if not isinstance(child, dict):
+                child = {}
+                target[part] = child
+            target = child
+        if patch.op == "remove":
+            target.pop(parts[-1], None)
+            return
+        target[parts[-1]] = value
+
+    def _value_at_path(self, payload: dict[str, Any], path: str) -> Any:
+        current: Any = payload
+        for part in path.split("."):
+            if not isinstance(current, dict) or part not in current:
+                return None
+            current = current[part]
+        return deepcopy(current)
+
+    def _require_supported_venue(self, raw: str) -> None:
+        if raw not in {venue.value for venue in Venue}:
+            raise ConfigValidationError("unsupported venue")
+
+    def _require_strategy(self, raw: str) -> None:
+        if raw not in self.KNOWN_STRATEGIES:
+            raise ConfigValidationError("unsupported strategy")
+
+    def _require_model_provider(self, raw: str) -> None:
+        if raw not in {provider.value for provider in ModelProvider}:
+            raise ConfigValidationError("unsupported model provider")
+
+    def _bool(self, value: Any, path: str) -> bool:
+        if not isinstance(value, bool):
+            raise ConfigValidationError(f"{path} must be a boolean")
+        return value
+
+    def _positive_decimal(self, value: Any, path: str) -> Decimal:
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, ValueError) as exc:
+            raise ConfigValidationError(f"{path} must be a decimal") from exc
+        if not parsed.is_finite() or parsed <= 0:
+            raise ConfigValidationError(f"{path} must be positive")
+        return parsed
+
+    def _positive_int(self, value: Any, path: str) -> int:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ConfigValidationError(f"{path} must be a positive integer")
+        return value
+
+    def _ratio(self, value: Any, path: str) -> Decimal:
+        parsed = self._positive_decimal(value, path)
+        if parsed > 1:
+            raise ConfigValidationError(f"{path} must be between 0 and 1")
+        return parsed
+
     def _degraded_reload(self, environment: Environment, message: str) -> ConfigReloadResult:
         prior = self._last_good_snapshots.get(environment)
         if prior is None:
@@ -178,3 +393,67 @@ class ConfigService:
             degraded=True,
             error_message=health_message,
         )
+
+
+def default_config_payload() -> dict[str, Any]:
+    """Return safe runtime config defaults for dashboard editing.
+
+    REQ: REQ-UI-005, REQ-EXE-001, REQ-EXE-007, REQ-STR-002
+    """
+
+    return {
+        "default_selected_venue": Venue.POLYMARKET_US.value,
+        "live_enabled": False,
+        "venues": {
+            Venue.POLYMARKET_US.value: {"enabled": False},
+            Venue.POLYMARKET_INTERNATIONAL.value: {"enabled": False},
+            Venue.ALPACA.value: {"enabled": False},
+        },
+        "trading_loop_interval_seconds": 60,
+        "strategies": {
+            "arbitrage": {"enabled": True, "settings": {}},
+            "convergence": {"enabled": True, "settings": {}},
+            "whale_copy": {"enabled": True, "settings": {}},
+        },
+        "llm": {
+            ModelProvider.CLAUDE.value: {"budget_usd": "20.00", "settings": {}},
+            ModelProvider.OPENAI.value: {"budget_usd": "20.00", "settings": {}},
+        },
+        "risk": {
+            "polymarket": {
+                "max_position_usd": "25.00",
+                "max_daily_loss_usd": "50.00",
+                "max_open_positions": 5,
+                "market_order_slippage_threshold": "0.02",
+            },
+            "alpaca": {
+                "max_position_usd": "100.00",
+                "max_daily_loss_usd": "100.00",
+                "max_open_positions": 5,
+                "max_portfolio_allocation_per_symbol": "0.10",
+                "market_order_slippage_threshold": "0.005",
+            },
+        },
+        "alpaca": {
+            "account_mode": "paper",
+            "symbol_universe": ["SPY"],
+        },
+        "notifications": {
+            "recipients": {},
+            "thresholds": {},
+            "cooldown_seconds": 1800,
+            "digest_schedule_utc": "13:00",
+        },
+    }
+
+
+def _valid_hhmm(value: str) -> bool:
+    parts = value.split(":")
+    if len(parts) != 2:
+        return False
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        return False
+    return 0 <= hour <= 23 and 0 <= minute <= 59
