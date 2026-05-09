@@ -17,7 +17,7 @@ if database_url:
     sync_url = database_url.replace("+asyncpg", "")
     config.set_main_option("sqlalchemy.url", sync_url)
 
-target_metadata = None  # populated when ORM lands in M1 / TASK-002
+from claude_poly_bot.storage.orm import target_metadata  # noqa: E402
 
 
 def run_migrations_offline() -> None:
