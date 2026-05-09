@@ -38,6 +38,7 @@ class DatabaseState:
 
     available: bool = True
     fail_on_tables: set[str] = field(default_factory=set)
+    fail_on_read_tables: set[str] = field(default_factory=set)
     tables: dict[str, list[dict]] = field(default_factory=dict)
 
     def insert(self, table_name: str, row: dict) -> dict:
@@ -49,6 +50,10 @@ class DatabaseState:
         return row
 
     def rows(self, table_name: str) -> list[dict]:
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_read_tables:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
         return self.tables.setdefault(table_name, [])
 
 
@@ -239,12 +244,20 @@ class SharedRepositories:
             },
         )
 
-    def record_system_health(self, *, component: str, status: str, message: str | None = None) -> dict:
+    def record_system_health(
+        self,
+        *,
+        component: str,
+        status: str,
+        message: str | None = None,
+        environment: Environment | None = None,
+    ) -> dict:
         self.ensure_schema(SHARED_SCHEMA)
         return self.state.insert(
             f"{SHARED_SCHEMA}.system_health",
             {
                 "id": str(uuid4()),
+                "environment": environment.value if environment else None,
                 "component": component,
                 "status": status,
                 "message": message,

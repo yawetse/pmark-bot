@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
+
+from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
+from app.domain import Environment
+from app.services import (
+    ActorContext,
+    AuditService,
+    AuthService,
+    ConfigChange,
+    ConfigService,
+    KillSwitchService,
+)
 from tests.spec.helpers import pending
 
 
@@ -30,7 +42,14 @@ def test_req_ui_002_01_unauthenticated_user_dashboard_opened_github_oauth_login_
     When: the dashboard is opened
     Then: GitHub OAuth login is required
     """
-    pending("TST-REQ-UI-002-01", "REQ-UI-002")
+    service = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+
+    result = service.authorize_request(None)
+
+    assert not result.authenticated
+    assert not result.authorized
+    assert result.status_code == 401
+    assert result.reason == "authentication required"
 
 def test_req_ui_002_02_invalid_oauth_callback_state_value_login_completes_access() -> None:
     """TST-REQ-UI-002-02: Validates REQ-UI-002
@@ -39,7 +58,22 @@ def test_req_ui_002_02_invalid_oauth_callback_state_value_login_completes_access
     When: login completes
     Then: access is denied and the event is logged
     """
-    pending("TST-REQ-UI-002-02", "REQ-UI-002")
+    service = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+
+    result = service.complete_oauth_login(
+        username="yaw",
+        state="bad-state",
+        expected_state="good-state",
+        environment=Environment.DEVELOPMENT,
+        ip_address="203.0.113.10",
+    )
+    audit_row = service.registry.state.rows("shared.audit_events")[0]
+
+    assert not result.authorized
+    assert result.status_code == 401
+    assert result.reason == "invalid oauth state"
+    assert audit_row["event_type"] == "authorization_denied"
+    assert audit_row["action"] == "oauth.callback"
 
 def test_req_ui_003_01_authenticated_github_username_on_allowlist_dashboard_access_checked() -> None:
     """TST-REQ-UI-003-01: Validates REQ-UI-003
@@ -48,7 +82,15 @@ def test_req_ui_003_01_authenticated_github_username_on_allowlist_dashboard_acce
     When: dashboard access is checked
     Then: access is granted
     """
-    pending("TST-REQ-UI-003-01", "REQ-UI-003")
+    service = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    token = service.create_session_token(username="yaw")
+
+    result = service.authorize_request(token)
+
+    assert result.authenticated
+    assert result.authorized
+    assert result.status_code == 200
+    assert result.username == "yaw"
 
 def test_req_ui_003_02_authenticated_github_username_not_on_allowlist_dashboard_access() -> None:
     """TST-REQ-UI-003-02: Validates REQ-UI-003
@@ -57,7 +99,22 @@ def test_req_ui_003_02_authenticated_github_username_not_on_allowlist_dashboard_
     When: dashboard access is checked
     Then: access is denied
     """
-    pending("TST-REQ-UI-003-02", "REQ-UI-003")
+    service = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    token = service.create_session_token(username="not-allowed-user")
+
+    result = service.authorize_request(
+        token,
+        environment=Environment.PRODUCTION,
+        ip_address="198.51.100.42",
+    )
+    audit_row = service.registry.state.rows("shared.audit_events")[0]
+
+    assert result.authenticated
+    assert not result.authorized
+    assert result.status_code == 403
+    assert result.reason == "user not in allowlist"
+    assert audit_row["actor"] == "not-allowed-user"
+    assert audit_row["metadata"]["applied"] is False
 
 def test_req_ui_004_01_authorized_user_status_pages_load_venue_model_wallet() -> None:
     """TST-REQ-UI-004-01: Validates REQ-UI-004
@@ -102,7 +159,30 @@ def test_req_ui_006_01_authorized_dashboard_config_change_saved_user_old_value()
     When: it is saved
     Then: user, old value, new value, timestamp, environment, and IP address are audited
     """
-    pending("TST-REQ-UI-006-01", "REQ-UI-006")
+    service = AuditService()
+
+    result = service.record_config_change_and_version(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        environment=Environment.DEVELOPMENT,
+        change=ConfigChange(
+            path="risk.max_position",
+            old_value="25.00",
+            new_value="30.00",
+        ),
+        version="v2",
+        payload={"risk": {"max_position": "30.00"}},
+    )
+    audit_row = result.audit_event
+
+    assert audit_row["actor"] == "yaw"
+    assert audit_row["environment"] == Environment.DEVELOPMENT.value
+    assert audit_row["metadata"]["path"] == "risk.max_position"
+    assert audit_row["metadata"]["old_value"] == "25.00"
+    assert audit_row["metadata"]["new_value"] == "30.00"
+    assert audit_row["metadata"]["ip_address"] == "203.0.113.10"
+    assert audit_row["created_at"] is not None
+    assert result.config_version["version"] == "v2"
+    assert result.config_version["payload"]["risk"]["max_position"] == "30.00"
 
 def test_req_ui_006_02_audit_persistence_fails_config_change_save_attempted_config() -> None:
     """TST-REQ-UI-006-02: Validates REQ-UI-006
@@ -111,7 +191,23 @@ def test_req_ui_006_02_audit_persistence_fails_config_change_save_attempted_conf
     When: save is attempted
     Then: the config change is not applied silently
     """
-    pending("TST-REQ-UI-006-02", "REQ-UI-006")
+    registry = RepositoryRegistry(DatabaseState(fail_on_tables={"shared.audit_events"}))
+    service = AuditService(registry)
+
+    with pytest.raises(PersistenceUnavailableError):
+        service.record_config_change_and_version(
+            actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+            environment=Environment.DEVELOPMENT,
+            change=ConfigChange(
+                path="risk.max_position",
+                old_value="25.00",
+                new_value="30.00",
+            ),
+            version="v2",
+            payload={"risk": {"max_position": "30.00"}},
+        )
+
+    assert registry.state.rows("shared.config_versions") == []
 
 def test_req_ui_007_01_dashboard_config_saved_next_trading_loop_starts_changed() -> None:
     """TST-REQ-UI-007-01: Validates REQ-UI-007
@@ -120,7 +216,25 @@ def test_req_ui_007_01_dashboard_config_saved_next_trading_loop_starts_changed()
     When: the next trading loop starts
     Then: the changed config is applied without restart
     """
-    pending("TST-REQ-UI-007-01", "REQ-UI-007")
+    service = ConfigService()
+
+    save_result = service.save_config_change(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        environment=Environment.DEVELOPMENT,
+        change=ConfigChange(
+            path="trading_loop_seconds",
+            old_value=30,
+            new_value=60,
+        ),
+        version="v1",
+        payload={"trading_loop_seconds": 60},
+    )
+    reload_result = service.config_for_next_loop(Environment.DEVELOPMENT)
+
+    assert save_result.applies_on_next_loop
+    assert reload_result.snapshot.version == "v1"
+    assert reload_result.snapshot.payload["trading_loop_seconds"] == 60
+    assert not reload_result.degraded
 
 def test_req_ui_007_02_config_reload_fails_on_next_loop_loop_starts() -> None:
     """TST-REQ-UI-007-02: Validates REQ-UI-007
@@ -129,7 +243,30 @@ def test_req_ui_007_02_config_reload_fails_on_next_loop_loop_starts() -> None:
     When: the loop starts
     Then: prior valid config remains active and degraded status is surfaced
     """
-    pending("TST-REQ-UI-007-02", "REQ-UI-007")
+    registry = RepositoryRegistry()
+    service = ConfigService(registry)
+    service.save_config_change(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        environment=Environment.DEVELOPMENT,
+        change=ConfigChange(
+            path="trading_loop_seconds",
+            old_value=30,
+            new_value=60,
+        ),
+        version="v1",
+        payload={"trading_loop_seconds": 60},
+    )
+    prior = service.config_for_next_loop(Environment.DEVELOPMENT)
+
+    registry.state.fail_on_read_tables.add("shared.config_versions")
+    result = service.config_for_next_loop(Environment.DEVELOPMENT)
+    health = registry.state.rows("shared.system_health")[0]
+
+    assert result.degraded
+    assert result.snapshot == prior.snapshot
+    assert result.snapshot.payload["trading_loop_seconds"] == 60
+    assert health["component"] == "config"
+    assert health["status"] == "degraded"
 
 def test_req_ui_008_01_authorized_user_activates_dashboard_kill_switch_request_processed() -> None:
     """TST-REQ-UI-008-01: Validates REQ-UI-008
@@ -138,7 +275,22 @@ def test_req_ui_008_01_authorized_user_activates_dashboard_kill_switch_request_p
     When: the request is processed
     Then: the global kill switch state is set
     """
-    pending("TST-REQ-UI-008-01", "REQ-UI-008")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    token = auth.create_session_token(username="yaw")
+    access = auth.authorize_request(token, environment=Environment.PRODUCTION)
+    service = KillSwitchService(auth.registry)
+
+    result = service.process_activation_request(
+        access=access,
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        environment=Environment.PRODUCTION,
+    )
+
+    assert result.accepted
+    assert result.state.active
+    assert service.state(Environment.PRODUCTION).active
+    assert result.audit_event is not None
+    assert result.audit_event["action"] == "kill_switch.activate"
 
 def test_req_ui_008_02_unauthorized_user_attempts_kill_switch_activation_request_processed() -> None:
     """TST-REQ-UI-008-02: Validates REQ-UI-008
@@ -147,7 +299,25 @@ def test_req_ui_008_02_unauthorized_user_attempts_kill_switch_activation_request
     When: the request is processed
     Then: the request is denied
     """
-    pending("TST-REQ-UI-008-02", "REQ-UI-008")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    token = auth.create_session_token(username="not-allowed-user")
+    access = auth.authorize_request(
+        token,
+        environment=Environment.PRODUCTION,
+        ip_address="198.51.100.42",
+    )
+    service = KillSwitchService(auth.registry)
+
+    result = service.process_activation_request(
+        access=access,
+        actor=ActorContext(username="not-allowed-user", ip_address="198.51.100.42"),
+        environment=Environment.PRODUCTION,
+    )
+
+    assert not result.accepted
+    assert result.status_code == 403
+    assert not result.state.active
+    assert not service.state(Environment.PRODUCTION).active
 
 def test_req_ui_009_01_wallet_metadata_contains_public_identifiers_private_secret_references() -> None:
     """TST-REQ-UI-009-01: Validates REQ-UI-009

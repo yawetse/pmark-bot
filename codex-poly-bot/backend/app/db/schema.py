@@ -117,6 +117,7 @@ def _shared_tables() -> list[Table]:
             "system_health",
             metadata,
             Column("id", String, primary_key=True),
+            Column("environment", String, nullable=True),
             Column("component", String, nullable=False),
             Column("status", String, nullable=False),
             Column("message", String, nullable=True),
