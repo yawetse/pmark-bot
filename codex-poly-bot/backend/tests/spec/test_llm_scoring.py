@@ -7,7 +7,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.domain import Instrument, InstrumentType, ModelProvider, ScoringOutput, Venue
+from app.domain import Environment, Instrument, InstrumentType, ModelProvider, ScoringOutput, Venue
+from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
 from tests.spec.helpers import pending
 
 
@@ -147,7 +148,23 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
     When: the update is saved
     Then: the new scoring config is persisted
     """
-    pending("TST-REQ-LLM-006-01", "REQ-LLM-006")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "llm.claude.budget_usd", "30.00"),
+            ConfigPatchOperation("replace", "llm.claude.settings.temperature", "0.2"),
+        ],
+    )
+    payload = result.mutation.config_version["payload"]["llm"]["claude"]
+
+    assert payload["budget_usd"] == "30.00"
+    assert payload["settings"]["temperature"] == "0.2"
 
 def test_req_llm_007_01_scoring_config_changes_saved_next_trading_loop_starts() -> None:
     """TST-REQ-LLM-007-01: Validates REQ-LLM-007
@@ -156,4 +173,16 @@ def test_req_llm_007_01_scoring_config_changes_saved_next_trading_loop_starts() 
     When: the next trading loop starts
     Then: the updated settings are used
     """
-    pending("TST-REQ-LLM-007-01", "REQ-LLM-007")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+    service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[ConfigPatchOperation("replace", "llm.openai.settings.prompt_version", "v2")],
+    )
+    snapshot = service.config_for_next_loop(Environment.DEVELOPMENT)
+
+    assert snapshot.snapshot.payload["llm"]["openai"]["settings"]["prompt_version"] == "v2"

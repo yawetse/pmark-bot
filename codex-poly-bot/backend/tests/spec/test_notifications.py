@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.domain import Environment
+from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
 from tests.spec.helpers import pending
 
 
@@ -102,7 +104,27 @@ def test_req_not_006_01_authorized_dashboard_user_changes_recipients_thresholds_
     When: notification config is saved
     Then: the updated settings persist
     """
-    pending("TST-REQ-NOT-006-01", "REQ-NOT-006")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "notifications.recipients", {"yaw": "yaw@example.com"}),
+            ConfigPatchOperation("replace", "notifications.thresholds.drawdown_usd", "25.00"),
+            ConfigPatchOperation("replace", "notifications.digest_schedule_utc", "14:30"),
+            ConfigPatchOperation("replace", "notifications.cooldown_seconds", 1200),
+        ],
+    )
+    payload = result.mutation.config_version["payload"]["notifications"]
+
+    assert payload["recipients"] == {"yaw": "yaw@example.com"}
+    assert payload["thresholds"]["drawdown_usd"] == "25.00"
+    assert payload["digest_schedule_utc"] == "14:30"
+    assert payload["cooldown_seconds"] == 1200
 
 def test_req_not_007_01_ses_delivery_fails_retry_policy_runs_failure_recorded() -> None:
     """TST-REQ-NOT-007-01: Validates REQ-NOT-007

@@ -19,6 +19,14 @@ from app.domain import (
     eligible_alpaca_instruments,
     supported_venues,
 )
+from app.services import (
+    ActorContext,
+    AuthService,
+    ConfigAuthorizationError,
+    ConfigPatchOperation,
+    ConfigService,
+    ConfigValidationError,
+)
 
 
 def test_req_alp_001_01_alpaca_configured_enabled_venue_adapters_registered_alpaca_available() -> None:
@@ -307,7 +315,35 @@ def test_req_alp_014_01_authorized_dashboard_user_alpaca_mode_enabled_flag_risk(
     When: Alpaca mode, enabled flag, risk limits, universe, or slippage is saved
     Then: the config is persisted
     """
-    pending("TST-REQ-ALP-014-01", "REQ-ALP-014")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "alpaca.account_mode", "paper"),
+            ConfigPatchOperation("replace", "venues.alpaca.enabled", True),
+            ConfigPatchOperation("replace", "risk.alpaca.max_position_usd", "150.00"),
+            ConfigPatchOperation("replace", "risk.alpaca.max_daily_loss_usd", "125.00"),
+            ConfigPatchOperation("replace", "risk.alpaca.max_open_positions", 4),
+            ConfigPatchOperation("replace", "risk.alpaca.max_portfolio_allocation_per_symbol", "0.08"),
+            ConfigPatchOperation("replace", "risk.alpaca.market_order_slippage_threshold", "0.004"),
+            ConfigPatchOperation("replace", "alpaca.symbol_universe", ["spy", "qqq"]),
+        ],
+    )
+    payload = result.mutation.config_version["payload"]
+
+    assert payload["alpaca"]["account_mode"] == "paper"
+    assert payload["venues"]["alpaca"]["enabled"] is True
+    assert payload["risk"]["alpaca"]["max_position_usd"] == "150.00"
+    assert payload["risk"]["alpaca"]["max_daily_loss_usd"] == "125.00"
+    assert payload["risk"]["alpaca"]["max_open_positions"] == 4
+    assert payload["risk"]["alpaca"]["max_portfolio_allocation_per_symbol"] == "0.08"
+    assert payload["risk"]["alpaca"]["market_order_slippage_threshold"] == "0.004"
+    assert payload["alpaca"]["symbol_universe"] == ["SPY", "QQQ"]
 
 def test_req_alp_014_02_unauthorized_user_invalid_alpaca_config_value_update_submitted() -> None:
     """TST-REQ-ALP-014-02: Validates REQ-ALP-014
@@ -316,7 +352,29 @@ def test_req_alp_014_02_unauthorized_user_invalid_alpaca_config_value_update_sub
     When: the update is submitted
     Then: the dashboard rejects the change
     """
-    pending("TST-REQ-ALP-014-02", "REQ-ALP-014")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    with pytest.raises(ConfigAuthorizationError):
+        service.save_config_patches(
+            actor=ActorContext(username="not-allowed", ip_address="198.51.100.42"),
+            access=auth.authorize_request(auth.create_session_token(username="not-allowed")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "alpaca.account_mode", "live")],
+        )
+    with pytest.raises(ConfigValidationError):
+        service.save_config_patches(
+            actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+            access=auth.authorize_request(auth.create_session_token(username="yaw")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "alpaca.account_mode", "margin")],
+        )
+
+    assert auth.registry.state.rows("shared.config_versions") == []
 
 def test_req_alp_015_01_alpaca_market_data_unavailable_rate_limited_stale_outside() -> None:
     """TST-REQ-ALP-015-01: Validates REQ-ALP-015

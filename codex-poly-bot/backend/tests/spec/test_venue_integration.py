@@ -7,7 +7,8 @@ from pydantic import ValidationError
 
 from tests.spec.helpers import pending
 from app.bootstrap import load_runtime_defaults, safe_defaults, venue_operation_gate, with_venue_enabled
-from app.domain import Instrument, InstrumentType, Venue, supported_polymarket_venues
+from app.domain import Environment, Instrument, InstrumentType, Venue, supported_polymarket_venues
+from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
 
 
 def test_req_ven_001_01_supported_venue_configs_polymarket_us_international_venue_adapters() -> None:
@@ -130,4 +131,17 @@ def test_req_ven_006_01_authorized_dashboard_update_venue_config_next_trading_lo
     When: the next trading loop starts
     Then: the updated venue config is applied without restart
     """
-    pending("TST-REQ-VEN-006-01", "REQ-VEN-006")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[ConfigPatchOperation("replace", "venues.polymarket_us.enabled", True)],
+    )
+    snapshot = service.config_for_next_loop(Environment.DEVELOPMENT)
+
+    assert snapshot.snapshot.payload["venues"]["polymarket_us"]["enabled"] is True

@@ -14,7 +14,13 @@ from app.domain import (
     Venue,
     ensure_signals_persisted,
 )
-from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService, ConfigValidationError
+from app.services import (
+    ActorContext,
+    AuthService,
+    ConfigPatchOperation,
+    ConfigService,
+    ConfigValidationError,
+)
 from tests.spec.helpers import pending
 
 
@@ -234,4 +240,22 @@ def test_req_str_009_01_authorized_dashboard_user_changes_strategy_enabled_flags
     When: config is saved
     Then: strategy config is persisted and available to the next loop
     """
-    pending("TST-REQ-STR-009-01", "REQ-STR-009")
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "strategies.whale_copy.enabled", False),
+            ConfigPatchOperation("replace", "strategies.whale_copy.settings.delay_seconds", 300),
+        ],
+    )
+    snapshot = service.config_for_next_loop(Environment.DEVELOPMENT)
+    strategy = snapshot.snapshot.payload["strategies"]["whale_copy"]
+
+    assert strategy["enabled"] is False
+    assert strategy["settings"]["delay_seconds"] == 300
