@@ -7,6 +7,9 @@ from app.bootstrap import (
     PROJECT_ROOT,
     REQUIRED_DIRECTORIES,
     REQUIRED_ENV_EXAMPLES,
+    ci_blocks_build_and_deploy_on_test_failure,
+    ci_tests_run_before_build_or_deploy,
+    ci_workflow_check,
     codex_web_ready,
     compose_services,
     env_files_are_gitignored,
@@ -111,7 +114,12 @@ def test_req_dep_005_01_ci_triggered_workflow_execution_starts_tests_run_before(
     When: workflow execution starts
     Then: tests run before build or deploy jobs
     """
-    pending("TST-REQ-DEP-005-01", "REQ-DEP-005")
+    check = ci_workflow_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert set(check.test_jobs) == {"backend-tests", "frontend-check"}
+    assert "container-build" in check.gated_jobs
+    assert ci_tests_run_before_build_or_deploy(PROJECT_ROOT)
 
 def test_req_dep_005_02_tests_fail_in_ci_workflow_execution_continues_container() -> None:
     """TST-REQ-DEP-005-02: Validates REQ-DEP-005
@@ -120,7 +128,11 @@ def test_req_dep_005_02_tests_fail_in_ci_workflow_execution_continues_container(
     When: workflow execution continues
     Then: container build and deploy jobs are blocked
     """
-    pending("TST-REQ-DEP-005-02", "REQ-DEP-005")
+    check = ci_workflow_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert not check.errors
+    assert ci_blocks_build_and_deploy_on_test_failure(PROJECT_ROOT)
 
 def test_req_dep_006_01_tests_pass_deployment_workflow_runs_backend_frontend_images() -> None:
     """TST-REQ-DEP-006-01: Validates REQ-DEP-006

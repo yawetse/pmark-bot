@@ -30,6 +30,9 @@ PRODUCTION_SECRET_KEYS = (
     "AWS_SECRET_ACCESS_KEY",
 )
 SAFE_SECRET_PLACEHOLDERS = ("", "change-me", "set-locally", "optional-in-dry-run")
+CI_WORKFLOW_RELATIVE_PATH = ".github/workflows/ci.yml"
+CI_TEST_JOB_NAMES = ("backend-tests", "frontend-check")
+CI_GATED_JOB_MARKERS = ("build", "deploy", "ecr", "ecs", "container")
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,20 @@ class LocalStartupCheck:
     uses_production_secrets: bool
     missing_required_directories: tuple[str, ...]
     missing_env_examples: tuple[str, ...]
+    errors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CIWorkflowCheck:
+    """CI test gate validation result.
+
+    REQ: REQ-DEP-005
+    """
+
+    ok: bool
+    workflow_path: Path
+    test_jobs: tuple[str, ...]
+    gated_jobs: tuple[str, ...]
     errors: tuple[str, ...]
 
 
@@ -329,3 +346,109 @@ def codex_web_ready(root: Path = PROJECT_ROOT) -> bool:
     check = local_startup_check(root=root, env={})
     defaults = safe_defaults()
     return check.ok and not check.uses_production_secrets and defaults.global_execution_mode == "dry_run"
+
+
+def ci_workflow_path(root: Path = PROJECT_ROOT) -> Path:
+    """Return the expected GitHub Actions CI workflow path.
+
+    REQ: REQ-DEP-005
+    """
+
+    return root / CI_WORKFLOW_RELATIVE_PATH
+
+
+def ci_workflow_check(root: Path = PROJECT_ROOT) -> CIWorkflowCheck:
+    """Validate that CI tests gate build or deploy jobs.
+
+    REQ: REQ-DEP-005
+    """
+
+    workflow_path = ci_workflow_path(root)
+    errors: list[str] = []
+    if not workflow_path.is_file():
+        return CIWorkflowCheck(
+            ok=False,
+            workflow_path=workflow_path,
+            test_jobs=(),
+            gated_jobs=(),
+            errors=(f"missing:{CI_WORKFLOW_RELATIVE_PATH}",),
+        )
+
+    workflow_text = workflow_path.read_text()
+    job_names = _workflow_job_names(workflow_text)
+    test_jobs = tuple(job for job in CI_TEST_JOB_NAMES if job in job_names)
+    missing_test_jobs = tuple(job for job in CI_TEST_JOB_NAMES if job not in job_names)
+    errors.extend(f"missing test job:{job}" for job in missing_test_jobs)
+
+    gated_jobs = tuple(
+        job for job in job_names
+        if any(marker in job for marker in CI_GATED_JOB_MARKERS)
+    )
+    if not gated_jobs:
+        errors.append("missing gated build or deploy job")
+    for job in gated_jobs:
+        block = _workflow_job_block(workflow_text, job)
+        missing_needs = tuple(test_job for test_job in CI_TEST_JOB_NAMES if test_job not in block)
+        errors.extend(f"{job} missing needs:{test_job}" for test_job in missing_needs)
+
+    return CIWorkflowCheck(
+        ok=not errors,
+        workflow_path=workflow_path,
+        test_jobs=test_jobs,
+        gated_jobs=gated_jobs,
+        errors=tuple(errors),
+    )
+
+
+def ci_tests_run_before_build_or_deploy(root: Path = PROJECT_ROOT) -> bool:
+    """Return whether CI executes tests before build or deploy jobs.
+
+    REQ: REQ-DEP-005
+    """
+
+    return ci_workflow_check(root).ok
+
+
+def ci_blocks_build_and_deploy_on_test_failure(root: Path = PROJECT_ROOT) -> bool:
+    """Return whether build or deploy jobs depend on test jobs.
+
+    REQ: REQ-DEP-005
+    """
+
+    check = ci_workflow_check(root)
+    return check.ok and bool(check.gated_jobs)
+
+
+def _workflow_job_names(workflow_text: str) -> tuple[str, ...]:
+    jobs: list[str] = []
+    in_jobs = False
+    for line in workflow_text.splitlines():
+        if line.startswith("jobs:"):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if line and not line.startswith(" "):
+            break
+        if line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":"):
+            jobs.append(line.strip().removesuffix(":"))
+    return tuple(jobs)
+
+
+def _workflow_job_block(workflow_text: str, job_name: str) -> str:
+    lines = workflow_text.splitlines()
+    start_index = None
+    marker = f"  {job_name}:"
+    for index, line in enumerate(lines):
+        if line == marker:
+            start_index = index
+            break
+    if start_index is None:
+        return ""
+
+    block: list[str] = []
+    for line in lines[start_index:]:
+        if block and line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":"):
+            break
+        block.append(line)
+    return "\n".join(block)
