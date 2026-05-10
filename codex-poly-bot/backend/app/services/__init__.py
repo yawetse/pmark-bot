@@ -10,7 +10,7 @@ REQ-LLM-001, REQ-LLM-002, REQ-LLM-004, REQ-LLM-005,
 REQ-EXE-002, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006,
 REQ-EXE-009, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015,
 REQ-EXE-017, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004,
-REQ-NOT-005
+REQ-NOT-005, REQ-CMP-002, REQ-CMP-004
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -33,6 +33,13 @@ from app.services.config_service import (
     ConfigValidationError,
     RuntimeConfigSnapshot,
     default_config_payload,
+)
+from app.services.comparison_service import (
+    ComparisonGroup,
+    ComparisonSummary,
+    PerformanceRecord,
+    compare_model_performance,
+    mark_comparison_metric_unavailable,
 )
 from app.services.control_service import KillSwitchActivationResult, KillSwitchService, KillSwitchState
 from app.services.execution_service import (
@@ -131,6 +138,8 @@ __all__ = [
     "ConfigSaveResult",
     "ConfigService",
     "ConfigValidationError",
+    "ComparisonGroup",
+    "ComparisonSummary",
     "CredentialStatus",
     "CredentialTarget",
     "DashboardAccessResult",
@@ -160,6 +169,7 @@ __all__ = [
     "NotificationAlertDecision",
     "ObservabilitySnapshot",
     "OpenOrder",
+    "PerformanceRecord",
     "PolymarketRiskConfig",
     "PolymarketRiskInput",
     "PositionMovement",
@@ -178,6 +188,7 @@ __all__ = [
     "check_scoring_failure_gate",
     "check_positive_order_size",
     "check_required_credentials",
+    "compare_model_performance",
     "detect_daily_pnl_alert",
     "detect_large_movement_alert",
     "default_config_payload",
@@ -191,6 +202,7 @@ __all__ = [
     "evaluate_polymarket_risk_limits",
     "generate_polymarket_wallet",
     "load_local_credential",
+    "mark_comparison_metric_unavailable",
     "record_provider_cost",
     "render_daily_digest",
     "resolve_credential_ref",
