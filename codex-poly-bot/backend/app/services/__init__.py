@@ -5,7 +5,8 @@ REQ-OBS-006, REQ-UI-002, REQ-UI-003, REQ-UI-006, REQ-EXE-016,
 REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-009,
 REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-DAT-001,
 REQ-DAT-002, REQ-DAT-005, REQ-DAT-008, REQ-WAL-001,
-REQ-WAL-002, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006
+REQ-WAL-002, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006,
+REQ-LLM-001, REQ-LLM-002, REQ-LLM-004, REQ-LLM-005
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -44,6 +45,18 @@ from app.services.ingestion_service import (
     IngestionRunResult,
     IngestionService,
     check_market_data_freshness,
+)
+from app.services.llm_service import (
+    FakeLlmProvider,
+    LlmBudgetLedger,
+    LlmScoreRequest,
+    ScoringFailure,
+    ScoringQueueResult,
+    ScoringRunResult,
+    build_scoring_queue,
+    check_scoring_failure_gate,
+    record_provider_cost,
+    run_llm_scoring,
 )
 from app.services.risk_engine import (
     AlpacaRiskConfig,
@@ -89,6 +102,7 @@ __all__ = [
     "DashboardAccessResult",
     "DataFreshnessStatus",
     "FakeAlpacaVenueSubmitter",
+    "FakeLlmProvider",
     "FakeSnapshotSource",
     "IngestionCheckpoint",
     "IngestionRunResult",
@@ -98,13 +112,20 @@ __all__ = [
     "KillSwitchState",
     "LogEmissionResult",
     "LocalCredentialResult",
+    "LlmBudgetLedger",
+    "LlmScoreRequest",
     "MutationContextResult",
     "ObservabilitySnapshot",
     "RiskLimitResult",
     "RuntimeConfigSnapshot",
+    "ScoringFailure",
+    "ScoringQueueResult",
+    "ScoringRunResult",
     "WalletGenerationRequest",
     "WalletGenerationResult",
     "build_credential_status",
+    "build_scoring_queue",
+    "check_scoring_failure_gate",
     "check_required_credentials",
     "default_config_payload",
     "default_alpaca_risk_config",
@@ -113,7 +134,9 @@ __all__ = [
     "evaluate_alpaca_risk_limits",
     "generate_polymarket_wallet",
     "load_local_credential",
+    "record_provider_cost",
     "resolve_credential_ref",
     "resolve_alpaca_account_mode",
+    "run_llm_scoring",
     "validate_unique_credential_refs",
 ]

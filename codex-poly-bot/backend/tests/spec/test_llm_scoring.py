@@ -7,9 +7,27 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.domain import Environment, Instrument, InstrumentType, ModelProvider, ScoringOutput, Venue
-from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
-from tests.spec.helpers import pending
+from app.domain import (
+    Environment,
+    Instrument,
+    InstrumentType,
+    ModelProvider,
+    ScoringOutput,
+    Venue,
+)
+from app.services import (
+    ActorContext,
+    AuthService,
+    ConfigPatchOperation,
+    ConfigService,
+    FakeLlmProvider,
+    LlmBudgetLedger,
+    ScoringFailure,
+    build_scoring_queue,
+    check_scoring_failure_gate,
+    record_provider_cost,
+    run_llm_scoring,
+)
 
 
 def prediction_instrument() -> Instrument:
@@ -29,7 +47,21 @@ def test_req_llm_001_01_eligible_polymarket_alpaca_candidates_scoring_runs_both_
     When: scoring runs
     Then: both Claude and OpenAI providers evaluate the candidates
     """
-    pending("TST-REQ-LLM-001-01", "REQ-LLM-001")
+    providers = (
+        FakeLlmProvider(ModelProvider.CLAUDE),
+        FakeLlmProvider(ModelProvider.OPENAI),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), providers)
+
+    assert result.ok
+    assert {score.model_provider for score in result.scores} == {
+        ModelProvider.CLAUDE,
+        ModelProvider.OPENAI,
+    }
+    assert providers[0].call_count == 1
+    assert providers[1].call_count == 1
+
 
 def test_req_llm_001_02_one_model_provider_disabled_out_budget_scoring_runs() -> None:
     """TST-REQ-LLM-001-02: Validates REQ-LLM-001
@@ -38,7 +70,17 @@ def test_req_llm_001_02_one_model_provider_disabled_out_budget_scoring_runs() ->
     When: scoring runs
     Then: eligible remaining providers continue independently
     """
-    pending("TST-REQ-LLM-001-02", "REQ-LLM-001")
+    providers = (
+        FakeLlmProvider(ModelProvider.CLAUDE, remaining_budget=Decimal("0")),
+        FakeLlmProvider(ModelProvider.OPENAI, remaining_budget=Decimal("1.00")),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), providers)
+
+    assert result.ok
+    assert tuple(score.model_provider for score in result.scores) == (ModelProvider.OPENAI,)
+    assert result.skipped_providers == (ModelProvider.CLAUDE,)
+
 
 def test_req_llm_002_01_claude_openai_budget_settings_scoring_costs_recorded_each() -> None:
     """TST-REQ-LLM-002-01: Validates REQ-LLM-002
@@ -47,7 +89,31 @@ def test_req_llm_002_01_claude_openai_budget_settings_scoring_costs_recorded_eac
     When: scoring costs are recorded
     Then: each provider budget is tracked separately
     """
-    pending("TST-REQ-LLM-002-01", "REQ-LLM-002")
+    ledger = LlmBudgetLedger(
+        budgets={
+            ModelProvider.CLAUDE: Decimal("1.00"),
+            ModelProvider.OPENAI: Decimal("1.00"),
+        }
+    )
+
+    claude = record_provider_cost(
+        ledger,
+        ModelProvider.CLAUDE,
+        ModelProvider.CLAUDE,
+        Decimal("0.25"),
+    )
+    openai = record_provider_cost(
+        ledger,
+        ModelProvider.OPENAI,
+        ModelProvider.OPENAI,
+        Decimal("0.10"),
+    )
+
+    assert claude.ok
+    assert openai.ok
+    assert ledger.spent[ModelProvider.CLAUDE] == Decimal("0.25")
+    assert ledger.spent[ModelProvider.OPENAI] == Decimal("0.10")
+
 
 def test_req_llm_002_02_scoring_event_attempts_consume_wrong_provider_budget_budget() -> None:
     """TST-REQ-LLM-002-02: Validates REQ-LLM-002
@@ -56,7 +122,19 @@ def test_req_llm_002_02_scoring_event_attempts_consume_wrong_provider_budget_bud
     When: budget accounting runs
     Then: the event is rejected or corrected before persistence
     """
-    pending("TST-REQ-LLM-002-02", "REQ-LLM-002")
+    ledger = LlmBudgetLedger(budgets={ModelProvider.CLAUDE: Decimal("1.00")})
+
+    result = record_provider_cost(
+        ledger,
+        ModelProvider.CLAUDE,
+        ModelProvider.OPENAI,
+        Decimal("0.10"),
+    )
+
+    assert not result.ok
+    assert result.refusal_reason == "provider budget mismatch"
+    assert ledger.spent == {}
+
 
 def test_req_llm_003_01_successful_model_evaluation_score_persisted_provider_prompt_version() -> None:
     """TST-REQ-LLM-003-01: Validates REQ-LLM-003
@@ -86,6 +164,7 @@ def test_req_llm_003_01_successful_model_evaluation_score_persisted_provider_pro
     assert score.instrument.identifier == "market-1:yes"
     assert score.created_at is not None
 
+
 def test_req_llm_003_02_model_response_missing_required_scoring_fields_parsing_runs() -> None:
     """TST-REQ-LLM-003-02: Validates REQ-LLM-003
 
@@ -105,6 +184,7 @@ def test_req_llm_003_02_model_response_missing_required_scoring_fields_parsing_r
             instrument=prediction_instrument(),
         )
 
+
 def test_req_llm_004_01_model_budget_exhausted_scoring_queues_built_no_new() -> None:
     """TST-REQ-LLM-004-01: Validates REQ-LLM-004
 
@@ -112,7 +192,14 @@ def test_req_llm_004_01_model_budget_exhausted_scoring_queues_built_no_new() -> 
     When: scoring queues are built
     Then: no new requests are sent to that model
     """
-    pending("TST-REQ-LLM-004-01", "REQ-LLM-004")
+    result = build_scoring_queue(
+        (prediction_instrument(),),
+        (FakeLlmProvider(ModelProvider.CLAUDE, remaining_budget=Decimal("0")),),
+    )
+
+    assert result.requests == ()
+    assert result.skipped_providers == (ModelProvider.CLAUDE,)
+
 
 def test_req_llm_004_02_claude_exhausted_openai_budget_scoring_runs_openai_continues() -> None:
     """TST-REQ-LLM-004-02: Validates REQ-LLM-004
@@ -121,7 +208,16 @@ def test_req_llm_004_02_claude_exhausted_openai_budget_scoring_runs_openai_conti
     When: scoring runs
     Then: OpenAI continues while Claude is skipped
     """
-    pending("TST-REQ-LLM-004-02", "REQ-LLM-004")
+    providers = (
+        FakeLlmProvider(ModelProvider.CLAUDE, remaining_budget=Decimal("0")),
+        FakeLlmProvider(ModelProvider.OPENAI, remaining_budget=Decimal("1.00")),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), providers)
+
+    assert tuple(score.model_provider for score in result.scores) == (ModelProvider.OPENAI,)
+    assert result.skipped_providers == (ModelProvider.CLAUDE,)
+
 
 def test_req_llm_005_01_llm_scoring_succeeds_model_market_execution_eligibility_checked() -> None:
     """TST-REQ-LLM-005-01: Validates REQ-LLM-005
@@ -130,7 +226,14 @@ def test_req_llm_005_01_llm_scoring_succeeds_model_market_execution_eligibility_
     When: execution eligibility is checked
     Then: the scoring failure gate passes
     """
-    pending("TST-REQ-LLM-005-01", "REQ-LLM-005")
+    result = check_scoring_failure_gate(
+        failures=(),
+        model_provider=ModelProvider.CLAUDE,
+        instrument=prediction_instrument(),
+    )
+
+    assert result.ok
+
 
 def test_req_llm_005_02_llm_scoring_fails_model_market_execution_eligibility_checked() -> None:
     """TST-REQ-LLM-005-02: Validates REQ-LLM-005
@@ -139,7 +242,22 @@ def test_req_llm_005_02_llm_scoring_fails_model_market_execution_eligibility_che
     When: execution eligibility is checked in the same loop
     Then: live orders are blocked for that pair
     """
-    pending("TST-REQ-LLM-005-02", "REQ-LLM-005")
+    instrument = prediction_instrument()
+    result = check_scoring_failure_gate(
+        failures=(
+            ScoringFailure(
+                model_provider=ModelProvider.CLAUDE,
+                instrument_id=instrument.identifier,
+                reason="provider timeout",
+            ),
+        ),
+        model_provider=ModelProvider.CLAUDE,
+        instrument=instrument,
+    )
+
+    assert not result.ok
+    assert result.refusal_reason == "SCORING_MISSING_OR_FAILED"
+
 
 def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_settings() -> None:
     """TST-REQ-LLM-006-01: Validates REQ-LLM-006
@@ -165,6 +283,7 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
 
     assert payload["budget_usd"] == "30.00"
     assert payload["settings"]["temperature"] == "0.2"
+
 
 def test_req_llm_007_01_scoring_config_changes_saved_next_trading_loop_starts() -> None:
     """TST-REQ-LLM-007-01: Validates REQ-LLM-007
