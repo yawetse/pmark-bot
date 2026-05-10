@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -55,6 +55,32 @@ class Verdict(StrEnum):
     BUY = "BUY"
     SELL = "SELL"
     SKIP = "SKIP"
+
+
+class CheckType(StrEnum):
+    """The 4 brain checks. `whale` runs on Polymarket; `unusual_volume` on Alpaca."""
+
+    BASE_RATE = "base_rate"
+    NEWS = "news"
+    WHALE = "whale"
+    UNUSUAL_VOLUME = "unusual_volume"
+    DISPOSITION = "disposition"
+
+
+class SubAgent(StrEnum):
+    """The 3 strategy sub-agents that vote on size."""
+
+    ARBITRAGE = "arbitrage"
+    CONVERGENCE = "convergence"
+    WHALE_COPY = "whale_copy"  # Polymarket
+    FLOW_COPY = "flow_copy"  # Alpaca
+
+
+class ClaimStatus(StrEnum):
+    NEW = "new"
+    PROCESSING = "processing"
+    DONE = "done"
+    ERROR = "error"
 
 
 # ---------------------------------------------------------------------------
@@ -202,3 +228,89 @@ class MarketScanRun(_Frozen):
     accepted: int
     rejected: int
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Brain models — CheckResult, Thesis, CandidateClaim, TargetWallet
+# ---------------------------------------------------------------------------
+
+
+class CheckResult(_Frozen):
+    """Output of one LLM call (one check or one sub-agent vote).
+
+    Stored verbatim in the `decisions` table — every field maps to a
+    column for the comparison-experiment query surface.
+    """
+
+    bot: Bot
+    venue: VenueName
+    market_id: str
+    check_type: CheckType
+    sub_agent: SubAgent | None = None
+    verdict: Verdict
+    confidence: Probability
+    p_win: Probability
+    rationale: str
+    model_id: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tokens_cached: int = 0
+    cost_usd: Money = Decimal("0")
+    latency_ms: int = 0
+    web_search_used: bool = False
+    correlation_id: UUID
+    raw_response: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class Thesis(_Frozen):
+    """Aggregated decision: 4 checks consensus + 3 sub-agents consensus.
+
+    Persisted in `theses` table; downstream `executor` consumes.
+    Traces: REQ-BRN-009, DD-019.
+    """
+
+    id: UUID = Field(default_factory=uuid4)
+    bot: Bot
+    venue: VenueName
+    market_id: str
+    verdict: Verdict
+    p_win: Probability
+    confidence: Probability
+    size_multiplier: Literal["FULL", "HALF", "SKIP"]
+    target_price: Price | None = None  # Alpaca only
+    stop_price: Price | None = None  # Alpaca only
+    horizon_hours: int | None = None  # Alpaca only
+    scan_correlation_id: UUID
+    decision_correlation_id: UUID
+    created_at: AwareDatetime
+
+
+class CandidateClaim(_Frozen):
+    """Per-(candidate, bot) claim row implementing DD-017.
+
+    Both bots independently process every accepted candidate; their
+    progress is tracked here.
+    """
+
+    scan_correlation_id: UUID
+    bot: Bot
+    status: ClaimStatus
+    decision_correlation_id: UUID
+    claimed_at: AwareDatetime | None = None
+    completed_at: AwareDatetime | None = None
+    error: str | None = None
+
+
+class TargetWallet(_Frozen):
+    """A Polymarket wallet flagged by daily data refresh as smart-money.
+
+    Whale-check input; daily-refresh job upserts the full set.
+    Traces: REQ-DATA-007.
+    """
+
+    address: str
+    total_trades: int
+    win_rate: Probability
+    total_pnl: Money
+    refreshed_at: AwareDatetime
