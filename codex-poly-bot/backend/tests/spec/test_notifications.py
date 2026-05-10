@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.adapters.aws import EmailMessage, InMemorySesEmailAdapter
 from app.domain import Environment
 from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
 from tests.spec.helpers import pending
@@ -14,7 +15,19 @@ def test_req_not_001_01_daily_digest_schedule_fires_allowlisted_users_exist_noti
     When: notifications run
     Then: SES sends digest email to allowlisted users
     """
-    pending("TST-REQ-NOT-001-01", "REQ-NOT-001")
+    adapter = InMemorySesEmailAdapter()
+
+    result = adapter.send_digest(
+        EmailMessage(
+            recipients=("yaw@example.com",),
+            subject="Daily digest",
+            body="P&L: 0.00",
+        )
+    )
+
+    assert result.sent
+    assert result.message_id == "ses-message-1"
+    assert adapter.sent_count == 1
 
 def test_req_not_001_02_no_allowlisted_recipients_exist_digest_notifications_run_no() -> None:
     """TST-REQ-NOT-001-02: Validates REQ-NOT-001
@@ -23,7 +36,19 @@ def test_req_not_001_02_no_allowlisted_recipients_exist_digest_notifications_run
     When: digest notifications run
     Then: no email is sent and the skipped reason is recorded
     """
-    pending("TST-REQ-NOT-001-02", "REQ-NOT-001")
+    adapter = InMemorySesEmailAdapter()
+
+    result = adapter.send_digest(
+        EmailMessage(
+            recipients=(),
+            subject="Daily digest",
+            body="P&L: 0.00",
+        )
+    )
+
+    assert not result.sent
+    assert result.skipped_reason == "no recipients"
+    assert adapter.sent_count == 0
 
 def test_req_not_002_01_digest_inputs_available_digest_rendered_includes_p_l() -> None:
     """TST-REQ-NOT-002-01: Validates REQ-NOT-002
@@ -133,4 +158,17 @@ def test_req_not_007_01_ses_delivery_fails_retry_policy_runs_failure_recorded() 
     When: retry policy runs
     Then: the failure is recorded and retry timing follows config
     """
-    pending("TST-REQ-NOT-007-01", "REQ-NOT-007")
+    adapter = InMemorySesEmailAdapter(fail_delivery=True)
+
+    result = adapter.send_email(
+        EmailMessage(
+            recipients=("yaw@example.com",),
+            subject="Risk alert",
+            body="Daily P&L crossed threshold.",
+        )
+    )
+
+    assert not result.sent
+    assert result.retryable
+    assert result.attempt_recorded
+    assert result.error_summary == "SES delivery failed"
