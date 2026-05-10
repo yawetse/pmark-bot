@@ -1,0 +1,10 @@
+{
+  "environment": "development",
+  "secret_prefix": "/codex-poly-bot/development/",
+  "resource_names": [
+    "codex-poly-bot-dev-rds",
+    "codex-poly-bot-dev-snapshots",
+    "codex-poly-bot-dev-ecs",
+    "codex-poly-bot-dev-wallet"
+  ]
+}

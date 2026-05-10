@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: codex-poly-bot deployment contract
+Metadata:
+  DeploymentRegion: us-east-1
+Resources:
+  BackendRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: codex-poly-bot-backend
+  FrontendRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: codex-poly-bot-frontend
+  Cluster:
+    Type: AWS::ECS::Cluster
+  BackendService:
+    Type: AWS::ECS::Service
+    Properties:
+      LaunchType: FARGATE
+      Cluster: !Ref Cluster
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      DBInstanceClass: db.t4g.micro
+  SnapshotBucket:
+    Type: AWS::S3::Bucket
+  TradingSecret:
+    Type: AWS::SecretsManager::Secret
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+  SesIdentity:
+    Type: AWS::SES::EmailIdentity

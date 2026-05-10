@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from tests.spec.helpers import pending
 from app.bootstrap import (
     PROJECT_ROOT,
     REQUIRED_DIRECTORIES,
     REQUIRED_ENV_EXAMPLES,
+    aws_infrastructure_check,
     ci_blocks_build_and_deploy_on_test_failure,
     ci_tests_run_before_build_or_deploy,
     ci_workflow_check,
     codex_web_ready,
     compose_services,
+    deployment_plan_for_branch,
+    deployment_resource_separation_check,
+    deployment_target_region_check,
     env_files_are_gitignored,
     env_examples_have_no_secrets,
+    github_actions_environment_for_branch,
     local_app_stack_services_ready,
     load_runtime_defaults,
     local_startup_check,
@@ -60,7 +64,18 @@ def test_req_dep_002_01_cloudformation_parameters_us_east_1_infrastructure_templ
     When: infrastructure templates are validated
     Then: ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, and SES resources are defined
     """
-    pending("TST-REQ-DEP-002-01", "REQ-DEP-002")
+    check = aws_infrastructure_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert check.region == "us-east-1"
+    assert check.resources == (
+        "ecs_fargate",
+        "rds_postgres",
+        "s3",
+        "secrets_manager",
+        "cloudwatch",
+        "ses",
+    )
 
 def test_req_dep_002_02_non_us_east_1_deployment_target_deployment_validation() -> None:
     """TST-REQ-DEP-002-02: Validates REQ-DEP-002
@@ -69,7 +84,13 @@ def test_req_dep_002_02_non_us_east_1_deployment_target_deployment_validation() 
     When: deployment validation runs
     Then: deployment is blocked or requires explicit override
     """
-    pending("TST-REQ-DEP-002-02", "REQ-DEP-002")
+    blocked = deployment_target_region_check("us-west-2")
+    override = deployment_target_region_check("us-west-2", explicit_override=True)
+
+    assert not blocked.ok
+    assert blocked.refusal_reason == "deployment region must be us-east-1"
+    assert override.ok
+    assert override.override_required
 
 def test_req_dep_003_01_code_merged_develop_github_actions_runs_development_deployment() -> None:
     """TST-REQ-DEP-003-01: Validates REQ-DEP-003
@@ -78,7 +99,12 @@ def test_req_dep_003_01_code_merged_develop_github_actions_runs_development_depl
     When: GitHub Actions runs
     Then: the development deployment workflow is selected
     """
-    pending("TST-REQ-DEP-003-01", "REQ-DEP-003")
+    assert github_actions_environment_for_branch("develop") == "development"
+    plan = deployment_plan_for_branch("develop", tests_passed=True, ecr_publish_ok=True)
+
+    assert plan.environment == "development"
+    assert plan.deploy_selected
+    assert plan.ecs_deploy
 
 def test_req_dep_003_02_branch_other_than_develop_main_github_actions_runs() -> None:
     """TST-REQ-DEP-003-02: Validates REQ-DEP-003
@@ -87,7 +113,11 @@ def test_req_dep_003_02_branch_other_than_develop_main_github_actions_runs() -> 
     When: GitHub Actions runs
     Then: automatic environment deployment is not triggered
     """
-    pending("TST-REQ-DEP-003-02", "REQ-DEP-003")
+    plan = deployment_plan_for_branch("feature/new-signal", tests_passed=True, ecr_publish_ok=True)
+
+    assert github_actions_environment_for_branch("feature/new-signal") is None
+    assert not plan.deploy_selected
+    assert plan.blocked_reason == "branch is not deployable"
 
 def test_req_dep_004_01_code_merged_main_github_actions_runs_production_deployment() -> None:
     """TST-REQ-DEP-004-01: Validates REQ-DEP-004
@@ -96,7 +126,11 @@ def test_req_dep_004_01_code_merged_main_github_actions_runs_production_deployme
     When: GitHub Actions runs
     Then: production deployment starts automatically
     """
-    pending("TST-REQ-DEP-004-01", "REQ-DEP-004")
+    plan = deployment_plan_for_branch("main", tests_passed=True, ecr_publish_ok=True)
+
+    assert plan.environment == "production"
+    assert plan.deploy_selected
+    assert plan.ecs_deploy
 
 def test_req_dep_004_02_production_deployment_tests_fail_github_actions_runs_production() -> None:
     """TST-REQ-DEP-004-02: Validates REQ-DEP-004
@@ -105,7 +139,12 @@ def test_req_dep_004_02_production_deployment_tests_fail_github_actions_runs_pro
     When: GitHub Actions runs
     Then: production deploy steps do not execute
     """
-    pending("TST-REQ-DEP-004-02", "REQ-DEP-004")
+    plan = deployment_plan_for_branch("main", tests_passed=False, ecr_publish_ok=True)
+
+    assert plan.environment == "production"
+    assert not plan.ecr_publish
+    assert not plan.ecs_deploy
+    assert plan.blocked_reason == "tests failed"
 
 def test_req_dep_005_01_ci_triggered_workflow_execution_starts_tests_run_before() -> None:
     """TST-REQ-DEP-005-01: Validates REQ-DEP-005
@@ -141,7 +180,11 @@ def test_req_dep_006_01_tests_pass_deployment_workflow_runs_backend_frontend_ima
     When: deployment workflow runs
     Then: backend and frontend images are built and published to ECR before ECS deployment
     """
-    pending("TST-REQ-DEP-006-01", "REQ-DEP-006")
+    plan = deployment_plan_for_branch("main", tests_passed=True, ecr_publish_ok=True)
+
+    assert plan.build_images == ("backend", "frontend")
+    assert plan.ecr_publish
+    assert plan.ecs_deploy
 
 def test_req_dep_006_02_ecr_publish_fails_deployment_workflow_runs_ecs_deployment() -> None:
     """TST-REQ-DEP-006-02: Validates REQ-DEP-006
@@ -150,7 +193,11 @@ def test_req_dep_006_02_ecr_publish_fails_deployment_workflow_runs_ecs_deploymen
     When: deployment workflow runs
     Then: ECS deployment is skipped and failure status is reported
     """
-    pending("TST-REQ-DEP-006-02", "REQ-DEP-006")
+    plan = deployment_plan_for_branch("develop", tests_passed=True, ecr_publish_ok=False)
+
+    assert plan.ecr_publish is False
+    assert plan.ecs_deploy is False
+    assert plan.blocked_reason == "ecr publish failed"
 
 def test_req_dep_007_01_repo_setup_files_inspected_env_example_files_validated() -> None:
     """TST-REQ-DEP-007-01: Validates REQ-DEP-007
@@ -243,4 +290,11 @@ def test_req_dep_010_01_development_production_deployments_infrastructure_secret
     When: infrastructure and secret names are validated
     Then: resources, secrets, wallets, and config are separated by environment
     """
-    pending("TST-REQ-DEP-010-01", "REQ-DEP-010")
+    check = deployment_resource_separation_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert check.environments == ("development", "production")
+    assert check.secret_prefixes == (
+        "/codex-poly-bot/development/",
+        "/codex-poly-bot/production/",
+    )

@@ -1,0 +1,10 @@
+{
+  "environment": "production",
+  "secret_prefix": "/codex-poly-bot/production/",
+  "resource_names": [
+    "codex-poly-bot-prod-rds",
+    "codex-poly-bot-prod-snapshots",
+    "codex-poly-bot-prod-ecs",
+    "codex-poly-bot-prod-wallet"
+  ]
+}

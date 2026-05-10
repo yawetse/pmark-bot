@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+import json
 from pathlib import Path
 
 
@@ -33,6 +34,19 @@ SAFE_SECRET_PLACEHOLDERS = ("", "change-me", "set-locally", "optional-in-dry-run
 CI_WORKFLOW_RELATIVE_PATH = ".github/workflows/ci.yml"
 CI_TEST_JOB_NAMES = ("backend-tests", "frontend-check")
 CI_GATED_JOB_MARKERS = ("build", "deploy", "ecr", "ecs", "container")
+AWS_INFRA_TEMPLATE_RELATIVE_PATH = "infra/cloudformation.yml"
+AWS_PARAMETER_FILES = {
+    "development": "infra/parameters/dev.json",
+    "production": "infra/parameters/prod.json",
+}
+AWS_REQUIRED_RESOURCE_MARKERS = {
+    "ecs_fargate": ("AWS::ECS::Service", "FARGATE"),
+    "rds_postgres": ("AWS::RDS::DBInstance", "postgres"),
+    "s3": ("AWS::S3::Bucket",),
+    "secrets_manager": ("AWS::SecretsManager::Secret",),
+    "cloudwatch": ("AWS::Logs::LogGroup",),
+    "ses": ("AWS::SES::EmailIdentity",),
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +94,61 @@ class CIWorkflowCheck:
     test_jobs: tuple[str, ...]
     gated_jobs: tuple[str, ...]
     errors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AwsInfrastructureCheck:
+    """AWS infrastructure template validation result.
+
+    REQ: REQ-DEP-002
+    """
+
+    ok: bool
+    region: str | None
+    resources: tuple[str, ...]
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeploymentRegionCheck:
+    """Deployment target region validation result.
+
+    REQ: REQ-DEP-002
+    """
+
+    ok: bool
+    region: str
+    override_required: bool = False
+    refusal_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class DeploymentPlan:
+    """GitHub Actions deployment plan for one branch.
+
+    REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-006
+    """
+
+    branch: str
+    environment: str | None
+    deploy_selected: bool
+    build_images: tuple[str, ...] = ()
+    ecr_publish: bool = False
+    ecs_deploy: bool = False
+    blocked_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class DeploymentResourceSeparationCheck:
+    """Development and production deployment separation result.
+
+    REQ: REQ-DEP-010
+    """
+
+    ok: bool
+    environments: tuple[str, ...]
+    secret_prefixes: tuple[str, ...]
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -419,6 +488,170 @@ def ci_blocks_build_and_deploy_on_test_failure(root: Path = PROJECT_ROOT) -> boo
     return check.ok and bool(check.gated_jobs)
 
 
+def deployment_target_region_check(
+    region: str,
+    *,
+    explicit_override: bool = False,
+) -> DeploymentRegionCheck:
+    """Validate AWS deployment region policy.
+
+    REQ: REQ-DEP-002
+    """
+
+    if region == "us-east-1":
+        return DeploymentRegionCheck(ok=True, region=region)
+    if explicit_override:
+        return DeploymentRegionCheck(
+            ok=True,
+            region=region,
+            override_required=True,
+        )
+    return DeploymentRegionCheck(
+        ok=False,
+        region=region,
+        refusal_reason="deployment region must be us-east-1",
+    )
+
+
+def aws_infrastructure_check(root: Path = PROJECT_ROOT) -> AwsInfrastructureCheck:
+    """Validate AWS template coverage for the required managed services.
+
+    REQ: REQ-DEP-002
+    """
+
+    template_path = root / AWS_INFRA_TEMPLATE_RELATIVE_PATH
+    if not template_path.is_file():
+        return AwsInfrastructureCheck(
+            ok=False,
+            region=None,
+            resources=(),
+            errors=(f"missing:{AWS_INFRA_TEMPLATE_RELATIVE_PATH}",),
+        )
+
+    template_text = template_path.read_text()
+    region = _template_metadata_value(template_text, "DeploymentRegion")
+    errors: list[str] = []
+    region_check = deployment_target_region_check(region or "")
+    if not region_check.ok:
+        errors.append(region_check.refusal_reason or "invalid region")
+
+    resources: list[str] = []
+    for resource, markers in AWS_REQUIRED_RESOURCE_MARKERS.items():
+        if all(marker in template_text for marker in markers):
+            resources.append(resource)
+        else:
+            errors.append(f"missing resource:{resource}")
+    return AwsInfrastructureCheck(
+        ok=not errors,
+        region=region,
+        resources=tuple(resources),
+        errors=tuple(errors),
+    )
+
+
+def github_actions_environment_for_branch(branch: str) -> str | None:
+    """Return automatic deployment environment for a Git branch.
+
+    REQ: REQ-DEP-003, REQ-DEP-004
+    """
+
+    if branch == "develop":
+        return "development"
+    if branch == "main":
+        return "production"
+    return None
+
+
+def deployment_plan_for_branch(
+    branch: str,
+    *,
+    tests_passed: bool,
+    ecr_publish_ok: bool,
+) -> DeploymentPlan:
+    """Build a deployment plan gated by tests and ECR publish status.
+
+    REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-006
+    """
+
+    environment = github_actions_environment_for_branch(branch)
+    if environment is None:
+        return DeploymentPlan(
+            branch=branch,
+            environment=None,
+            deploy_selected=False,
+            blocked_reason="branch is not deployable",
+        )
+    if not tests_passed:
+        return DeploymentPlan(
+            branch=branch,
+            environment=environment,
+            deploy_selected=True,
+            build_images=("backend", "frontend"),
+            blocked_reason="tests failed",
+        )
+    if not ecr_publish_ok:
+        return DeploymentPlan(
+            branch=branch,
+            environment=environment,
+            deploy_selected=True,
+            build_images=("backend", "frontend"),
+            ecr_publish=False,
+            ecs_deploy=False,
+            blocked_reason="ecr publish failed",
+        )
+    return DeploymentPlan(
+        branch=branch,
+        environment=environment,
+        deploy_selected=True,
+        build_images=("backend", "frontend"),
+        ecr_publish=True,
+        ecs_deploy=True,
+    )
+
+
+def deployment_resource_separation_check(
+    root: Path = PROJECT_ROOT,
+) -> DeploymentResourceSeparationCheck:
+    """Validate dev and prod resources use separate names and secret prefixes.
+
+    REQ: REQ-DEP-010
+    """
+
+    errors: list[str] = []
+    environments: list[str] = []
+    secret_prefixes: list[str] = []
+    resource_names: list[str] = []
+    for environment, relative_path in AWS_PARAMETER_FILES.items():
+        path = root / relative_path
+        if not path.is_file():
+            errors.append(f"missing:{relative_path}")
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            errors.append(f"invalid json:{relative_path}")
+            continue
+        if payload.get("environment") != environment:
+            errors.append(f"{relative_path} environment mismatch")
+        secret_prefix = payload.get("secret_prefix")
+        if secret_prefix != f"/codex-poly-bot/{environment}/":
+            errors.append(f"{relative_path} secret prefix mismatch")
+        environments.append(environment)
+        secret_prefixes.append(str(secret_prefix))
+        resource_names.extend(str(name) for name in payload.get("resource_names", []))
+
+    if len(resource_names) != len(set(resource_names)):
+        errors.append("resource names must be environment-specific")
+    if len(secret_prefixes) != len(set(secret_prefixes)):
+        errors.append("secret prefixes must be environment-specific")
+    return DeploymentResourceSeparationCheck(
+        ok=not errors,
+        environments=tuple(environments),
+        secret_prefixes=tuple(secret_prefixes),
+        errors=tuple(errors),
+    )
+
+
 def _workflow_job_names(workflow_text: str) -> tuple[str, ...]:
     jobs: list[str] = []
     in_jobs = False
@@ -452,3 +685,12 @@ def _workflow_job_block(workflow_text: str, job_name: str) -> str:
             break
         block.append(line)
     return "\n".join(block)
+
+
+def _template_metadata_value(template_text: str, key: str) -> str | None:
+    marker = f"{key}:"
+    for line in template_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(marker):
+            return stripped.split(":", 1)[1].strip().strip('"').strip("'")
+    return None
