@@ -1,6 +1,8 @@
 """Risk engine helpers for shared and venue-specific refusal checks.
 
-REQ: REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012
+REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-009,
+REQ-EXE-013, REQ-EXE-014, REQ-EXE-017, REQ-ALP-009,
+REQ-ALP-010, REQ-ALP-011, REQ-ALP-012
 """
 
 from __future__ import annotations
@@ -38,6 +40,50 @@ class AlpacaRiskInput:
     open_positions: int
     creates_new_position: bool
     model_capital: Decimal | str
+
+
+@dataclass(frozen=True)
+class PolymarketRiskConfig:
+    """Default Polymarket risk limits.
+
+    REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006
+    """
+
+    max_position_usd: Decimal
+    max_daily_loss_usd: Decimal
+    max_open_positions: int
+
+
+@dataclass(frozen=True)
+class PolymarketRiskInput:
+    """Inputs needed to evaluate Polymarket risk limits.
+
+    REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006
+    """
+
+    proposed_notional: Decimal | str
+    daily_loss: Decimal | str
+    open_positions: int
+    creates_new_position: bool
+
+
+@dataclass(frozen=True)
+class LiveOrderGateInput:
+    """Boolean live-order blockers resolved before venue submission.
+
+    REQ: REQ-EXE-013, REQ-EXE-014, REQ-EXE-017
+    """
+
+    live_enabled: bool
+    venue_enabled: bool
+    credentials_present: bool
+    venue_config_supported: bool
+    market_data_fresh: bool
+    scoring_succeeded: bool
+    risk_approved: bool
+    account_mode_valid: bool
+    kill_switch_active: bool = False
+    risk_refusal_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +125,110 @@ def default_alpaca_risk_config(payload: dict[str, Any] | None = None) -> AlpacaR
             risk["max_portfolio_allocation_per_symbol"],
             "max_portfolio_allocation_per_symbol",
         ),
+    )
+
+
+def default_polymarket_risk_config(payload: dict[str, Any] | None = None) -> PolymarketRiskConfig:
+    """Load Polymarket risk limits from the default runtime payload.
+
+    REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006
+    """
+
+    source = payload or default_config_payload()
+    risk = source["risk"]["polymarket"]
+    return PolymarketRiskConfig(
+        max_position_usd=_decimal(risk["max_position_usd"], "max_position_usd"),
+        max_daily_loss_usd=_decimal(risk["max_daily_loss_usd"], "max_daily_loss_usd"),
+        max_open_positions=int(risk["max_open_positions"]),
+    )
+
+
+def evaluate_polymarket_risk_limits(
+    risk_input: PolymarketRiskInput,
+    config: PolymarketRiskConfig | None = None,
+) -> RiskLimitResult:
+    """Evaluate default Polymarket position, loss, and open-position limits.
+
+    REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006
+    """
+
+    limits = config or default_polymarket_risk_config()
+    proposed_notional = _decimal(risk_input.proposed_notional, "proposed_notional")
+    daily_loss = _decimal(risk_input.daily_loss, "daily_loss")
+    projected_open_positions = risk_input.open_positions + (
+        1 if risk_input.creates_new_position else 0
+    )
+
+    reasons: list[str] = []
+    if proposed_notional <= 0:
+        reasons.append("KELLY_NON_POSITIVE")
+    if proposed_notional > limits.max_position_usd:
+        reasons.append("MAX_POSITION_LIMIT")
+    if daily_loss >= limits.max_daily_loss_usd:
+        reasons.append("DAILY_LOSS_LIMIT")
+    if projected_open_positions > limits.max_open_positions:
+        reasons.append("OPEN_POSITION_LIMIT")
+
+    return RiskLimitResult(
+        approved=not reasons,
+        refusal_reasons=tuple(dict.fromkeys(reasons)),
+        payload={
+            "max_position_usd": str(limits.max_position_usd),
+            "max_daily_loss_usd": str(limits.max_daily_loss_usd),
+            "max_open_positions": limits.max_open_positions,
+            "projected_open_positions": projected_open_positions,
+        },
+    )
+
+
+def check_positive_order_size(size: Decimal | str) -> RiskLimitResult:
+    """Refuse trades when Kelly sizing returns a non-positive notional.
+
+    REQ: REQ-EXE-009
+    """
+
+    notional = _decimal(size, "size")
+    if notional <= 0:
+        return RiskLimitResult(
+            approved=False,
+            refusal_reasons=("KELLY_NON_POSITIVE",),
+            payload={"size": str(notional)},
+        )
+    return RiskLimitResult(approved=True, payload={"size": str(notional)})
+
+
+def evaluate_live_order_gates(gates: LiveOrderGateInput) -> RiskLimitResult:
+    """Return stable live-order refusal codes before any venue submit.
+
+    REQ: REQ-EXE-013, REQ-EXE-014, REQ-EXE-017
+    """
+
+    reasons: list[str] = []
+    if not gates.live_enabled:
+        reasons.append("LIVE_DISABLED")
+    if gates.kill_switch_active:
+        reasons.append("KILL_SWITCH_ACTIVE")
+    if not gates.venue_enabled:
+        reasons.append("VENUE_DISABLED")
+    if not gates.venue_config_supported or not gates.account_mode_valid:
+        reasons.append("UNSUPPORTED_VENUE_CONFIG")
+    if not gates.credentials_present:
+        reasons.append("CREDENTIAL_MISSING")
+    if not gates.market_data_fresh:
+        reasons.append("STALE_MARKET_DATA")
+    if not gates.scoring_succeeded:
+        reasons.append("SCORING_MISSING_OR_FAILED")
+    if not gates.risk_approved:
+        reasons.append(gates.risk_refusal_reason or "RISK_CHECK_FAILED")
+
+    return RiskLimitResult(
+        approved=not reasons,
+        refusal_reasons=tuple(dict.fromkeys(reasons)),
+        payload={
+            "live_enabled": gates.live_enabled,
+            "venue_enabled": gates.venue_enabled,
+            "kill_switch_active": gates.kill_switch_active,
+        },
     )
 
 

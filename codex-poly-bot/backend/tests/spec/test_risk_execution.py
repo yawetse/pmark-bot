@@ -6,7 +6,6 @@ from decimal import Decimal
 
 import pytest
 
-from tests.spec.helpers import pending
 from app.bootstrap import (
     configured_slippage_threshold,
     load_runtime_defaults,
@@ -32,6 +31,18 @@ from app.services import (
     ConfigPatchOperation,
     ConfigService,
     ConfigValidationError,
+    DryRunOrderRequest,
+    FakeCancelVenue,
+    FakeVenueSubmitter,
+    LiveOrderGateInput,
+    OpenOrder,
+    PolymarketRiskInput,
+    cancel_open_orders_for_kill_switch,
+    check_positive_order_size,
+    default_polymarket_risk_config,
+    evaluate_live_order_gates,
+    evaluate_polymarket_risk_limits,
+    execute_dry_run_order,
 )
 from app.venues import check_market_order_slippage, validate_order_type
 
@@ -65,7 +76,21 @@ def test_req_exe_002_01_dry_run_mode_enabled_order_approved_simulated_order() ->
     When: an order is approved
     Then: a simulated order is recorded
     """
-    pending("TST-REQ-EXE-002-01", "REQ-EXE-002")
+    submitter = FakeVenueSubmitter()
+    result = execute_dry_run_order(
+        DryRunOrderRequest(
+            venue=Venue.POLYMARKET_US,
+            model_provider=ModelProvider.OPENAI,
+            order_id="dry-run-1",
+            notional=Decimal("10"),
+        ),
+        submitter=submitter,
+    )
+
+    assert result.status == "simulated"
+    assert result.order_recorded
+    assert not result.broker_submitted
+    assert result.payload["notional"] == "10"
 
 def test_req_exe_002_02_dry_run_mode_enabled_venue_client_mock_attached() -> None:
     """TST-REQ-EXE-002-02: Validates REQ-EXE-002
@@ -74,7 +99,19 @@ def test_req_exe_002_02_dry_run_mode_enabled_venue_client_mock_attached() -> Non
     When: execution runs
     Then: no venue submission method is called
     """
-    pending("TST-REQ-EXE-002-02", "REQ-EXE-002")
+    submitter = FakeVenueSubmitter()
+
+    execute_dry_run_order(
+        DryRunOrderRequest(
+            venue=Venue.POLYMARKET_US,
+            model_provider=ModelProvider.CLAUDE,
+            order_id="dry-run-2",
+            notional=Decimal("5"),
+        ),
+        submitter=submitter,
+    )
+
+    assert submitter.submit_calls == 0
 
 def test_req_exe_003_01_authorized_dashboard_user_toggles_dry_run_live_next() -> None:
     """TST-REQ-EXE-003-01: Validates REQ-EXE-003
@@ -126,7 +163,19 @@ def test_req_exe_004_01_default_polymarket_risk_config_order_size_exactly_25() -
     When: an order size is exactly 25 USD
     Then: the order passes the max-position boundary check
     """
-    pending("TST-REQ-EXE-004-01", "REQ-EXE-004")
+    config = default_polymarket_risk_config()
+    result = evaluate_polymarket_risk_limits(
+        PolymarketRiskInput(
+            proposed_notional=Decimal("25.00"),
+            daily_loss=Decimal("0"),
+            open_positions=0,
+            creates_new_position=True,
+        ),
+        config,
+    )
+
+    assert config.max_position_usd == Decimal("25.00")
+    assert result.approved
 
 def test_req_exe_004_02_default_polymarket_risk_config_order_size_exceeds_25() -> None:
     """TST-REQ-EXE-004-02: Validates REQ-EXE-004
@@ -135,7 +184,17 @@ def test_req_exe_004_02_default_polymarket_risk_config_order_size_exceeds_25() -
     When: an order size exceeds 25 USD
     Then: the order is refused
     """
-    pending("TST-REQ-EXE-004-02", "REQ-EXE-004")
+    result = evaluate_polymarket_risk_limits(
+        PolymarketRiskInput(
+            proposed_notional=Decimal("25.01"),
+            daily_loss=Decimal("0"),
+            open_positions=0,
+            creates_new_position=True,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "MAX_POSITION_LIMIT"
 
 def test_req_exe_005_01_default_polymarket_risk_config_daily_loss_equals_50() -> None:
     """TST-REQ-EXE-005-01: Validates REQ-EXE-005
@@ -144,7 +203,17 @@ def test_req_exe_005_01_default_polymarket_risk_config_daily_loss_equals_50() ->
     When: daily loss equals 50 USD for a model provider and a new order is evaluated
     Then: the order is refused because max daily loss is reached
     """
-    pending("TST-REQ-EXE-005-01", "REQ-EXE-005")
+    result = evaluate_polymarket_risk_limits(
+        PolymarketRiskInput(
+            proposed_notional=Decimal("5"),
+            daily_loss=Decimal("50.00"),
+            open_positions=0,
+            creates_new_position=True,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "DAILY_LOSS_LIMIT"
 
 def test_req_exe_005_02_default_polymarket_risk_config_daily_loss_exceeds_50() -> None:
     """TST-REQ-EXE-005-02: Validates REQ-EXE-005
@@ -153,7 +222,17 @@ def test_req_exe_005_02_default_polymarket_risk_config_daily_loss_exceeds_50() -
     When: daily loss exceeds 50 USD for a model provider
     Then: additional orders are refused
     """
-    pending("TST-REQ-EXE-005-02", "REQ-EXE-005")
+    result = evaluate_polymarket_risk_limits(
+        PolymarketRiskInput(
+            proposed_notional=Decimal("5"),
+            daily_loss=Decimal("50.01"),
+            open_positions=0,
+            creates_new_position=True,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "DAILY_LOSS_LIMIT"
 
 def test_req_exe_006_01_default_polymarket_risk_config_4_open_positions_approved() -> None:
     """TST-REQ-EXE-006-01: Validates REQ-EXE-006
@@ -162,7 +241,17 @@ def test_req_exe_006_01_default_polymarket_risk_config_4_open_positions_approved
     When: an approved order would create the fifth open position
     Then: the order passes the max-open boundary check
     """
-    pending("TST-REQ-EXE-006-01", "REQ-EXE-006")
+    result = evaluate_polymarket_risk_limits(
+        PolymarketRiskInput(
+            proposed_notional=Decimal("5"),
+            daily_loss=Decimal("0"),
+            open_positions=4,
+            creates_new_position=True,
+        )
+    )
+
+    assert result.approved
+    assert result.payload["projected_open_positions"] == 5
 
 def test_req_exe_006_02_default_polymarket_risk_config_sixth_open_position_would() -> None:
     """TST-REQ-EXE-006-02: Validates REQ-EXE-006
@@ -171,7 +260,17 @@ def test_req_exe_006_02_default_polymarket_risk_config_sixth_open_position_would
     When: a sixth open position would be created
     Then: the order is refused
     """
-    pending("TST-REQ-EXE-006-02", "REQ-EXE-006")
+    result = evaluate_polymarket_risk_limits(
+        PolymarketRiskInput(
+            proposed_notional=Decimal("5"),
+            daily_loss=Decimal("0"),
+            open_positions=5,
+            creates_new_position=True,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "OPEN_POSITION_LIMIT"
 
 def test_req_exe_007_01_authorized_dashboard_user_updates_max_position_daily_loss() -> None:
     """TST-REQ-EXE-007-01: Validates REQ-EXE-007
@@ -261,7 +360,10 @@ def test_req_exe_009_01_kelly_calculation_returns_positive_size_execution_checks
     When: execution checks run
     Then: the non-positive-size refusal gate passes
     """
-    pending("TST-REQ-EXE-009-01", "REQ-EXE-009")
+    result = check_positive_order_size(Decimal("0.01"))
+
+    assert result.approved
+    assert result.refusal_reasons == ()
 
 def test_req_exe_009_02_kelly_calculation_returns_zero_negative_size_execution_checks() -> None:
     """TST-REQ-EXE-009-02: Validates REQ-EXE-009
@@ -270,7 +372,11 @@ def test_req_exe_009_02_kelly_calculation_returns_zero_negative_size_execution_c
     When: execution checks run
     Then: the trade is refused
     """
-    pending("TST-REQ-EXE-009-02", "REQ-EXE-009")
+    zero = check_positive_order_size(Decimal("0"))
+    negative = check_positive_order_size(Decimal("-0.01"))
+
+    assert zero.refusal_reason == "KELLY_NON_POSITIVE"
+    assert negative.refusal_reason == "KELLY_NON_POSITIVE"
 
 def test_req_exe_010_01_approved_limit_market_order_decisions_execution_routes_orders() -> None:
     """TST-REQ-EXE-010-01: Validates REQ-EXE-010
@@ -357,7 +463,20 @@ def test_req_exe_013_01_all_live_order_gates_pass_live_order_placement() -> None
     When: live order placement is requested
     Then: the order may proceed to venue submission
     """
-    pending("TST-REQ-EXE-013-01", "REQ-EXE-013")
+    result = evaluate_live_order_gates(
+        LiveOrderGateInput(
+            live_enabled=True,
+            venue_enabled=True,
+            credentials_present=True,
+            venue_config_supported=True,
+            market_data_fresh=True,
+            scoring_succeeded=True,
+            risk_approved=True,
+            account_mode_valid=True,
+        )
+    )
+
+    assert result.approved
 
 def test_req_exe_013_02_any_configured_refusal_reason_present_live_order_placement() -> None:
     """TST-REQ-EXE-013-02: Validates REQ-EXE-013
@@ -366,7 +485,30 @@ def test_req_exe_013_02_any_configured_refusal_reason_present_live_order_placeme
     When: live order placement is requested
     Then: the order is refused and the reason is persisted
     """
-    pending("TST-REQ-EXE-013-02", "REQ-EXE-013")
+    result = evaluate_live_order_gates(
+        LiveOrderGateInput(
+            live_enabled=False,
+            venue_enabled=False,
+            credentials_present=False,
+            venue_config_supported=False,
+            market_data_fresh=False,
+            scoring_succeeded=False,
+            risk_approved=False,
+            risk_refusal_reason="MAX_POSITION_LIMIT",
+            account_mode_valid=True,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reasons == (
+        "LIVE_DISABLED",
+        "VENUE_DISABLED",
+        "UNSUPPORTED_VENUE_CONFIG",
+        "CREDENTIAL_MISSING",
+        "STALE_MARKET_DATA",
+        "SCORING_MISSING_OR_FAILED",
+        "MAX_POSITION_LIMIT",
+    )
 
 def test_req_exe_014_01_kill_switch_inactive_live_eligibility_checked_normal_live() -> None:
     """TST-REQ-EXE-014-01: Validates REQ-EXE-014
@@ -375,7 +517,21 @@ def test_req_exe_014_01_kill_switch_inactive_live_eligibility_checked_normal_liv
     When: live eligibility is checked
     Then: normal live gates apply
     """
-    pending("TST-REQ-EXE-014-01", "REQ-EXE-014")
+    result = evaluate_live_order_gates(
+        LiveOrderGateInput(
+            live_enabled=True,
+            venue_enabled=True,
+            credentials_present=True,
+            venue_config_supported=True,
+            market_data_fresh=True,
+            scoring_succeeded=True,
+            risk_approved=True,
+            kill_switch_active=False,
+            account_mode_valid=True,
+        )
+    )
+
+    assert result.approved
 
 def test_req_exe_014_02_kill_switch_activated_live_eligibility_checked_live_trading() -> None:
     """TST-REQ-EXE-014-02: Validates REQ-EXE-014
@@ -384,7 +540,22 @@ def test_req_exe_014_02_kill_switch_activated_live_eligibility_checked_live_trad
     When: live eligibility is checked
     Then: live trading is disabled for all models and venues
     """
-    pending("TST-REQ-EXE-014-02", "REQ-EXE-014")
+    result = evaluate_live_order_gates(
+        LiveOrderGateInput(
+            live_enabled=True,
+            venue_enabled=True,
+            credentials_present=True,
+            venue_config_supported=True,
+            market_data_fresh=True,
+            scoring_succeeded=True,
+            risk_approved=True,
+            kill_switch_active=True,
+            account_mode_valid=True,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "KILL_SWITCH_ACTIVE"
 
 def test_req_exe_015_01_kill_switch_activation_enabled_live_venues_open_orders() -> None:
     """TST-REQ-EXE-015-01: Validates REQ-EXE-015
@@ -393,7 +564,18 @@ def test_req_exe_015_01_kill_switch_activation_enabled_live_venues_open_orders()
     When: kill switch handling runs
     Then: cancel attempts are issued for open orders
     """
-    pending("TST-REQ-EXE-015-01", "REQ-EXE-015")
+    canceler = FakeCancelVenue()
+    result = cancel_open_orders_for_kill_switch(
+        (
+            OpenOrder(order_id="order-1", venue=Venue.POLYMARKET_US, venue_order_id="pm-1"),
+            OpenOrder(order_id="order-2", venue=Venue.ALPACA, venue_order_id="alpaca-1"),
+        ),
+        canceler=canceler,
+    )
+
+    assert result.status == "cancel_requested"
+    assert result.cancel_attempts == ("order-1", "order-2")
+    assert canceler.cancel_calls == 2
 
 def test_req_exe_015_02_venue_cancel_attempt_fails_kill_switch_handling_runs() -> None:
     """TST-REQ-EXE-015-02: Validates REQ-EXE-015
@@ -402,7 +584,19 @@ def test_req_exe_015_02_venue_cancel_attempt_fails_kill_switch_handling_runs() -
     When: kill switch handling runs
     Then: the failure is recorded and remaining cancel attempts continue
     """
-    pending("TST-REQ-EXE-015-02", "REQ-EXE-015")
+    canceler = FakeCancelVenue(fail_order_ids=frozenset({"pm-1"}))
+    result = cancel_open_orders_for_kill_switch(
+        (
+            OpenOrder(order_id="order-1", venue=Venue.POLYMARKET_US, venue_order_id="pm-1"),
+            OpenOrder(order_id="order-2", venue=Venue.ALPACA, venue_order_id="alpaca-1"),
+        ),
+        canceler=canceler,
+    )
+
+    assert result.status == "cancel_failed"
+    assert result.failed_order_ids == ("order-1",)
+    assert result.canceled_order_ids == ("order-2",)
+    assert canceler.cancel_calls == 2
 
 def test_req_exe_016_01_order_refused_submitted_filled_canceled_failed_event_processed() -> None:
     """TST-REQ-EXE-016-01: Validates REQ-EXE-016
@@ -464,7 +658,20 @@ def test_req_exe_017_01_dry_run_disabled_venue_enabled_account_mode_valid() -> N
     When: live execution runs
     Then: live orders are permitted
     """
-    pending("TST-REQ-EXE-017-01", "REQ-EXE-017")
+    result = evaluate_live_order_gates(
+        LiveOrderGateInput(
+            live_enabled=True,
+            venue_enabled=True,
+            credentials_present=True,
+            venue_config_supported=True,
+            market_data_fresh=True,
+            scoring_succeeded=True,
+            risk_approved=True,
+            account_mode_valid=True,
+        )
+    )
+
+    assert result.approved
 
 def test_req_exe_017_02_dry_run_disabled_but_venue_disabled_account_mode() -> None:
     """TST-REQ-EXE-017-02: Validates REQ-EXE-017
@@ -473,4 +680,18 @@ def test_req_exe_017_02_dry_run_disabled_but_venue_disabled_account_mode() -> No
     When: live execution runs
     Then: live orders are blocked
     """
-    pending("TST-REQ-EXE-017-02", "REQ-EXE-017")
+    result = evaluate_live_order_gates(
+        LiveOrderGateInput(
+            live_enabled=True,
+            venue_enabled=False,
+            credentials_present=True,
+            venue_config_supported=True,
+            market_data_fresh=True,
+            scoring_succeeded=True,
+            risk_approved=True,
+            account_mode_valid=False,
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reasons == ("VENUE_DISABLED", "UNSUPPORTED_VENUE_CONFIG")

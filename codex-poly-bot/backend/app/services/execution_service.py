@@ -1,6 +1,7 @@
 """Execution service helpers for dry-run and live order paths.
 
-REQ: REQ-ALP-005, REQ-ALP-006, REQ-ALP-007
+REQ: REQ-EXE-002, REQ-EXE-015, REQ-ALP-005, REQ-ALP-006,
+REQ-ALP-007
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
+from app.domain import ModelProvider, Venue
 from app.venues.polymarket import VenueCallResult
 
 
@@ -48,6 +50,58 @@ class AlpacaExecutionResult:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class DryRunOrderRequest:
+    """Dry-run order request for any supported venue.
+
+    REQ: REQ-EXE-002
+    """
+
+    venue: Venue
+    model_provider: ModelProvider
+    order_id: str
+    notional: Decimal | str
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    """Generic dry-run or venue execution result.
+
+    REQ: REQ-EXE-002, REQ-EXE-015
+    """
+
+    status: str
+    order_recorded: bool
+    broker_submitted: bool
+    refusal_reason: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OpenOrder:
+    """Known live order eligible for kill-switch cancellation.
+
+    REQ: REQ-EXE-015
+    """
+
+    order_id: str
+    venue: Venue
+    venue_order_id: str
+
+
+@dataclass(frozen=True)
+class KillSwitchCancelResult:
+    """Aggregate result for kill-switch cancel attempts.
+
+    REQ: REQ-EXE-015
+    """
+
+    status: str
+    cancel_attempts: tuple[str, ...] = ()
+    canceled_order_ids: tuple[str, ...] = ()
+    failed_order_ids: tuple[str, ...] = ()
+
+
 class FakeAlpacaVenueSubmitter:
     """Fake Alpaca submitter that records calls without external I/O."""
 
@@ -66,6 +120,42 @@ class FakeAlpacaVenueSubmitter:
         return f"alpaca-{account_mode}-{symbol}-{self.submit_calls}"
 
 
+class FakeVenueSubmitter:
+    """Generic fake submitter used to prove dry-run avoids venue calls.
+
+    REQ: REQ-EXE-002
+    """
+
+    def __init__(self) -> None:
+        self.submit_calls = 0
+
+    def submit_order(self) -> str:
+        self.submit_calls += 1
+        return f"venue-order-{self.submit_calls}"
+
+
+class FakeCancelVenue:
+    """Fake cancel adapter for kill-switch tests.
+
+    REQ: REQ-EXE-015
+    """
+
+    def __init__(self, *, fail_order_ids: frozenset[str] = frozenset()) -> None:
+        self.fail_order_ids = fail_order_ids
+        self.cancel_calls = 0
+        self.canceled_venue_order_ids: tuple[str, ...] = ()
+
+    def cancel_order(self, *, venue: Venue, venue_order_id: str) -> bool:
+        """Record cancel attempt and return success/failure.
+
+        REQ: REQ-EXE-015
+        """
+
+        self.cancel_calls += 1
+        self.canceled_venue_order_ids = (*self.canceled_venue_order_ids, venue_order_id)
+        return venue_order_id not in self.fail_order_ids
+
+
 def _decimal(value: Decimal | str, field_name: str) -> Decimal:
     try:
         decimal = Decimal(str(value))
@@ -74,6 +164,63 @@ def _decimal(value: Decimal | str, field_name: str) -> Decimal:
     if not decimal.is_finite():
         raise ValueError(f"{field_name} must be finite")
     return decimal
+
+
+def execute_dry_run_order(
+    request: DryRunOrderRequest,
+    *,
+    submitter: FakeVenueSubmitter,
+) -> ExecutionResult:
+    """Record a simulated order without calling the venue submitter.
+
+    REQ: REQ-EXE-002
+    """
+
+    notional = _decimal(request.notional, "notional")
+    return ExecutionResult(
+        status="simulated",
+        order_recorded=True,
+        broker_submitted=False,
+        payload={
+            "order_id": request.order_id,
+            "venue": request.venue.value,
+            "model_provider": request.model_provider.value,
+            "notional": str(notional),
+            "submit_calls": submitter.submit_calls,
+        },
+    )
+
+
+def cancel_open_orders_for_kill_switch(
+    open_orders: tuple[OpenOrder, ...],
+    *,
+    canceler: FakeCancelVenue,
+) -> KillSwitchCancelResult:
+    """Attempt cancellation for every known open order after kill switch.
+
+    REQ: REQ-EXE-015
+    """
+
+    attempted: list[str] = []
+    canceled: list[str] = []
+    failed: list[str] = []
+    for order in open_orders:
+        attempted.append(order.order_id)
+        ok = canceler.cancel_order(
+            venue=order.venue,
+            venue_order_id=order.venue_order_id,
+        )
+        if ok:
+            canceled.append(order.order_id)
+            continue
+        failed.append(order.order_id)
+
+    return KillSwitchCancelResult(
+        status="cancel_failed" if failed else "cancel_requested",
+        cancel_attempts=tuple(attempted),
+        canceled_order_ids=tuple(canceled),
+        failed_order_ids=tuple(failed),
+    )
 
 
 def resolve_alpaca_account_mode(raw_mode: str) -> VenueCallResult:
