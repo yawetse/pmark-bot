@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+from app.adapters.aws import InMemorySecretsAdapter, SecretRef, SecretUnavailableError
+from app.domain import Environment
 from tests.spec.helpers import pending
 
 
@@ -48,7 +52,21 @@ def test_req_wal_003_01_deployed_environment_settings_private_keys_api_credentia
     When: private keys and API credentials are requested
     Then: they are read only from AWS Secrets Manager
     """
-    pending("TST-REQ-WAL-003-01", "REQ-WAL-003")
+    adapter = InMemorySecretsAdapter(
+        secrets={"/codex-poly-bot/production/polymarket/openai/wallet": "wallet-secret"}
+    )
+
+    result = adapter.get_secret(
+        SecretRef(
+            environment=Environment.PRODUCTION,
+            path="/codex-poly-bot/production/polymarket/openai/wallet",
+            source="aws_secrets_manager",
+        )
+    )
+
+    assert result.value == "wallet-secret"
+    assert result.source == "aws_secrets_manager"
+    assert result.redacted_value == "****"
 
 def test_req_wal_003_02_deployed_environment_settings_local_secret_file_path_credential() -> None:
     """TST-REQ-WAL-003-02: Validates REQ-WAL-003
@@ -57,7 +75,16 @@ def test_req_wal_003_02_deployed_environment_settings_local_secret_file_path_cre
     When: credential loading runs
     Then: local secret loading is rejected
     """
-    pending("TST-REQ-WAL-003-02", "REQ-WAL-003")
+    adapter = InMemorySecretsAdapter(secrets={})
+
+    with pytest.raises(SecretUnavailableError, match="local secret files are not allowed"):
+        adapter.get_secret(
+            SecretRef(
+                environment=Environment.PRODUCTION,
+                path=".env.production",
+                source="local_file",
+            )
+        )
 
 def test_req_wal_004_01_local_development_settings_gitignored_env_values_credential_loading() -> None:
     """TST-REQ-WAL-004-01: Validates REQ-WAL-004
@@ -120,4 +147,17 @@ def test_req_wal_007_01_credentials_rotated_in_configured_store_next_credential_
     When: the next credential refresh runs
     Then: updated secrets are used without redeploy
     """
-    pending("TST-REQ-WAL-007-01", "REQ-WAL-007")
+    ref = SecretRef(
+        environment=Environment.PRODUCTION,
+        path="/codex-poly-bot/production/alpaca/openai/api-key",
+        source="aws_secrets_manager",
+    )
+    adapter = InMemorySecretsAdapter(secrets={ref.path: "initial-key"})
+
+    initial = adapter.get_secret(ref)
+    adapter.rotate_secret(ref.path, "rotated-key")
+    refreshed = adapter.refresh_secret(ref)
+
+    assert initial.value == "initial-key"
+    assert refreshed.value == "rotated-key"
+    assert refreshed.version != initial.version
