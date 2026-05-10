@@ -11,7 +11,8 @@ REQ-EXE-002, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006,
 REQ-EXE-009, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015,
 REQ-EXE-017, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004,
 REQ-NOT-005, REQ-CMP-002, REQ-CMP-004, REQ-EXT-002,
-REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006
+REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006,
+REQ-UI-001, REQ-UI-004, REQ-UI-009, REQ-UI-010, REQ-UI-011
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -43,6 +44,17 @@ from app.services.comparison_service import (
     mark_comparison_metric_unavailable,
 )
 from app.services.control_service import KillSwitchActivationResult, KillSwitchService, KillSwitchState
+from app.services.dashboard_service import (
+    ComparisonDashboardView,
+    DashboardShellResult,
+    DashboardStatusResult,
+    ModelProviderSummary,
+    build_comparison_dashboard_view,
+    build_dashboard_shell,
+    build_dashboard_status,
+    build_model_provider_summary,
+    render_wallet_dashboard_status,
+)
 from app.services.execution_service import (
     AlpacaExecutionRequest,
     AlpacaExecutionResult,
@@ -148,10 +160,13 @@ __all__ = [
     "ConfigService",
     "ConfigValidationError",
     "ComparisonGroup",
+    "ComparisonDashboardView",
     "ComparisonSummary",
     "CredentialStatus",
     "CredentialTarget",
     "DashboardAccessResult",
+    "DashboardShellResult",
+    "DashboardStatusResult",
     "DataFreshnessStatus",
     "DailyPnlSummary",
     "DigestInputs",
@@ -177,6 +192,7 @@ __all__ = [
     "LlmBudgetLedger",
     "LlmScoreRequest",
     "MutationContextResult",
+    "ModelProviderSummary",
     "NotificationAlertDecision",
     "ObservabilitySnapshot",
     "OpenOrder",
@@ -194,6 +210,10 @@ __all__ = [
     "WalletGenerationResult",
     "alert_allowed_by_cooldown",
     "build_credential_status",
+    "build_comparison_dashboard_view",
+    "build_dashboard_shell",
+    "build_dashboard_status",
+    "build_model_provider_summary",
     "build_scoring_queue",
     "cancel_open_orders_for_kill_switch",
     "check_scoring_failure_gate",
@@ -219,6 +239,7 @@ __all__ = [
     "load_local_credential",
     "mark_comparison_metric_unavailable",
     "record_provider_cost",
+    "render_wallet_dashboard_status",
     "render_daily_digest",
     "resolve_credential_ref",
     "resolve_alpaca_account_mode",

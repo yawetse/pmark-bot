@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
-from app.domain import Environment
+from app.domain import Environment, InstrumentType, ModelProvider, Venue
 from app.services import (
     ActorContext,
     AuditService,
@@ -15,9 +17,16 @@ from app.services import (
     ConfigPatchOperation,
     ConfigService,
     ConfigValidationError,
+    CredentialStatus,
     KillSwitchService,
+    ComparisonGroup,
+    PerformanceRecord,
+    build_comparison_dashboard_view,
+    build_dashboard_shell,
+    build_dashboard_status,
+    build_model_provider_summary,
+    render_wallet_dashboard_status,
 )
-from tests.spec.helpers import pending
 
 
 def test_req_ui_001_01_backend_frontend_services_running_dashboard_loads_next_js() -> None:
@@ -27,7 +36,11 @@ def test_req_ui_001_01_backend_frontend_services_running_dashboard_loads_next_js
     When: the dashboard loads
     Then: the Next.js UI retrieves data from FastAPI services
     """
-    pending("TST-REQ-UI-001-01", "REQ-UI-001")
+    result = build_dashboard_shell(backend_available=True, frontend_available=True)
+
+    assert result.status_code == 200
+    assert result.data_source == "fastapi"
+    assert result.degraded_sections == ()
 
 def test_req_ui_001_02_fastapi_unavailable_dashboard_loads_status_views_ui_shows() -> None:
     """TST-REQ-UI-001-02: Validates REQ-UI-001
@@ -36,7 +49,16 @@ def test_req_ui_001_02_fastapi_unavailable_dashboard_loads_status_views_ui_shows
     When: the dashboard loads status views
     Then: the UI shows degraded API state without exposing internals
     """
-    pending("TST-REQ-UI-001-02", "REQ-UI-001")
+    result = build_dashboard_shell(
+        backend_available=False,
+        frontend_available=True,
+        backend_error="Traceback: database password leaked",
+    )
+
+    assert result.status_code == 503
+    assert result.degraded_sections == ("api",)
+    assert result.public_message == "dashboard API unavailable"
+    assert "Traceback" not in result.public_message
 
 def test_req_ui_002_01_unauthenticated_user_dashboard_opened_github_oauth_login_required() -> None:
     """TST-REQ-UI-002-01: Validates REQ-UI-002
@@ -126,7 +148,30 @@ def test_req_ui_004_01_authorized_user_status_pages_load_venue_model_wallet() ->
     When: status pages load
     Then: venue, model, wallet, ingestion, loop, position, order, and notification status are visible
     """
-    pending("TST-REQ-UI-004-01", "REQ-UI-004")
+    result = build_dashboard_status(
+        {
+            "venue": {"polymarket_us": "enabled"},
+            "model": {"openai": "ok", "claude": "ok"},
+            "wallet": {"openai": "present"},
+            "ingestion": {"polymarket_us": "fresh"},
+            "loop": {"trading": "idle"},
+            "position": {"open": 1},
+            "order": {"recent": 2},
+            "notification": {"ses": "ok"},
+        }
+    )
+
+    assert result.visible_sections == (
+        "venue",
+        "model",
+        "wallet",
+        "ingestion",
+        "loop",
+        "position",
+        "order",
+        "notification",
+    )
+    assert result.degraded_sections == ()
 
 def test_req_ui_004_02_status_source_unavailable_status_pages_load_dashboard_marks() -> None:
     """TST-REQ-UI-004-02: Validates REQ-UI-004
@@ -135,7 +180,22 @@ def test_req_ui_004_02_status_source_unavailable_status_pages_load_dashboard_mar
     When: status pages load
     Then: the dashboard marks that source degraded rather than showing stale success
     """
-    pending("TST-REQ-UI-004-02", "REQ-UI-004")
+    result = build_dashboard_status(
+        {
+            "venue": {"polymarket_us": "enabled"},
+            "model": None,
+            "wallet": {"openai": "present"},
+            "ingestion": {"polymarket_us": "fresh"},
+            "loop": {"trading": "idle"},
+            "position": {"open": 1},
+            "order": {"recent": 2},
+            "notification": None,
+        }
+    )
+
+    assert "model" in result.degraded_sections
+    assert "notification" in result.degraded_sections
+    assert result.sections["model"]["status"] == "degraded"
 
 def test_req_ui_005_01_authorized_user_changes_supported_config_fields_dashboard_saves() -> None:
     """TST-REQ-UI-005-01: Validates REQ-UI-005
@@ -380,7 +440,20 @@ def test_req_ui_009_01_wallet_metadata_contains_public_identifiers_private_secre
     When: dashboard wallet views render
     Then: only public identifiers and health are shown
     """
-    pending("TST-REQ-UI-009-01", "REQ-UI-009")
+    payload = render_wallet_dashboard_status(
+        CredentialStatus(
+            credential_type="wallet",
+            secret_ref="/codex-poly-bot/development/polymarket_us/openai/wallet",
+            present=True,
+            public_identifier="pm-dev-openai",
+            secret_value="private-key-value",
+        )
+    )
+
+    assert payload["public_identifier"] == "pm-dev-openai"
+    assert payload["present"] is True
+    assert "secret_value" not in payload
+    assert "private-key-value" not in str(payload)
 
 def test_req_ui_010_01_claude_openai_records_exist_dashboard_model_views_render() -> None:
     """TST-REQ-UI-010-01: Validates REQ-UI-010
@@ -389,7 +462,22 @@ def test_req_ui_010_01_claude_openai_records_exist_dashboard_model_views_render(
     When: dashboard model views render
     Then: positions, decisions, budgets, and P&L are separated by provider
     """
-    pending("TST-REQ-UI-010-01", "REQ-UI-010")
+    summary = build_model_provider_summary(
+        records=(
+            {"model_provider": ModelProvider.CLAUDE, "position_id": "c-pos", "pnl": Decimal("7")},
+            {"model_provider": ModelProvider.OPENAI, "position_id": "o-pos", "pnl": Decimal("3")},
+        ),
+        budgets={
+            ModelProvider.CLAUDE: Decimal("20"),
+            ModelProvider.OPENAI: Decimal("30"),
+        },
+        provider=ModelProvider.CLAUDE,
+    )
+
+    assert summary.model_provider == ModelProvider.CLAUDE
+    assert summary.positions == ("c-pos",)
+    assert summary.budget_usd == Decimal("20")
+    assert summary.pnl == Decimal("7")
 
 def test_req_ui_011_01_comparison_metrics_exist_polymarket_alpaca_dashboard_comparison_views() -> None:
     """TST-REQ-UI-011-01: Validates REQ-UI-011
@@ -398,7 +486,39 @@ def test_req_ui_011_01_comparison_metrics_exist_polymarket_alpaca_dashboard_comp
     When: dashboard comparison views render
     Then: P&L, win rate, drawdown, cost, exposure, trade count, and return-to-risk are shown
     """
-    pending("TST-REQ-UI-011-01", "REQ-UI-011")
+    view = build_comparison_dashboard_view(
+        (
+            PerformanceRecord(
+                group=ComparisonGroup(
+                    ModelProvider.OPENAI,
+                    Venue.POLYMARKET_US,
+                    Environment.DEVELOPMENT,
+                    InstrumentType.PREDICTION_MARKET,
+                ),
+                realized_pnl=Decimal("20"),
+                unrealized_pnl=Decimal("5"),
+                model_cost=Decimal("2"),
+                open_exposure=Decimal("40"),
+                wins=3,
+                losses=1,
+                max_drawdown=Decimal("-5"),
+            ),
+        )
+    )
+
+    metric_names = {metric.metric_name for metric in view.metrics}
+
+    assert {
+        "realized_pnl",
+        "unrealized_pnl",
+        "win_rate",
+        "max_drawdown",
+        "model_cost",
+        "open_exposure",
+        "trade_count",
+        "return_to_risk",
+    }.issubset(metric_names)
+    assert view.degraded_sections == ()
 
 def test_req_ui_011_02_one_model_venue_insufficient_comparison_data_comparison_views() -> None:
     """TST-REQ-UI-011-02: Validates REQ-UI-011
@@ -407,4 +527,19 @@ def test_req_ui_011_02_one_model_venue_insufficient_comparison_data_comparison_v
     When: comparison views render
     Then: unavailable metrics are labeled without showing misleading zero values
     """
-    pending("TST-REQ-UI-011-02", "REQ-UI-011")
+    view = build_comparison_dashboard_view(
+        (),
+        expected_groups=(
+            ComparisonGroup(
+                ModelProvider.CLAUDE,
+                Venue.ALPACA,
+                Environment.DEVELOPMENT,
+                InstrumentType.ETF,
+            ),
+        ),
+    )
+    metric = view.metrics[0]
+
+    assert metric.value is None
+    assert metric.unavailable_reason == "no eligible data"
+    assert "comparison" in view.degraded_sections
