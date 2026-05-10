@@ -4,7 +4,8 @@ REQ: REQ-OBS-001, REQ-OBS-002, REQ-OBS-003, REQ-OBS-004, REQ-OBS-005,
 REQ-OBS-006, REQ-UI-002, REQ-UI-003, REQ-UI-006, REQ-EXE-016,
 REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-009,
 REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-DAT-001,
-REQ-DAT-002, REQ-DAT-005, REQ-DAT-008
+REQ-DAT-002, REQ-DAT-005, REQ-DAT-008, REQ-WAL-001,
+REQ-WAL-002, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -51,6 +52,19 @@ from app.services.risk_engine import (
     default_alpaca_risk_config,
     evaluate_alpaca_risk_limits,
 )
+from app.services.wallet_service import (
+    CredentialStatus,
+    CredentialTarget,
+    LocalCredentialResult,
+    WalletGenerationRequest,
+    WalletGenerationResult,
+    build_credential_status,
+    check_required_credentials,
+    generate_polymarket_wallet,
+    load_local_credential,
+    resolve_credential_ref,
+    validate_unique_credential_refs,
+)
 
 __all__ = [
     "ActorContext",
@@ -70,6 +84,8 @@ __all__ = [
     "ConfigSaveResult",
     "ConfigService",
     "ConfigValidationError",
+    "CredentialStatus",
+    "CredentialTarget",
     "DashboardAccessResult",
     "DataFreshnessStatus",
     "FakeAlpacaVenueSubmitter",
@@ -81,14 +97,23 @@ __all__ = [
     "KillSwitchService",
     "KillSwitchState",
     "LogEmissionResult",
+    "LocalCredentialResult",
     "MutationContextResult",
     "ObservabilitySnapshot",
     "RiskLimitResult",
     "RuntimeConfigSnapshot",
+    "WalletGenerationRequest",
+    "WalletGenerationResult",
+    "build_credential_status",
+    "check_required_credentials",
     "default_config_payload",
     "default_alpaca_risk_config",
     "check_market_data_freshness",
     "execute_alpaca_order",
     "evaluate_alpaca_risk_limits",
+    "generate_polymarket_wallet",
+    "load_local_credential",
+    "resolve_credential_ref",
     "resolve_alpaca_account_mode",
+    "validate_unique_credential_refs",
 ]
