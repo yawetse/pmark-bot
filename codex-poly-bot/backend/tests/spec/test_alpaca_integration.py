@@ -27,6 +27,8 @@ from app.services import (
     ConfigPatchOperation,
     ConfigService,
     ConfigValidationError,
+    AlpacaRiskInput,
+    evaluate_alpaca_risk_limits,
 )
 from app.venues import (
     AlpacaAccountCredential,
@@ -360,7 +362,19 @@ def test_req_alp_009_01_default_alpaca_risk_config_stock_etf_order_sized() -> No
     When: a stock or ETF order is sized at 100 USD per symbol and provider
     Then: the order passes the max-position boundary check
     """
-    pending("TST-REQ-ALP-009-01", "REQ-ALP-009")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("100.00"),
+            projected_symbol_exposure=Decimal("100.00"),
+            daily_loss=Decimal("0.00"),
+            open_positions=0,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert result.approved
+    assert result.payload["max_position_usd"] == "100.00"
 
 def test_req_alp_009_02_default_alpaca_risk_config_stock_etf_order_exceeds() -> None:
     """TST-REQ-ALP-009-02: Validates REQ-ALP-009
@@ -369,7 +383,19 @@ def test_req_alp_009_02_default_alpaca_risk_config_stock_etf_order_exceeds() -> 
     When: a stock or ETF order exceeds 100 USD for a symbol and provider
     Then: the order is refused
     """
-    pending("TST-REQ-ALP-009-02", "REQ-ALP-009")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("100.01"),
+            projected_symbol_exposure=Decimal("100.01"),
+            daily_loss=Decimal("0.00"),
+            open_positions=0,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "MAX_POSITION_LIMIT"
 
 def test_req_alp_010_01_default_alpaca_risk_config_daily_loss_equals_100() -> None:
     """TST-REQ-ALP-010-01: Validates REQ-ALP-010
@@ -378,7 +404,19 @@ def test_req_alp_010_01_default_alpaca_risk_config_daily_loss_equals_100() -> No
     When: daily loss equals 100 USD for a model provider and a new order is evaluated
     Then: the order is refused because max daily loss is reached
     """
-    pending("TST-REQ-ALP-010-01", "REQ-ALP-010")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("1.00"),
+            projected_symbol_exposure=Decimal("1.00"),
+            daily_loss=Decimal("100.00"),
+            open_positions=0,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "DAILY_LOSS_LIMIT"
 
 def test_req_alp_010_02_default_alpaca_risk_config_daily_loss_exceeds_100() -> None:
     """TST-REQ-ALP-010-02: Validates REQ-ALP-010
@@ -387,7 +425,19 @@ def test_req_alp_010_02_default_alpaca_risk_config_daily_loss_exceeds_100() -> N
     When: daily loss exceeds 100 USD for a model provider
     Then: additional Alpaca orders are refused
     """
-    pending("TST-REQ-ALP-010-02", "REQ-ALP-010")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("1.00"),
+            projected_symbol_exposure=Decimal("1.00"),
+            daily_loss=Decimal("100.01"),
+            open_positions=0,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "DAILY_LOSS_LIMIT"
 
 def test_req_alp_011_01_default_alpaca_risk_config_4_open_stock_etf() -> None:
     """TST-REQ-ALP-011-01: Validates REQ-ALP-011
@@ -396,7 +446,19 @@ def test_req_alp_011_01_default_alpaca_risk_config_4_open_stock_etf() -> None:
     When: an approved order would create the fifth open position
     Then: the order passes the max-open boundary check
     """
-    pending("TST-REQ-ALP-011-01", "REQ-ALP-011")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("1.00"),
+            projected_symbol_exposure=Decimal("1.00"),
+            daily_loss=Decimal("0.00"),
+            open_positions=4,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert result.approved
+    assert result.payload["projected_open_positions"] == 5
 
 def test_req_alp_011_02_default_alpaca_risk_config_sixth_open_stock_etf() -> None:
     """TST-REQ-ALP-011-02: Validates REQ-ALP-011
@@ -405,7 +467,19 @@ def test_req_alp_011_02_default_alpaca_risk_config_sixth_open_stock_etf() -> Non
     When: a sixth open stock or ETF position would be created
     Then: the order is refused
     """
-    pending("TST-REQ-ALP-011-02", "REQ-ALP-011")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("1.00"),
+            projected_symbol_exposure=Decimal("1.00"),
+            daily_loss=Decimal("0.00"),
+            open_positions=5,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert not result.approved
+    assert result.refusal_reason == "OPEN_POSITION_LIMIT"
 
 def test_req_alp_012_01_default_alpaca_risk_config_symbol_allocation_would_equal() -> None:
     """TST-REQ-ALP-012-01: Validates REQ-ALP-012
@@ -414,7 +488,19 @@ def test_req_alp_012_01_default_alpaca_risk_config_symbol_allocation_would_equal
     When: symbol allocation would equal 10 percent for a model provider
     Then: the order passes the allocation boundary check
     """
-    pending("TST-REQ-ALP-012-01", "REQ-ALP-012")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("100.00"),
+            projected_symbol_exposure=Decimal("100.00"),
+            daily_loss=Decimal("0.00"),
+            open_positions=0,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert result.approved
+    assert result.payload["max_symbol_allocation_usd"] == "100.0000"
 
 def test_req_alp_012_02_default_alpaca_risk_config_symbol_allocation_would_exceed() -> None:
     """TST-REQ-ALP-012-02: Validates REQ-ALP-012
@@ -423,7 +509,19 @@ def test_req_alp_012_02_default_alpaca_risk_config_symbol_allocation_would_excee
     When: symbol allocation would exceed 10 percent
     Then: the order is refused
     """
-    pending("TST-REQ-ALP-012-02", "REQ-ALP-012")
+    result = evaluate_alpaca_risk_limits(
+        AlpacaRiskInput(
+            proposed_notional=Decimal("100.01"),
+            projected_symbol_exposure=Decimal("100.01"),
+            daily_loss=Decimal("0.00"),
+            open_positions=0,
+            creates_new_position=True,
+            model_capital=Decimal("1000.00"),
+        )
+    )
+
+    assert not result.approved
+    assert "ALPACA_ALLOCATION_LIMIT" in result.refusal_reasons
 
 def test_req_alp_013_01_default_alpaca_slippage_config_estimated_market_order_slippage() -> None:
     """TST-REQ-ALP-013-01: Validates REQ-ALP-013
