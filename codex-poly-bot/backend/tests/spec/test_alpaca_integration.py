@@ -15,6 +15,7 @@ from app.domain import (
     Instrument,
     InstrumentType,
     ModelProvider,
+    OrderSide,
     Venue,
     eligible_alpaca_instruments,
     supported_venues,
@@ -32,8 +33,10 @@ from app.venues import (
     AlpacaClientBoundary,
     AlpacaContractClient,
     AlpacaMarketDataStatus,
+    AlpacaOrderIntent,
     AlpacaVenueConfig,
     validate_alpaca_account_identifiers,
+    validate_alpaca_long_only_order,
     validate_alpaca_market_data,
 )
 
@@ -302,7 +305,20 @@ def test_req_alp_008_01_buy_order_maintains_long_only_position_without_margin() 
     When: Alpaca risk checks run
     Then: the order remains eligible
     """
-    pending("TST-REQ-ALP-008-01", "REQ-ALP-008")
+    result = validate_alpaca_long_only_order(
+        AlpacaOrderIntent(
+            symbol="SPY",
+            side=OrderSide.BUY,
+            quantity=Decimal("2"),
+            current_position=Decimal("1"),
+            estimated_notional=Decimal("250.00"),
+            buying_power=Decimal("500.00"),
+        )
+    )
+
+    assert result.ok
+    assert result.payload["projected_position"] == "3"
+    assert result.payload["margin_required"] is False
 
 def test_req_alp_008_02_order_would_short_symbol_require_margin_alpaca_risk() -> None:
     """TST-REQ-ALP-008-02: Validates REQ-ALP-008
@@ -311,7 +327,31 @@ def test_req_alp_008_02_order_would_short_symbol_require_margin_alpaca_risk() ->
     When: Alpaca risk checks run
     Then: the order is refused
     """
-    pending("TST-REQ-ALP-008-02", "REQ-ALP-008")
+    short_result = validate_alpaca_long_only_order(
+        AlpacaOrderIntent(
+            symbol="SPY",
+            side=OrderSide.SELL,
+            quantity=Decimal("2"),
+            current_position=Decimal("1"),
+            estimated_notional=Decimal("250.00"),
+            buying_power=Decimal("500.00"),
+        )
+    )
+    margin_result = validate_alpaca_long_only_order(
+        AlpacaOrderIntent(
+            symbol="QQQ",
+            side=OrderSide.BUY,
+            quantity=Decimal("10"),
+            current_position=Decimal("0"),
+            estimated_notional=Decimal("1000.00"),
+            buying_power=Decimal("100.00"),
+        )
+    )
+
+    assert not short_result.ok
+    assert short_result.refusal_reason == "Alpaca order would create short position"
+    assert not margin_result.ok
+    assert margin_result.refusal_reason == "Alpaca order would require margin"
 
 def test_req_alp_009_01_default_alpaca_risk_config_stock_etf_order_sized() -> None:
     """TST-REQ-ALP-009-01: Validates REQ-ALP-009

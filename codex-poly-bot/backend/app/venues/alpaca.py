@@ -7,10 +7,11 @@ REQ-ALP-017, REQ-ALP-018
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Iterable
 
-from app.domain import Environment, ModelProvider, Venue
+from app.domain import Environment, ModelProvider, OrderSide, Venue
 from app.venues.polymarket import VenueCallResult
 
 
@@ -69,6 +70,32 @@ class AlpacaMarketDataStatus:
     outside_trading_hours: bool = False
 
 
+@dataclass(frozen=True)
+class AlpacaOrderIntent:
+    """Alpaca order safety input before adapter submit.
+
+    REQ: REQ-ALP-008
+    """
+
+    symbol: str
+    side: OrderSide
+    quantity: Decimal | str
+    current_position: Decimal | str
+    estimated_notional: Decimal | str
+    buying_power: Decimal | str
+    margin_required: bool = False
+
+
+def _decimal(value: Decimal | str, field_name: str) -> Decimal:
+    try:
+        decimal = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a decimal") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return decimal
+
+
 def validate_alpaca_client_boundary(config: AlpacaVenueConfig) -> VenueCallResult:
     """Validate that Alpaca operations use approved SDK or HTTP boundaries.
 
@@ -104,6 +131,53 @@ def validate_alpaca_client_boundary(config: AlpacaVenueConfig) -> VenueCallResul
             "client_boundary": config.client_boundary.value,
             "operations": tuple(operations),
             "venue": config.venue.value,
+        },
+    )
+
+
+def validate_alpaca_long_only_order(intent: AlpacaOrderIntent) -> VenueCallResult:
+    """Refuse Alpaca orders that would short or require margin.
+
+    REQ: REQ-ALP-008
+    """
+
+    quantity = _decimal(intent.quantity, "quantity")
+    current_position = _decimal(intent.current_position, "current_position")
+    estimated_notional = _decimal(intent.estimated_notional, "estimated_notional")
+    buying_power = _decimal(intent.buying_power, "buying_power")
+    symbol = intent.symbol.strip().upper()
+    reasons: list[str] = []
+
+    if not symbol:
+        reasons.append("missing Alpaca symbol")
+    if quantity <= 0:
+        reasons.append("Alpaca order quantity must be positive")
+    if current_position < 0:
+        reasons.append("Alpaca current position cannot be negative")
+    if estimated_notional < 0:
+        reasons.append("Alpaca order notional cannot be negative")
+    if buying_power < 0:
+        reasons.append("Alpaca buying power cannot be negative")
+
+    projected_position = current_position
+    if intent.side == OrderSide.BUY:
+        projected_position += quantity
+        if intent.margin_required or estimated_notional > buying_power:
+            reasons.append("Alpaca order would require margin")
+    elif intent.side == OrderSide.SELL:
+        projected_position -= quantity
+        if projected_position < 0:
+            reasons.append("Alpaca order would create short position")
+    else:
+        reasons.append("unsupported Alpaca order side")
+
+    return VenueCallResult(
+        ok=not reasons,
+        refusal_reasons=tuple(dict.fromkeys(reasons)),
+        payload={
+            "symbol": symbol,
+            "projected_position": str(projected_position),
+            "margin_required": "Alpaca order would require margin" in reasons,
         },
     )
 
