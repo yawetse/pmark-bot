@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -13,6 +13,12 @@ from app.adapters.aws import (
     store_snapshot_batch,
 )
 from app.domain import Environment, Venue
+from app.services import (
+    FakeSnapshotSource,
+    IngestionCheckpoint,
+    IngestionService,
+    check_market_data_freshness,
+)
 from tests.spec.helpers import pending
 
 
@@ -23,7 +29,19 @@ def test_req_dat_001_01_enabled_venues_clock_reaches_06_00_utc_daily() -> None:
     When: the daily full-ingestion scheduler fires
     Then: a full market and trade snapshot is downloaded
     """
-    pending("TST-REQ-DAT-001-01", "REQ-DAT-001")
+    source = FakeSnapshotSource()
+    service = IngestionService(storage=InMemoryS3StorageAdapter(), source=source)
+
+    results = service.run_daily_full_ingestion(
+        environment=Environment.DEVELOPMENT,
+        enabled_venues=[Venue.POLYMARKET_US],
+        now=datetime(2026, 5, 10, 6, 0, tzinfo=UTC),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok
+    assert results[0].snapshot_type == "raw_full"
+    assert source.full_fetches == (Venue.POLYMARKET_US,)
 
 def test_req_dat_001_02_no_venues_enabled_06_00_utc_full_ingestion() -> None:
     """TST-REQ-DAT-001-02: Validates REQ-DAT-001
@@ -32,7 +50,18 @@ def test_req_dat_001_02_no_venues_enabled_06_00_utc_full_ingestion() -> None:
     When: full ingestion runs
     Then: no venue download starts and the skipped state is recorded
     """
-    pending("TST-REQ-DAT-001-02", "REQ-DAT-001")
+    source = FakeSnapshotSource()
+    service = IngestionService(storage=InMemoryS3StorageAdapter(), source=source)
+
+    results = service.run_daily_full_ingestion(
+        environment=Environment.DEVELOPMENT,
+        enabled_venues=[],
+        now=datetime(2026, 5, 10, 6, 0, tzinfo=UTC),
+    )
+
+    assert results[0].status == "skipped"
+    assert results[0].message == "no enabled venues"
+    assert source.full_fetches == ()
 
 def test_req_dat_002_01_existing_checkpoint_elapsed_incremental_interval_incremental_ingestion_runs() -> None:
     """TST-REQ-DAT-002-01: Validates REQ-DAT-002
@@ -41,7 +70,25 @@ def test_req_dat_002_01_existing_checkpoint_elapsed_incremental_interval_increme
     When: incremental ingestion runs
     Then: only new or changed data since that checkpoint is downloaded
     """
-    pending("TST-REQ-DAT-002-01", "REQ-DAT-002")
+    source = FakeSnapshotSource()
+    service = IngestionService(storage=InMemoryS3StorageAdapter(), source=source)
+    checkpoint = IngestionCheckpoint(
+        value="checkpoint-1",
+        last_success_at=datetime(2026, 5, 10, 5, 58, tzinfo=UTC),
+    )
+
+    result = service.run_incremental_if_due(
+        environment=Environment.DEVELOPMENT,
+        venue=Venue.POLYMARKET_US,
+        checkpoint=checkpoint,
+        now=datetime(2026, 5, 10, 6, 0, tzinfo=UTC),
+        interval=timedelta(seconds=60),
+    )
+
+    assert result.ok
+    assert result.checkpoint_before == "checkpoint-1"
+    assert result.checkpoint_after == "2026-05-10T06:00:00+00:00"
+    assert source.incremental_fetches == ((Venue.POLYMARKET_US, "checkpoint-1"),)
 
 def test_req_dat_002_02_checkpoint_missing_corrupt_incremental_ingestion_runs_job_fails() -> None:
     """TST-REQ-DAT-002-02: Validates REQ-DAT-002
@@ -50,7 +97,21 @@ def test_req_dat_002_02_checkpoint_missing_corrupt_incremental_ingestion_runs_jo
     When: incremental ingestion runs
     Then: the job fails safely or falls back according to configured policy without advancing the checkpoint
     """
-    pending("TST-REQ-DAT-002-02", "REQ-DAT-002")
+    source = FakeSnapshotSource()
+    service = IngestionService(storage=InMemoryS3StorageAdapter(), source=source)
+
+    result = service.run_incremental_if_due(
+        environment=Environment.DEVELOPMENT,
+        venue=Venue.POLYMARKET_US,
+        checkpoint=IngestionCheckpoint(value="", last_success_at=None, corrupt=True),
+        now=datetime(2026, 5, 10, 6, 0, tzinfo=UTC),
+        interval=timedelta(seconds=60),
+    )
+
+    assert not result.ok
+    assert result.error_code == "INVALID_CHECKPOINT"
+    assert result.checkpoint_after is None
+    assert source.incremental_fetches == ()
 
 def test_req_dat_003_01_raw_full_raw_incremental_normalized_outputs_storage_writes() -> None:
     """TST-REQ-DAT-003-01: Validates REQ-DAT-003
@@ -133,7 +194,14 @@ def test_req_dat_005_01_fresh_market_data_within_configured_threshold_live_order
     When: live order checks run
     Then: the freshness gate passes
     """
-    pending("TST-REQ-DAT-005-01", "REQ-DAT-005")
+    result = check_market_data_freshness(
+        observed_at=datetime(2026, 5, 10, 5, 59, 30, tzinfo=UTC),
+        now=datetime(2026, 5, 10, 6, 0, tzinfo=UTC),
+        threshold=timedelta(seconds=60),
+    )
+
+    assert result.ok
+    assert result.age_seconds == 30
 
 def test_req_dat_005_02_stale_market_data_beyond_configured_threshold_live_order() -> None:
     """TST-REQ-DAT-005-02: Validates REQ-DAT-005
@@ -142,7 +210,15 @@ def test_req_dat_005_02_stale_market_data_beyond_configured_threshold_live_order
     When: live order checks run
     Then: dependent live orders are blocked
     """
-    pending("TST-REQ-DAT-005-02", "REQ-DAT-005")
+    result = check_market_data_freshness(
+        observed_at=datetime(2026, 5, 10, 5, 58, 59, tzinfo=UTC),
+        now=datetime(2026, 5, 10, 6, 0, tzinfo=UTC),
+        threshold=timedelta(seconds=60),
+    )
+
+    assert not result.ok
+    assert result.refusal_reason == "STALE_MARKET_DATA"
+    assert result.age_seconds == 61
 
 def test_req_dat_006_01_raw_snapshot_lifecycle_rules_synthesized_infrastructure_configuration_validated() -> None:
     """TST-REQ-DAT-006-01: Validates REQ-DAT-006
