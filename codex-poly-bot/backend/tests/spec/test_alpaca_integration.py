@@ -27,6 +27,15 @@ from app.services import (
     ConfigService,
     ConfigValidationError,
 )
+from app.venues import (
+    AlpacaAccountCredential,
+    AlpacaClientBoundary,
+    AlpacaContractClient,
+    AlpacaMarketDataStatus,
+    AlpacaVenueConfig,
+    validate_alpaca_account_identifiers,
+    validate_alpaca_market_data,
+)
 
 
 def test_req_alp_001_01_alpaca_configured_enabled_venue_adapters_registered_alpaca_available() -> None:
@@ -116,7 +125,24 @@ def test_req_alp_003_01_alpaca_account_market_data_position_order_operations_ada
     When: adapters execute them
     Then: the official SDK or documented HTTP APIs are used
     """
-    pending("TST-REQ-ALP-003-01", "REQ-ALP-003")
+    client = AlpacaContractClient(
+        AlpacaVenueConfig(
+            account_mode="paper",
+            client_boundary=AlpacaClientBoundary.OFFICIAL_PYTHON_SDK,
+        )
+    )
+
+    result = client.execute_contract_operations()
+
+    assert result.ok
+    assert result.payload["client_boundary"] == AlpacaClientBoundary.OFFICIAL_PYTHON_SDK.value
+    assert set(result.payload["operations"]) == {
+        "account",
+        "market_data",
+        "order",
+        "position",
+    }
+    assert client.operation_calls == 4
 
 def test_req_alp_003_02_adapter_without_approved_alpaca_client_binding_live_operations() -> None:
     """TST-REQ-ALP-003-02: Validates REQ-ALP-003
@@ -125,7 +151,18 @@ def test_req_alp_003_02_adapter_without_approved_alpaca_client_binding_live_oper
     When: live operations are requested
     Then: the operation is blocked
     """
-    pending("TST-REQ-ALP-003-02", "REQ-ALP-003")
+    client = AlpacaContractClient(
+        AlpacaVenueConfig(
+            account_mode="live",
+            client_boundary=AlpacaClientBoundary.UNAPPROVED,
+        )
+    )
+
+    result = client.execute_contract_operations()
+
+    assert not result.ok
+    assert result.refusal_reason == "unapproved Alpaca client boundary"
+    assert client.operation_calls == 0
 
 def test_req_alp_004_01_dev_prod_settings_claude_openai_alpaca_credentials_loaded() -> None:
     """TST-REQ-ALP-004-01: Validates REQ-ALP-004
@@ -134,7 +171,44 @@ def test_req_alp_004_01_dev_prod_settings_claude_openai_alpaca_credentials_loade
     When: Alpaca credentials are loaded
     Then: each environment and model has a distinct account identifier
     """
-    pending("TST-REQ-ALP-004-01", "REQ-ALP-004")
+    result = validate_alpaca_account_identifiers(
+        [
+            AlpacaAccountCredential(
+                environment=Environment.DEVELOPMENT,
+                account_mode="paper",
+                model_provider=ModelProvider.OPENAI,
+                account_id="alpaca-openai-dev-paper",
+                credential_ref="/codex-poly-bot/development/alpaca/openai/api-key",
+            ),
+            AlpacaAccountCredential(
+                environment=Environment.DEVELOPMENT,
+                account_mode="paper",
+                model_provider=ModelProvider.CLAUDE,
+                account_id="alpaca-claude-dev-paper",
+                credential_ref="/codex-poly-bot/development/alpaca/claude/api-key",
+            ),
+            AlpacaAccountCredential(
+                environment=Environment.PRODUCTION,
+                account_mode="live",
+                model_provider=ModelProvider.OPENAI,
+                account_id="alpaca-openai-prod-live",
+                credential_ref="/codex-poly-bot/production/alpaca/openai/api-key",
+            ),
+            AlpacaAccountCredential(
+                environment=Environment.PRODUCTION,
+                account_mode="live",
+                model_provider=ModelProvider.CLAUDE,
+                account_id="alpaca-claude-prod-live",
+                credential_ref="/codex-poly-bot/production/alpaca/claude/api-key",
+            ),
+        ]
+    )
+
+    assert result.ok
+    assert result.payload["resolved_account_count"] == 4
+    assert result.payload["resolved_accounts"]["development:paper:openai"] == "alpaca-openai-dev-paper"
+    assert result.payload["resolved_accounts"]["production:live:claude"] == "alpaca-claude-prod-live"
+    assert "credential_ref" not in result.payload
 
 def test_req_alp_004_02_missing_alpaca_account_identifier_one_model_provider_live() -> None:
     """TST-REQ-ALP-004-02: Validates REQ-ALP-004
@@ -143,7 +217,29 @@ def test_req_alp_004_02_missing_alpaca_account_identifier_one_model_provider_liv
     When: live checks run
     Then: Alpaca live trading is blocked for that provider
     """
-    pending("TST-REQ-ALP-004-02", "REQ-ALP-004")
+    result = validate_alpaca_account_identifiers(
+        [
+            AlpacaAccountCredential(
+                environment=Environment.PRODUCTION,
+                account_mode="live",
+                model_provider=ModelProvider.OPENAI,
+                account_id="alpaca-openai-prod-live",
+                credential_ref="/codex-poly-bot/production/alpaca/openai/api-key",
+            ),
+            AlpacaAccountCredential(
+                environment=Environment.PRODUCTION,
+                account_mode="live",
+                model_provider=ModelProvider.CLAUDE,
+                account_id=None,
+                credential_ref="/codex-poly-bot/production/alpaca/claude/api-key",
+            ),
+        ]
+    )
+
+    assert not result.ok
+    assert result.refusal_reasons == (
+        "missing Alpaca account identifier for production:live:claude",
+    )
 
 def test_req_alp_005_01_global_dry_run_mode_enabled_alpaca_stock_etf() -> None:
     """TST-REQ-ALP-005-01: Validates REQ-ALP-005
@@ -383,7 +479,24 @@ def test_req_alp_015_01_alpaca_market_data_unavailable_rate_limited_stale_outsid
     When: live order checks run
     Then: the order is blocked and the reason is recorded
     """
-    pending("TST-REQ-ALP-015-01", "REQ-ALP-015")
+    result = validate_alpaca_market_data(
+        AlpacaMarketDataStatus(
+            symbol="SPY",
+            available=False,
+            rate_limited=True,
+            stale=True,
+            outside_trading_hours=True,
+        )
+    )
+
+    assert not result.ok
+    assert set(result.refusal_reasons) == {
+        "Alpaca market data unavailable",
+        "Alpaca market data rate limited",
+        "Alpaca market data stale",
+        "Alpaca market outside trading hours",
+    }
+    assert result.payload["symbol"] == "SPY"
 
 def test_req_alp_016_01_distinct_alpaca_account_identifiers_each_model_in_same() -> None:
     """TST-REQ-ALP-016-01: Validates REQ-ALP-016
