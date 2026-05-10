@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
 from app.adapters.aws import EmailMessage, InMemorySesEmailAdapter
 from app.domain import Environment
-from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
-from tests.spec.helpers import pending
+from app.services import (
+    ActorContext,
+    AlertCooldownLedger,
+    AuthService,
+    ConfigPatchOperation,
+    ConfigService,
+    DailyPnlSummary,
+    DigestInputs,
+    PositionMovement,
+    alert_allowed_by_cooldown,
+    detect_daily_pnl_alert,
+    detect_large_movement_alert,
+    render_daily_digest,
+)
 
 
 def test_req_not_001_01_daily_digest_schedule_fires_allowlisted_users_exist_notifications() -> None:
@@ -29,6 +44,7 @@ def test_req_not_001_01_daily_digest_schedule_fires_allowlisted_users_exist_noti
     assert result.message_id == "ses-message-1"
     assert adapter.sent_count == 1
 
+
 def test_req_not_001_02_no_allowlisted_recipients_exist_digest_notifications_run_no() -> None:
     """TST-REQ-NOT-001-02: Validates REQ-NOT-001
 
@@ -50,6 +66,7 @@ def test_req_not_001_02_no_allowlisted_recipients_exist_digest_notifications_run
     assert result.skipped_reason == "no recipients"
     assert adapter.sent_count == 0
 
+
 def test_req_not_002_01_digest_inputs_available_digest_rendered_includes_p_l() -> None:
     """TST-REQ-NOT-002-01: Validates REQ-NOT-002
 
@@ -57,7 +74,28 @@ def test_req_not_002_01_digest_inputs_available_digest_rendered_includes_p_l() -
     When: the digest is rendered
     Then: it includes P&L, open positions, trades, exits, refused orders, budget, ingestion, and risk status
     """
-    pending("TST-REQ-NOT-002-01", "REQ-NOT-002")
+    digest = render_daily_digest(
+        DigestInputs(
+            pnl_summary="Realized 12.00, unrealized -3.00",
+            open_positions="2 open positions",
+            new_trades="3 new trades",
+            exits="1 exit",
+            refused_orders="0 refused orders",
+            budget_usage="Claude 4.00, OpenAI 3.50",
+            ingestion_status="fresh",
+            risk_status="within limits",
+        )
+    )
+
+    assert digest.unavailable_sections == ()
+    assert "P&L: Realized 12.00, unrealized -3.00" in digest.body
+    assert "Open positions: 2 open positions" in digest.body
+    assert "Trades: 3 new trades" in digest.body
+    assert "Exits: 1 exit" in digest.body
+    assert "Refused orders: 0 refused orders" in digest.body
+    assert "Budget: Claude 4.00, OpenAI 3.50" in digest.body
+    assert "Ingestion: fresh" in digest.body
+    assert "Risk: within limits" in digest.body
 
 def test_req_not_002_02_one_digest_input_source_unavailable_digest_rendered_missing() -> None:
     """TST-REQ-NOT-002-02: Validates REQ-NOT-002
@@ -66,7 +104,23 @@ def test_req_not_002_02_one_digest_input_source_unavailable_digest_rendered_miss
     When: the digest is rendered
     Then: the missing section is marked unavailable and delivery can still proceed if policy allows
     """
-    pending("TST-REQ-NOT-002-02", "REQ-NOT-002")
+    digest = render_daily_digest(
+        DigestInputs(
+            pnl_summary="Realized 0.00, unrealized 0.00",
+            open_positions="0 open positions",
+            new_trades="0 new trades",
+            exits="0 exits",
+            refused_orders="0 refused orders",
+            budget_usage=None,
+            ingestion_status="fresh",
+            risk_status=None,
+        )
+    )
+
+    assert digest.unavailable_sections == ("budget", "risk")
+    assert "Budget: unavailable" in digest.body
+    assert "Risk: unavailable" in digest.body
+    assert digest.delivery_allowed
 
 def test_req_not_003_01_position_p_l_change_reaches_25_usd_10() -> None:
     """TST-REQ-NOT-003-01: Validates REQ-NOT-003
@@ -75,7 +129,13 @@ def test_req_not_003_01_position_p_l_change_reaches_25_usd_10() -> None:
     When: movement detection runs
     Then: SES sends a large-movement alert
     """
-    pending("TST-REQ-NOT-003-01", "REQ-NOT-003")
+    alert = detect_large_movement_alert(
+        PositionMovement(position_id="pos-1", change_usd=Decimal("25.00"), change_pct=Decimal("0.05"))
+    )
+
+    assert alert.should_send
+    assert alert.alert_type == "large_position_movement"
+    assert "25.00" in alert.body
 
 def test_req_not_003_02_position_p_l_change_below_both_default_thresholds() -> None:
     """TST-REQ-NOT-003-02: Validates REQ-NOT-003
@@ -84,7 +144,12 @@ def test_req_not_003_02_position_p_l_change_below_both_default_thresholds() -> N
     When: movement detection runs
     Then: no large-movement alert is sent
     """
-    pending("TST-REQ-NOT-003-02", "REQ-NOT-003")
+    alert = detect_large_movement_alert(
+        PositionMovement(position_id="pos-1", change_usd=Decimal("24.99"), change_pct=Decimal("0.099"))
+    )
+
+    assert not alert.should_send
+    assert alert.skipped_reason == "movement below threshold"
 
 def test_req_not_004_01_daily_realized_unrealized_p_l_crosses_configured_threshold() -> None:
     """TST-REQ-NOT-004-01: Validates REQ-NOT-004
@@ -93,7 +158,14 @@ def test_req_not_004_01_daily_realized_unrealized_p_l_crosses_configured_thresho
     When: notification checks run
     Then: SES sends an alert
     """
-    pending("TST-REQ-NOT-004-01", "REQ-NOT-004")
+    alert = detect_daily_pnl_alert(
+        DailyPnlSummary(realized_pnl=Decimal("-10.00"), unrealized_pnl=Decimal("-25.00")),
+        threshold_usd=Decimal("25.00"),
+    )
+
+    assert alert.should_send
+    assert alert.alert_type == "daily_pnl_threshold"
+    assert "unrealized -25.00" in alert.body
 
 def test_req_not_004_02_daily_p_l_remains_within_thresholds_notification_checks() -> None:
     """TST-REQ-NOT-004-02: Validates REQ-NOT-004
@@ -102,7 +174,13 @@ def test_req_not_004_02_daily_p_l_remains_within_thresholds_notification_checks(
     When: notification checks run
     Then: no threshold alert is sent
     """
-    pending("TST-REQ-NOT-004-02", "REQ-NOT-004")
+    alert = detect_daily_pnl_alert(
+        DailyPnlSummary(realized_pnl=Decimal("-10.00"), unrealized_pnl=Decimal("-24.99")),
+        threshold_usd=Decimal("25.00"),
+    )
+
+    assert not alert.should_send
+    assert alert.skipped_reason == "daily pnl within thresholds"
 
 def test_req_not_005_01_default_notification_config_alert_was_sent_less_than() -> None:
     """TST-REQ-NOT-005-01: Validates REQ-NOT-005
@@ -111,7 +189,18 @@ def test_req_not_005_01_default_notification_config_alert_was_sent_less_than() -
     When: an alert was sent less than 30 minutes ago for the same market and provider
     Then: another alert is suppressed
     """
-    pending("TST-REQ-NOT-005-01", "REQ-NOT-005")
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    ledger = AlertCooldownLedger()
+    ledger.record_sent("market-1:openai:large_position_movement", now - timedelta(minutes=10))
+
+    result = alert_allowed_by_cooldown(
+        ledger,
+        "market-1:openai:large_position_movement",
+        now,
+    )
+
+    assert not result.allowed
+    assert result.skipped_reason == "alert cooldown active"
 
 def test_req_not_005_02_30_minute_cooldown_elapsed_alert_condition_still_holds() -> None:
     """TST-REQ-NOT-005-02: Validates REQ-NOT-005
@@ -120,7 +209,18 @@ def test_req_not_005_02_30_minute_cooldown_elapsed_alert_condition_still_holds()
     When: the alert condition still holds
     Then: a new alert is allowed
     """
-    pending("TST-REQ-NOT-005-02", "REQ-NOT-005")
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    ledger = AlertCooldownLedger()
+    ledger.record_sent("market-1:openai:large_position_movement", now - timedelta(minutes=31))
+
+    result = alert_allowed_by_cooldown(
+        ledger,
+        "market-1:openai:large_position_movement",
+        now,
+    )
+
+    assert result.allowed
+    assert result.next_allowed_at is None
 
 def test_req_not_006_01_authorized_dashboard_user_changes_recipients_thresholds_schedules_cooldowns() -> None:
     """TST-REQ-NOT-006-01: Validates REQ-NOT-006
