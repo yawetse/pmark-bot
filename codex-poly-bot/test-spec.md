@@ -246,18 +246,22 @@
 | TST-REQ-UI-004-01 | Happy | REQ-UI-004 | Given an authorized user, When status pages load, Then venue, model, wallet, ingestion, loop, position, order, and notification status are visible. |
 | TST-REQ-UI-004-02 | Edge | REQ-UI-004 | Given a status source is unavailable, When status pages load, Then the dashboard marks that source degraded rather than showing stale success. |
 | TST-REQ-UI-004-03 | Focus | REQ-UI-004 | Given an authenticated allowlisted user, When dashboard summary data is requested, Then dashboard sections are returned without secrets. |
+| TST-REQ-UI-004-04 | Focus | REQ-UI-004 | Given frontend dashboard controls exist, When dashboard control checks run, Then venue, wallet, ingestion, trading loop, notification, audit, and health sections are present. |
 | TST-REQ-UI-005-01 | Happy | REQ-UI-005 | Given an authorized user changes supported config fields, When the dashboard saves them, Then venue flags, dry-run/live, loop, strategy, budget, risk, slippage, and notification settings persist. |
 | TST-REQ-UI-005-02 | Edge | REQ-UI-005 | Given invalid or unauthorized config changes, When the dashboard saves them, Then the changes are rejected and existing config remains. |
+| TST-REQ-UI-005-03 | Focus | REQ-UI-005 | Given frontend config controls exist, When dashboard control checks run, Then saves are limited to allowlisted config paths. |
 | TST-REQ-UI-006-01 | Happy | REQ-UI-006 | Given an authorized dashboard config change, When it is saved, Then user, old value, new value, timestamp, environment, and IP address are audited. |
 | TST-REQ-UI-006-02 | Edge | REQ-UI-006 | Given audit persistence fails for a config change, When save is attempted, Then the config change is not applied silently. |
 | TST-REQ-UI-006-03 | Focus | REQ-UI-006 | Given an authorized dashboard API caller changes config, When the config endpoint receives a valid patch, Then the API returns the new version and persists an audit event. |
 | TST-REQ-UI-006-04 | Focus | REQ-UI-006 | Given browser code calls backend data, When frontend auth-boundary checks run, Then requests use the Next.js proxy and backend tokens remain server-only. |
 | TST-REQ-UI-007-01 | Happy | REQ-UI-007 | Given dashboard config is saved, When the next trading loop starts, Then the changed config is applied without restart. |
 | TST-REQ-UI-007-02 | Edge | REQ-UI-007 | Given config reload fails on the next loop, When the loop starts, Then prior valid config remains active and degraded status is surfaced. |
+| TST-REQ-UI-007-03 | Focus | REQ-UI-007 | Given a frontend config save conflict, When dashboard control checks run, Then the UI shows the current server version and requires reload before resubmission. |
 | TST-REQ-UI-008-01 | Happy | REQ-UI-008 | Given an authorized user activates the dashboard kill switch, When the request is processed, Then the global kill switch state is set. |
 | TST-REQ-UI-008-02 | Edge | REQ-UI-008 | Given an unauthorized user attempts kill switch activation, When the request is processed, Then the request is denied. |
 | TST-REQ-UI-008-03 | Focus | REQ-UI-008 | Given an authorized dashboard API caller activates the kill switch, When the kill switch endpoint is called, Then live trading is disabled and cancel progress is exposed. |
 | TST-REQ-UI-009-01 | Focus | REQ-UI-009 | Given wallet metadata contains public identifiers and private secret references, When dashboard wallet views render, Then only public identifiers and health are shown. |
+| TST-REQ-UI-009-02 | Focus | REQ-UI-009 | Given frontend wallet status renders, When dashboard control checks run, Then public identifiers are displayed and private key or secret terms are absent. |
 | TST-REQ-UI-010-01 | Focus | REQ-UI-010 | Given Claude and OpenAI records exist, When dashboard model views render, Then positions, decisions, budgets, and P&L are separated by provider. |
 | TST-REQ-UI-011-01 | Happy | REQ-UI-011 | Given comparison metrics exist for Polymarket and Alpaca, When dashboard comparison views render, Then P&L, win rate, drawdown, cost, exposure, trade count, and return-to-risk are shown. |
 | TST-REQ-UI-011-02 | Edge | REQ-UI-011 | Given one model or venue has insufficient comparison data, When comparison views render, Then unavailable metrics are labeled without showing misleading zero values. |
@@ -427,12 +431,12 @@
 | REQ-UI-001 | TST-REQ-UI-001-01, TST-REQ-UI-001-02, TST-REQ-UI-001-03 |
 | REQ-UI-002 | TST-REQ-UI-002-01, TST-REQ-UI-002-02, TST-REQ-UI-002-03 |
 | REQ-UI-003 | TST-REQ-UI-003-01, TST-REQ-UI-003-02, TST-REQ-UI-003-03, TST-REQ-UI-003-04 |
-| REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03 |
-| REQ-UI-005 | TST-REQ-UI-005-01, TST-REQ-UI-005-02 |
+| REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03, TST-REQ-UI-004-04 |
+| REQ-UI-005 | TST-REQ-UI-005-01, TST-REQ-UI-005-02, TST-REQ-UI-005-03 |
 | REQ-UI-006 | TST-REQ-UI-006-01, TST-REQ-UI-006-02, TST-REQ-UI-006-03, TST-REQ-UI-006-04 |
-| REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02 |
+| REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02, TST-REQ-UI-007-03 |
 | REQ-UI-008 | TST-REQ-UI-008-01, TST-REQ-UI-008-02, TST-REQ-UI-008-03 |
-| REQ-UI-009 | TST-REQ-UI-009-01 |
+| REQ-UI-009 | TST-REQ-UI-009-01, TST-REQ-UI-009-02 |
 | REQ-UI-010 | TST-REQ-UI-010-01 |
 | REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |

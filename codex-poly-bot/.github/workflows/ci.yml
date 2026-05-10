@@ -41,6 +41,7 @@ jobs:
         run: |
           npm run typecheck
           npm run test:auth-boundary
+          npm run test:dashboard-controls
 
   container-build:
     name: Container build gate

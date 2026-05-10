@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "test:auth-boundary": "node scripts/check-auth-boundary.mjs"
+    "test:auth-boundary": "node scripts/check-auth-boundary.mjs",
+    "test:dashboard-controls": "node scripts/check-dashboard-controls.mjs"
   },
   "dependencies": {
     "next": "^16.2.6",

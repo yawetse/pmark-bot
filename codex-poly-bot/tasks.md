@@ -933,9 +933,9 @@
 | AC-023-04 | If a config save conflicts with a newer version, the dashboard shall show the current server version and require reload before resubmission. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

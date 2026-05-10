@@ -1,12 +1,11 @@
 import { redirect } from "next/navigation";
 
-import { StatusOverview } from "@/components/dashboard/status-overview";
-import { WalletStatus } from "@/components/dashboard/wallet-status";
+import { ConfigControls } from "@/components/dashboard/config-controls";
 import { getDashboardSession } from "@/lib/server/session";
 
-// REQ: REQ-UI-002, REQ-UI-003, REQ-UI-004
+// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007
 
-export default async function DashboardPage() {
+export default async function ConfigPage() {
   const sessionCheck = await getDashboardSession();
   if (sessionCheck.status === "missing") {
     redirect("/login");
@@ -27,15 +26,11 @@ export default async function DashboardPage() {
       </header>
       <main className="page-shell">
         <div className="content-grid">
+          <ConfigControls />
           <section className="panel">
-            <h1>Dashboard</h1>
-            <p>
-              Signed in as {sessionCheck.session.username}. System access is active for
-              dashboard views and control requests.
-            </p>
+            <h2>Versioning</h2>
+            <p>Config saves use an expected version and apply on the next trading loop.</p>
           </section>
-          <StatusOverview />
-          <WalletStatus />
         </div>
       </main>
     </>

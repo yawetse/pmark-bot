@@ -142,6 +142,37 @@ a {
   color: var(--danger);
 }
 
+.form-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.form-stack label {
+  color: var(--muted);
+  display: grid;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.form-stack input,
+.form-stack select {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  font: inherit;
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.status-message {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 14px 0 0;
+}
+
 @media (max-width: 760px) {
   .page-shell {
     padding: 18px;
