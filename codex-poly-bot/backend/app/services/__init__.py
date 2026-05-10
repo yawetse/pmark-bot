@@ -2,7 +2,8 @@
 
 REQ: REQ-OBS-001, REQ-OBS-002, REQ-OBS-003, REQ-OBS-004, REQ-OBS-005,
 REQ-OBS-006, REQ-UI-002, REQ-UI-003, REQ-UI-006, REQ-EXE-016,
-REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012
+REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-009,
+REQ-ALP-010, REQ-ALP-011, REQ-ALP-012
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -27,6 +28,13 @@ from app.services.config_service import (
     default_config_payload,
 )
 from app.services.control_service import KillSwitchActivationResult, KillSwitchService, KillSwitchState
+from app.services.execution_service import (
+    AlpacaExecutionRequest,
+    AlpacaExecutionResult,
+    FakeAlpacaVenueSubmitter,
+    execute_alpaca_order,
+    resolve_alpaca_account_mode,
+)
 from app.services.risk_engine import (
     AlpacaRiskConfig,
     AlpacaRiskInput,
@@ -37,6 +45,8 @@ from app.services.risk_engine import (
 
 __all__ = [
     "ActorContext",
+    "AlpacaExecutionRequest",
+    "AlpacaExecutionResult",
     "AlpacaRiskConfig",
     "AlpacaRiskInput",
     "AuditService",
@@ -52,6 +62,7 @@ __all__ = [
     "ConfigService",
     "ConfigValidationError",
     "DashboardAccessResult",
+    "FakeAlpacaVenueSubmitter",
     "KillSwitchActivationResult",
     "KillSwitchService",
     "KillSwitchState",
@@ -62,5 +73,7 @@ __all__ = [
     "RuntimeConfigSnapshot",
     "default_config_payload",
     "default_alpaca_risk_config",
+    "execute_alpaca_order",
     "evaluate_alpaca_risk_limits",
+    "resolve_alpaca_account_mode",
 ]

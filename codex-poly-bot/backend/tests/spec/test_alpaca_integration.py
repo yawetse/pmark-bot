@@ -28,7 +28,11 @@ from app.services import (
     ConfigService,
     ConfigValidationError,
     AlpacaRiskInput,
+    AlpacaExecutionRequest,
+    FakeAlpacaVenueSubmitter,
     evaluate_alpaca_risk_limits,
+    execute_alpaca_order,
+    resolve_alpaca_account_mode,
 )
 from app.venues import (
     AlpacaAccountCredential,
@@ -253,7 +257,22 @@ def test_req_alp_005_01_global_dry_run_mode_enabled_alpaca_stock_etf() -> None:
     When: an Alpaca stock or ETF order is approved
     Then: a simulated order is recorded without broker submission
     """
-    pending("TST-REQ-ALP-005-01", "REQ-ALP-005")
+    submitter = FakeAlpacaVenueSubmitter()
+    result = execute_alpaca_order(
+        AlpacaExecutionRequest(
+            global_execution_mode="dry_run",
+            account_mode="paper",
+            risk_approved=True,
+            symbol="SPY",
+            notional=Decimal("25.00"),
+        ),
+        submitter=submitter,
+    )
+
+    assert result.status == "simulated"
+    assert result.order_recorded
+    assert result.broker_submitted is False
+    assert submitter.submit_calls == 0
 
 def test_req_alp_005_02_dry_run_mode_mocked_broker_client_execution_runs() -> None:
     """TST-REQ-ALP-005-02: Validates REQ-ALP-005
@@ -262,7 +281,21 @@ def test_req_alp_005_02_dry_run_mode_mocked_broker_client_execution_runs() -> No
     When: execution runs
     Then: no Alpaca paper or live endpoint is called
     """
-    pending("TST-REQ-ALP-005-02", "REQ-ALP-005")
+    submitter = FakeAlpacaVenueSubmitter()
+
+    execute_alpaca_order(
+        AlpacaExecutionRequest(
+            global_execution_mode="dry_run",
+            account_mode="live",
+            risk_approved=True,
+            symbol="QQQ",
+            notional=Decimal("10.00"),
+        ),
+        submitter=submitter,
+    )
+
+    assert submitter.submit_calls == 0
+    assert submitter.submitted_modes == ()
 
 def test_req_alp_006_01_dry_run_mode_disabled_alpaca_enabled_risk_checks() -> None:
     """TST-REQ-ALP-006-01: Validates REQ-ALP-006
@@ -271,7 +304,22 @@ def test_req_alp_006_01_dry_run_mode_disabled_alpaca_enabled_risk_checks() -> No
     When: an order is approved
     Then: it is submitted to the configured Alpaca account mode
     """
-    pending("TST-REQ-ALP-006-01", "REQ-ALP-006")
+    submitter = FakeAlpacaVenueSubmitter()
+    result = execute_alpaca_order(
+        AlpacaExecutionRequest(
+            global_execution_mode="live",
+            account_mode="paper",
+            risk_approved=True,
+            symbol="SPY",
+            notional=Decimal("25.00"),
+        ),
+        submitter=submitter,
+    )
+
+    assert result.status == "submitted"
+    assert result.broker_submitted
+    assert result.payload["account_mode"] == "paper"
+    assert submitter.submit_calls == 1
 
 def test_req_alp_006_02_dry_run_mode_disabled_but_risk_check_fails() -> None:
     """TST-REQ-ALP-006-02: Validates REQ-ALP-006
@@ -280,7 +328,22 @@ def test_req_alp_006_02_dry_run_mode_disabled_but_risk_check_fails() -> None:
     When: Alpaca execution is requested
     Then: no order is submitted
     """
-    pending("TST-REQ-ALP-006-02", "REQ-ALP-006")
+    submitter = FakeAlpacaVenueSubmitter()
+    result = execute_alpaca_order(
+        AlpacaExecutionRequest(
+            global_execution_mode="live",
+            account_mode="paper",
+            risk_approved=False,
+            symbol="SPY",
+            notional=Decimal("25.00"),
+            risk_refusal_reason="MAX_POSITION_LIMIT",
+        ),
+        submitter=submitter,
+    )
+
+    assert result.status == "refused"
+    assert result.refusal_reason == "MAX_POSITION_LIMIT"
+    assert submitter.submit_calls == 0
 
 def test_req_alp_007_01_environment_dashboard_config_values_alpaca_account_mode_resolved() -> None:
     """TST-REQ-ALP-007-01: Validates REQ-ALP-007
@@ -289,7 +352,9 @@ def test_req_alp_007_01_environment_dashboard_config_values_alpaca_account_mode_
     When: Alpaca account mode is resolved
     Then: paper and live modes are supported values
     """
-    pending("TST-REQ-ALP-007-01", "REQ-ALP-007")
+    assert resolve_alpaca_account_mode("paper").ok
+    assert resolve_alpaca_account_mode("live").ok
+    assert resolve_alpaca_account_mode(" PAPER ").payload["account_mode"] == "paper"
 
 def test_req_alp_007_02_invalid_alpaca_account_mode_config_validation_runs_mode() -> None:
     """TST-REQ-ALP-007-02: Validates REQ-ALP-007
@@ -298,7 +363,10 @@ def test_req_alp_007_02_invalid_alpaca_account_mode_config_validation_runs_mode(
     When: config validation runs
     Then: the mode is rejected and live trading is blocked
     """
-    pending("TST-REQ-ALP-007-02", "REQ-ALP-007")
+    result = resolve_alpaca_account_mode("margin")
+
+    assert not result.ok
+    assert result.refusal_reason == "alpaca account mode must be paper or live"
 
 def test_req_alp_008_01_buy_order_maintains_long_only_position_without_margin() -> None:
     """TST-REQ-ALP-008-01: Validates REQ-ALP-008
