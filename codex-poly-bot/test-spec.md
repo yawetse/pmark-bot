@@ -297,6 +297,7 @@
 | TST-REQ-DEP-004-02 | Edge | REQ-DEP-004 | Given production deployment tests fail, When GitHub Actions runs, Then production deploy steps do not execute. |
 | TST-REQ-DEP-005-01 | Happy | REQ-DEP-005 | Given CI is triggered, When workflow execution starts, Then tests run before build or deploy jobs. |
 | TST-REQ-DEP-005-02 | Edge | REQ-DEP-005 | Given tests fail in CI, When workflow execution continues, Then container build and deploy jobs are blocked. |
+| TST-REQ-DEP-005-03 | Focus | REQ-DEP-005 | Given the spec suite is ready for release review, When traceability verification scans spec tests, Then no pending red-phase placeholders remain. |
 | TST-REQ-DEP-006-01 | Happy | REQ-DEP-006 | Given tests pass, When deployment workflow runs, Then backend and frontend images are built and published to ECR before ECS deployment. |
 | TST-REQ-DEP-006-02 | Edge | REQ-DEP-006 | Given ECR publish fails, When deployment workflow runs, Then ECS deployment is skipped and failure status is reported. |
 | TST-REQ-DEP-007-01 | Happy | REQ-DEP-007 | Given repo setup files are inspected, When `.env.example` files are validated, Then required local config keys are documented without secrets. |
@@ -320,7 +321,10 @@
 | TST-REQ-OBS-004-01 | Happy | REQ-OBS-004 | Given a dashboard user changes config, toggles live mode, or activates kill switch, When the action succeeds, Then an audit event is produced. |
 | TST-REQ-OBS-004-02 | Edge | REQ-OBS-004 | Given a dashboard action is denied, When authorization fails, Then a security-relevant audit event is produced without applying the action. |
 | TST-REQ-OBS-005-01 | Focus | REQ-OBS-005 | Given recent audit events and health indicators exist, When dashboard observability views render, Then recent events and health are visible. |
+| TST-REQ-OBS-005-02 | Focus | REQ-OBS-005 | Given requirements, spec tests, implementation files, and design docs, When traceability verification runs, Then every requirement has at least one test and one implementation or approved design trace. |
 | TST-REQ-OBS-006-01 | Focus | REQ-OBS-006 | Given a background worker fails, When worker supervision records the failure, Then dashboard health shows degraded status. |
+| TST-REQ-OBS-006-02 | Edge | REQ-OBS-006 | Given one requirement has no matching test or implementation trace, When readiness verification receives the uncovered requirement, Then the result fails and identifies the missing coverage. |
+| TST-REQ-OBS-006-03 | Focus | REQ-OBS-006 | Given audit, health, deployment, and live-trading safety checks, When release readiness is reviewed, Then each area is passing or explicitly deferred with a reason. |
 
 ## Traceability Matrix
 
@@ -437,7 +441,7 @@
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02 |
 | REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02 |
-| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02 |
+| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03 |
 | REQ-DEP-006 | TST-REQ-DEP-006-01, TST-REQ-DEP-006-02 |
 | REQ-DEP-007 | TST-REQ-DEP-007-01, TST-REQ-DEP-007-02 |
 | REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02 |
@@ -447,5 +451,5 @@
 | REQ-OBS-002 | TST-REQ-OBS-002-01, TST-REQ-OBS-002-02 |
 | REQ-OBS-003 | TST-REQ-OBS-003-01, TST-REQ-OBS-003-02 |
 | REQ-OBS-004 | TST-REQ-OBS-004-01, TST-REQ-OBS-004-02 |
-| REQ-OBS-005 | TST-REQ-OBS-005-01 |
-| REQ-OBS-006 | TST-REQ-OBS-006-01 |
+| REQ-OBS-005 | TST-REQ-OBS-005-01, TST-REQ-OBS-005-02 |
+| REQ-OBS-006 | TST-REQ-OBS-006-01, TST-REQ-OBS-006-02, TST-REQ-OBS-006-03 |

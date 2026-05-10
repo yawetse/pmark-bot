@@ -12,7 +12,8 @@ REQ-EXE-009, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015,
 REQ-EXE-017, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004,
 REQ-NOT-005, REQ-CMP-002, REQ-CMP-004, REQ-EXT-002,
 REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006,
-REQ-UI-001, REQ-UI-004, REQ-UI-009, REQ-UI-010, REQ-UI-011
+REQ-UI-001, REQ-UI-004, REQ-UI-009, REQ-UI-010, REQ-UI-011,
+REQ-DEP-005
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -125,6 +126,15 @@ from app.services.risk_engine import (
     evaluate_alpaca_risk_limits,
     evaluate_polymarket_risk_limits,
 )
+from app.services.traceability_service import (
+    ReleaseReadinessCheck,
+    ReleaseReadinessSummary,
+    TraceabilityScanResult,
+    extract_requirement_ids,
+    release_readiness_summary,
+    requirement_ids_from_requirements,
+    scan_traceability,
+)
 from app.services.wallet_service import (
     CredentialStatus,
     CredentialTarget,
@@ -201,11 +211,14 @@ __all__ = [
     "PolymarketRiskInput",
     "PositionMovement",
     "RenderedDigest",
+    "ReleaseReadinessCheck",
+    "ReleaseReadinessSummary",
     "RiskLimitResult",
     "RuntimeConfigSnapshot",
     "ScoringFailure",
     "ScoringQueueResult",
     "ScoringRunResult",
+    "TraceabilityScanResult",
     "WalletGenerationRequest",
     "WalletGenerationResult",
     "alert_allowed_by_cooldown",
@@ -235,14 +248,18 @@ __all__ = [
     "evaluate_polymarket_risk_limits",
     "evaluate_stale_thesis_exit",
     "evaluate_volume_spike_exit",
+    "extract_requirement_ids",
     "generate_polymarket_wallet",
     "load_local_credential",
     "mark_comparison_metric_unavailable",
     "record_provider_cost",
+    "release_readiness_summary",
     "render_wallet_dashboard_status",
     "render_daily_digest",
+    "requirement_ids_from_requirements",
     "resolve_credential_ref",
     "resolve_alpaca_account_mode",
     "run_llm_scoring",
+    "scan_traceability",
     "validate_unique_credential_refs",
 ]

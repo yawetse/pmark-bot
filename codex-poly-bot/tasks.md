@@ -1270,6 +1270,6 @@
 | AC-032-03 | When release readiness is reviewed, the system shall show audit, health, deployment, and live-trading safety checks as passing or explicitly deferred. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests or traceability checks
-- [ ] Code or docs annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests or traceability checks
+- [x] Code or docs annotated with REQ-* traceability
+- [x] No regressions in existing tests
