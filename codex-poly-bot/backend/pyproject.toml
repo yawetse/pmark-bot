@@ -4,10 +4,13 @@ version = "0.1.0"
 description = "Backend for codex-poly-bot"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.27.0",
     "pydantic>=2.8.0",
     "psycopg[binary]>=3.2.0",
     "pytest>=8.0.0",
     "sqlalchemy>=2.0.0",
+    "uvicorn[standard]>=0.34.0",
 ]
 
 [tool.pytest.ini_options]

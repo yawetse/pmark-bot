@@ -862,9 +862,9 @@
 | AC-021-04 | When the kill switch endpoint is called, the system shall persist live disabled and expose cancel progress in the response. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

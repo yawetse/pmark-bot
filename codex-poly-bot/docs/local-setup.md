@@ -6,5 +6,6 @@
 2. Copy `.env.example` files to local `.env` files if overrides are needed.
 3. Start local services with `docker compose up`.
 4. Run backend tests directly with `backend/.venv/bin/python -m pytest`.
+5. Run the backend API with `backend/.venv/bin/uvicorn app.main:create_app --factory --app-dir backend --reload --port 8000`.
 
 Production trading secrets are not required for dependency installation, tests, or code inspection.
