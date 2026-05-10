@@ -10,7 +10,8 @@ REQ-LLM-001, REQ-LLM-002, REQ-LLM-004, REQ-LLM-005,
 REQ-EXE-002, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006,
 REQ-EXE-009, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015,
 REQ-EXE-017, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004,
-REQ-NOT-005, REQ-CMP-002, REQ-CMP-004
+REQ-NOT-005, REQ-CMP-002, REQ-CMP-004, REQ-EXT-002,
+REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006
 """
 
 from app.services.auth_service import AuthService, DashboardAccessResult, MutationContextResult
@@ -56,6 +57,14 @@ from app.services.execution_service import (
     execute_dry_run_order,
     execute_alpaca_order,
     resolve_alpaca_account_mode,
+)
+from app.services.exit_service import (
+    ExitExecutionRequest,
+    ExitExecutionResult,
+    evaluate_profit_target_exit,
+    evaluate_stale_thesis_exit,
+    evaluate_volume_spike_exit,
+    execute_exit_order,
 )
 from app.services.ingestion_service import (
     DataFreshnessStatus,
@@ -148,6 +157,8 @@ __all__ = [
     "DigestInputs",
     "DryRunOrderRequest",
     "ExecutionResult",
+    "ExitExecutionRequest",
+    "ExitExecutionResult",
     "FakeAlpacaVenueSubmitter",
     "FakeCancelVenue",
     "FakeLlmProvider",
@@ -197,9 +208,13 @@ __all__ = [
     "check_market_data_freshness",
     "execute_dry_run_order",
     "execute_alpaca_order",
+    "execute_exit_order",
     "evaluate_live_order_gates",
     "evaluate_alpaca_risk_limits",
+    "evaluate_profit_target_exit",
     "evaluate_polymarket_risk_limits",
+    "evaluate_stale_thesis_exit",
+    "evaluate_volume_spike_exit",
     "generate_polymarket_wallet",
     "load_local_credential",
     "mark_comparison_metric_unavailable",
