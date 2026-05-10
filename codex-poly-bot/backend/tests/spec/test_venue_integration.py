@@ -9,6 +9,14 @@ from tests.spec.helpers import pending
 from app.bootstrap import load_runtime_defaults, safe_defaults, venue_operation_gate, with_venue_enabled
 from app.domain import Environment, Instrument, InstrumentType, Venue, supported_polymarket_venues
 from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
+from app.venues import (
+    PolymarketClientBoundary,
+    PolymarketContractClient,
+    PolymarketVenueConfig,
+    VenueOperation,
+    allowed_when_venue_disabled,
+    validate_polymarket_config,
+)
 
 
 def test_req_ven_001_01_supported_venue_configs_polymarket_us_international_venue_adapters() -> None:
@@ -95,7 +103,22 @@ def test_req_ven_004_01_live_mode_approved_polymarket_order_execution_submits_or
     When: execution submits the order
     Then: the official SDK or documented API client is used
     """
-    pending("TST-REQ-VEN-004-01", "REQ-VEN-004")
+    client = PolymarketContractClient(
+        PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+            base_url="https://clob.polymarket.com",
+            credential_ref="/codex-poly-bot/development/polymarket/openai/wallet",
+        )
+    )
+
+    result = client.submit_order()
+
+    assert result.ok
+    assert result.payload["client_boundary"] == PolymarketClientBoundary.OFFICIAL_SDK.value
+    assert client.submit_attempts == 1
 
 def test_req_ven_004_02_non_official_polymarket_client_implementation_configured_live_order() -> None:
     """TST-REQ-VEN-004-02: Validates REQ-VEN-004
@@ -104,7 +127,22 @@ def test_req_ven_004_02_non_official_polymarket_client_implementation_configured
     When: live order submission is attempted
     Then: the system blocks the submission
     """
-    pending("TST-REQ-VEN-004-02", "REQ-VEN-004")
+    client = PolymarketContractClient(
+        PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.UNAPPROVED,
+            base_url="https://clob.polymarket.com",
+            credential_ref="/codex-poly-bot/development/polymarket/openai/wallet",
+        )
+    )
+
+    result = client.submit_order()
+
+    assert not result.ok
+    assert "unapproved Polymarket client boundary" in result.refusal_reasons
+    assert client.submit_attempts == 0
 
 def test_req_ven_005_01_unsupported_venue_configuration_environment_live_order_checks_run() -> None:
     """TST-REQ-VEN-005-01: Validates REQ-VEN-005
@@ -113,7 +151,20 @@ def test_req_ven_005_01_unsupported_venue_configuration_environment_live_order_c
     When: live order checks run
     Then: live orders are blocked and the refusal reason is persisted
     """
-    pending("TST-REQ-VEN-005-01", "REQ-VEN-005")
+    result = validate_polymarket_config(
+        PolymarketVenueConfig(
+            venue=Venue.ALPACA,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.DOCUMENTED_HTTP_API,
+            base_url="https://clob.polymarket.com",
+            credential_ref="/codex-poly-bot/development/polymarket/openai/wallet",
+        )
+    )
+
+    assert not result.ok
+    assert result.payload["venue"] == Venue.ALPACA.value
+    assert "unsupported Polymarket venue" in result.refusal_reasons
 
 def test_req_ven_005_02_multiple_unsupported_venue_fields_validation_runs_refusal_event() -> None:
     """TST-REQ-VEN-005-02: Validates REQ-VEN-005
@@ -122,7 +173,29 @@ def test_req_ven_005_02_multiple_unsupported_venue_fields_validation_runs_refusa
     When: validation runs
     Then: the refusal event includes each relevant unsupported setting
     """
-    pending("TST-REQ-VEN-005-02", "REQ-VEN-005")
+    result = validate_polymarket_config(
+        PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.UNAPPROVED,
+            base_url="",
+            credential_ref=None,
+            jurisdiction_supported=False,
+            stale_threshold_seconds=0,
+        )
+    )
+
+    assert not result.ok
+    assert set(result.refusal_reasons) == {
+        "missing Polymarket base URL",
+        "missing Polymarket credential reference",
+        "unsupported jurisdiction",
+        "invalid stale data threshold",
+        "unapproved Polymarket client boundary",
+    }
+    assert allowed_when_venue_disabled(VenueOperation.CANCEL_ORDER, known_open_order=True)
+    assert not allowed_when_venue_disabled(VenueOperation.SUBMIT_ORDER, known_open_order=True)
 
 def test_req_ven_006_01_authorized_dashboard_update_venue_config_next_trading_loop() -> None:
     """TST-REQ-VEN-006-01: Validates REQ-VEN-006

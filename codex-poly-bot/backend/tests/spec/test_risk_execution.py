@@ -20,6 +20,7 @@ from app.domain import (
     ModelProvider,
     OrderEvent,
     OrderEventType,
+    OrderType,
     Venue,
     kelly_sized_notional,
     record_order_event,
@@ -32,6 +33,7 @@ from app.services import (
     ConfigService,
     ConfigValidationError,
 )
+from app.venues import check_market_order_slippage, validate_order_type
 
 
 def test_req_exe_001_01_no_explicit_live_trading_override_environment_config_loaded() -> None:
@@ -277,7 +279,8 @@ def test_req_exe_010_01_approved_limit_market_order_decisions_execution_routes_o
     When: execution routes orders
     Then: both order types are supported
     """
-    pending("TST-REQ-EXE-010-01", "REQ-EXE-010")
+    assert validate_order_type(OrderType.LIMIT).ok
+    assert validate_order_type(OrderType.MARKET).ok
 
 def test_req_exe_010_02_unsupported_order_type_execution_routes_order_order_rejected() -> None:
     """TST-REQ-EXE-010-02: Validates REQ-EXE-010
@@ -286,7 +289,10 @@ def test_req_exe_010_02_unsupported_order_type_execution_routes_order_order_reje
     When: execution routes the order
     Then: the order is rejected
     """
-    pending("TST-REQ-EXE-010-02", "REQ-EXE-010")
+    result = validate_order_type("stop_limit")
+
+    assert not result.ok
+    assert result.refusal_reason == "unsupported order type"
 
 def test_req_exe_011_01_market_order_estimated_slippage_below_threshold_execution_checks() -> None:
     """TST-REQ-EXE-011-01: Validates REQ-EXE-011
@@ -295,7 +301,14 @@ def test_req_exe_011_01_market_order_estimated_slippage_below_threshold_executio
     When: execution checks run
     Then: the slippage gate passes
     """
-    pending("TST-REQ-EXE-011-01", "REQ-EXE-011")
+    result = check_market_order_slippage(
+        venue=Venue.POLYMARKET_US,
+        order_type=OrderType.MARKET,
+        estimated_slippage=Decimal("0.02"),
+    )
+
+    assert result.ok
+    assert result.payload["threshold"] == "0.02"
 
 def test_req_exe_011_02_market_order_estimated_slippage_above_threshold_execution_checks() -> None:
     """TST-REQ-EXE-011-02: Validates REQ-EXE-011
@@ -304,7 +317,14 @@ def test_req_exe_011_02_market_order_estimated_slippage_above_threshold_executio
     When: execution checks run
     Then: the market order is blocked
     """
-    pending("TST-REQ-EXE-011-02", "REQ-EXE-011")
+    result = check_market_order_slippage(
+        venue=Venue.POLYMARKET_US,
+        order_type=OrderType.MARKET,
+        estimated_slippage=Decimal("0.0201"),
+    )
+
+    assert not result.ok
+    assert result.refusal_reason == "slippage threshold exceeded"
 
 def test_req_exe_012_01_default_polymarket_config_market_order_slippage_threshold_loaded() -> None:
     """TST-REQ-EXE-012-01: Validates REQ-EXE-012
