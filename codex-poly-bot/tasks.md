@@ -894,9 +894,9 @@
 | AC-022-03 | When browser code calls backend data, the system shall route through a Next.js server-side proxy that mints the FastAPI token server-side only. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

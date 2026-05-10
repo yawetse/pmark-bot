@@ -28,8 +28,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify frontend scaffold
-        run: test -f codex-poly-bot/frontend/README.md
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: codex-poly-bot/frontend/package-lock.json
+      - name: Install frontend
+        working-directory: codex-poly-bot/frontend
+        run: npm ci
+      - name: Run frontend checks
+        working-directory: codex-poly-bot/frontend
+        run: |
+          npm run typecheck
+          npm run test:auth-boundary
 
   container-build:
     name: Container build gate

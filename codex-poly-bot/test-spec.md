@@ -238,9 +238,11 @@
 | TST-REQ-UI-001-03 | Focus | REQ-UI-001 | Given the backend app is created, When health and dashboard API routes are called, Then FastAPI exposes liveness and authenticated dashboard endpoints. |
 | TST-REQ-UI-002-01 | Happy | REQ-UI-002 | Given an unauthenticated user, When the dashboard is opened, Then GitHub OAuth login is required. |
 | TST-REQ-UI-002-02 | Edge | REQ-UI-002 | Given an invalid OAuth callback or state value, When login completes, Then access is denied and the event is logged. |
+| TST-REQ-UI-002-03 | Focus | REQ-UI-002 | Given a protected dashboard route and server-side session helper, When frontend auth checks run, Then unauthenticated users are redirected to login before protected views load. |
 | TST-REQ-UI-003-01 | Happy | REQ-UI-003 | Given an authenticated GitHub username on the allowlist, When dashboard access is checked, Then access is granted. |
 | TST-REQ-UI-003-02 | Edge | REQ-UI-003 | Given an authenticated GitHub username not on the allowlist, When dashboard access is checked, Then access is denied. |
 | TST-REQ-UI-003-03 | Edge | REQ-UI-003 | Given unauthenticated and unallowlisted dashboard API callers, When protected endpoints are requested, Then the API returns 401 or 403 before returning protected data. |
+| TST-REQ-UI-003-04 | Focus | REQ-UI-003 | Given a GitHub username outside the frontend allowlist, When dashboard auth checks run, Then the UI redirects to access denied and avoids mutation calls. |
 | TST-REQ-UI-004-01 | Happy | REQ-UI-004 | Given an authorized user, When status pages load, Then venue, model, wallet, ingestion, loop, position, order, and notification status are visible. |
 | TST-REQ-UI-004-02 | Edge | REQ-UI-004 | Given a status source is unavailable, When status pages load, Then the dashboard marks that source degraded rather than showing stale success. |
 | TST-REQ-UI-004-03 | Focus | REQ-UI-004 | Given an authenticated allowlisted user, When dashboard summary data is requested, Then dashboard sections are returned without secrets. |
@@ -249,6 +251,7 @@
 | TST-REQ-UI-006-01 | Happy | REQ-UI-006 | Given an authorized dashboard config change, When it is saved, Then user, old value, new value, timestamp, environment, and IP address are audited. |
 | TST-REQ-UI-006-02 | Edge | REQ-UI-006 | Given audit persistence fails for a config change, When save is attempted, Then the config change is not applied silently. |
 | TST-REQ-UI-006-03 | Focus | REQ-UI-006 | Given an authorized dashboard API caller changes config, When the config endpoint receives a valid patch, Then the API returns the new version and persists an audit event. |
+| TST-REQ-UI-006-04 | Focus | REQ-UI-006 | Given browser code calls backend data, When frontend auth-boundary checks run, Then requests use the Next.js proxy and backend tokens remain server-only. |
 | TST-REQ-UI-007-01 | Happy | REQ-UI-007 | Given dashboard config is saved, When the next trading loop starts, Then the changed config is applied without restart. |
 | TST-REQ-UI-007-02 | Edge | REQ-UI-007 | Given config reload fails on the next loop, When the loop starts, Then prior valid config remains active and degraded status is surfaced. |
 | TST-REQ-UI-008-01 | Happy | REQ-UI-008 | Given an authorized user activates the dashboard kill switch, When the request is processed, Then the global kill switch state is set. |
@@ -303,6 +306,7 @@
 | TST-REQ-DEP-005-01 | Happy | REQ-DEP-005 | Given CI is triggered, When workflow execution starts, Then tests run before build or deploy jobs. |
 | TST-REQ-DEP-005-02 | Edge | REQ-DEP-005 | Given tests fail in CI, When workflow execution continues, Then container build and deploy jobs are blocked. |
 | TST-REQ-DEP-005-03 | Focus | REQ-DEP-005 | Given the spec suite is ready for release review, When traceability verification scans spec tests, Then no pending red-phase placeholders remain. |
+| TST-REQ-DEP-005-04 | Focus | REQ-DEP-005 | Given frontend code is present, When CI runs, Then npm install, typecheck, and auth-boundary checks run before build or deploy jobs. |
 | TST-REQ-DEP-006-01 | Happy | REQ-DEP-006 | Given tests pass, When deployment workflow runs, Then backend and frontend images are built and published to ECR before ECS deployment. |
 | TST-REQ-DEP-006-02 | Edge | REQ-DEP-006 | Given ECR publish fails, When deployment workflow runs, Then ECS deployment is skipped and failure status is reported. |
 | TST-REQ-DEP-007-01 | Happy | REQ-DEP-007 | Given repo setup files are inspected, When `.env.example` files are validated, Then required local config keys are documented without secrets. |
@@ -421,11 +425,11 @@
 | REQ-EXT-005 | TST-REQ-EXT-005-01, TST-REQ-EXT-005-02 |
 | REQ-EXT-006 | TST-REQ-EXT-006-01, TST-REQ-EXT-006-02 |
 | REQ-UI-001 | TST-REQ-UI-001-01, TST-REQ-UI-001-02, TST-REQ-UI-001-03 |
-| REQ-UI-002 | TST-REQ-UI-002-01, TST-REQ-UI-002-02 |
-| REQ-UI-003 | TST-REQ-UI-003-01, TST-REQ-UI-003-02, TST-REQ-UI-003-03 |
+| REQ-UI-002 | TST-REQ-UI-002-01, TST-REQ-UI-002-02, TST-REQ-UI-002-03 |
+| REQ-UI-003 | TST-REQ-UI-003-01, TST-REQ-UI-003-02, TST-REQ-UI-003-03, TST-REQ-UI-003-04 |
 | REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03 |
 | REQ-UI-005 | TST-REQ-UI-005-01, TST-REQ-UI-005-02 |
-| REQ-UI-006 | TST-REQ-UI-006-01, TST-REQ-UI-006-02, TST-REQ-UI-006-03 |
+| REQ-UI-006 | TST-REQ-UI-006-01, TST-REQ-UI-006-02, TST-REQ-UI-006-03, TST-REQ-UI-006-04 |
 | REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02 |
 | REQ-UI-008 | TST-REQ-UI-008-01, TST-REQ-UI-008-02, TST-REQ-UI-008-03 |
 | REQ-UI-009 | TST-REQ-UI-009-01 |
@@ -446,7 +450,7 @@
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02 |
 | REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02 |
-| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03 |
+| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04 |
 | REQ-DEP-006 | TST-REQ-DEP-006-01, TST-REQ-DEP-006-02 |
 | REQ-DEP-007 | TST-REQ-DEP-007-01, TST-REQ-DEP-007-02 |
 | REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02 |

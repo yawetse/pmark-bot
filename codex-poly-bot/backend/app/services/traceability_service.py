@@ -26,6 +26,10 @@ REQUIREMENT_TABLE_PATTERN = re.compile(r"^\|\s*(REQ-[A-Z]+-\d{3})\s*\|", re.MULT
 TEST_SOURCE_GLOB = "backend/tests/spec/test_*.py"
 IMPLEMENTATION_GLOBS = (
     "backend/app/**/*.py",
+    "frontend/app/**/*",
+    "frontend/lib/**/*",
+    "frontend/scripts/**/*",
+    "frontend/README.md",
     "infra/**/*",
     "docs/**/*.md",
     ".github/workflows/*.yml",
