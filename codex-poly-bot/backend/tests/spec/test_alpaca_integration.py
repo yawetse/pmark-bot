@@ -38,11 +38,14 @@ from app.venues import (
     AlpacaAccountCredential,
     AlpacaClientBoundary,
     AlpacaContractClient,
+    AlpacaLiveAccountState,
     AlpacaMarketDataStatus,
     AlpacaOrderIntent,
     AlpacaVenueConfig,
+    alpaca_market_data_live_gate,
     validate_alpaca_account_identifiers,
     validate_alpaca_long_only_order,
+    validate_alpaca_live_account_state,
     validate_alpaca_market_data,
 )
 
@@ -171,6 +174,31 @@ def test_req_alp_003_02_adapter_without_approved_alpaca_client_binding_live_oper
 
     assert not result.ok
     assert result.refusal_reason == "unapproved Alpaca client boundary"
+    assert client.operation_calls == 0
+
+def test_req_alp_003_03_dry_run_alpaca_reads_account_market_data_without_order_endpoint() -> None:
+    """TST-REQ-ALP-003-03: Validates REQ-ALP-003
+
+    Given: dry-run mode is enabled and Alpaca is configured
+    When: account and market data reads execute through the adapter boundary
+    Then: approved read APIs are used without submitting to Alpaca paper or live order endpoints
+    """
+    client = AlpacaContractClient(
+        AlpacaVenueConfig(
+            account_mode="paper",
+            client_boundary=AlpacaClientBoundary.DOCUMENTED_HTTP_API,
+            order_operations_enabled=False,
+        )
+    )
+
+    result = client.read_account_and_market_data(symbols=("SPY", "QQQ"))
+
+    assert result.ok
+    assert result.payload["operations"] == ("account", "market_data")
+    assert result.payload["symbols"] == ("SPY", "QQQ")
+    assert result.payload["broker_submit_attempted"] is False
+    assert client.read_calls == 2
+    assert client.submit_attempts == 0
     assert client.operation_calls == 0
 
 def test_req_alp_004_01_dev_prod_settings_claude_openai_alpaca_credentials_loaded() -> None:
@@ -704,6 +732,42 @@ def test_req_alp_015_01_alpaca_market_data_unavailable_rate_limited_stale_outsid
     }
     assert result.payload["symbol"] == "SPY"
 
+def test_req_alp_015_02_alpaca_unsafe_market_data_blocks_live_orders_and_persists_refusal() -> None:
+    """TST-REQ-ALP-015-02: Validates REQ-ALP-015
+
+    Given: Alpaca data is unavailable, stale, rate-limited, or outside trading hours
+    When: live order checks run
+    Then: affected live orders are blocked and the refusal reason is recorded
+    """
+    registry = RepositoryRegistry()
+
+    result = alpaca_market_data_live_gate(
+        status=AlpacaMarketDataStatus(
+            symbol="spy",
+            available=False,
+            rate_limited=True,
+            stale=True,
+            outside_trading_hours=True,
+        ),
+        environment=Environment.PRODUCTION,
+        registry=registry,
+        model_provider=ModelProvider.OPENAI,
+    )
+
+    assert not result.ok
+    assert result.payload["live_order_allowed"] is False
+    assert result.payload["symbol"] == "SPY"
+    audit_row = registry.state.rows("shared.audit_events")[0]
+    assert audit_row["event_type"] == "alpaca_live_refusal"
+    assert audit_row["entity_id"] == "SPY"
+    assert audit_row["metadata"]["model_provider"] == ModelProvider.OPENAI.value
+    assert set(audit_row["metadata"]["refusal_reasons"]) == {
+        "Alpaca market data unavailable",
+        "Alpaca market data rate limited",
+        "Alpaca market data stale",
+        "Alpaca market outside trading hours",
+    }
+
 def test_req_alp_016_01_distinct_alpaca_account_identifiers_each_model_in_same() -> None:
     """TST-REQ-ALP-016-01: Validates REQ-ALP-016
 
@@ -761,6 +825,36 @@ def test_req_alp_016_02_two_model_providers_resolve_same_alpaca_account_identifi
     assert audit_row["event_type"] == "alpaca_account_duplicate"
     assert audit_row["success"] is False
     assert audit_row["metadata"]["duplicate_model_provider"] == ModelProvider.CLAUDE.value
+
+def test_req_alp_017_03_account_mode_validates_account_state_before_live_eligibility() -> None:
+    """TST-REQ-ALP-017-03: Validates REQ-ALP-017
+
+    Given: Alpaca account mode is configured with account and portfolio state
+    When: live eligibility checks run
+    Then: account ID, status, positions, open orders, and buying power are validated first
+    """
+    result = validate_alpaca_live_account_state(
+        config=AlpacaVenueConfig(
+            account_mode="live",
+            client_boundary=AlpacaClientBoundary.OFFICIAL_PYTHON_SDK,
+        ),
+        state=AlpacaLiveAccountState(
+            account_mode="live",
+            configured_account_id="alpaca-openai-prod-live",
+            broker_account_id="alpaca-openai-prod-live",
+            account_status="active",
+            positions={"SPY": Decimal("2")},
+            open_orders=("order-1",),
+            buying_power=Decimal("500.00"),
+        ),
+    )
+
+    assert result.ok
+    assert result.payload["live_order_allowed"] is True
+    assert result.payload["account_status"] == "active"
+    assert result.payload["positions_count"] == 1
+    assert result.payload["open_orders_count"] == 1
+    assert result.payload["buying_power"] == "500.00"
 
 def test_req_alp_017_01_alpaca_postgres_agree_on_positions_open_orders_buying() -> None:
     """TST-REQ-ALP-017-01: Validates REQ-ALP-017

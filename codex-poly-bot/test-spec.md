@@ -52,6 +52,7 @@
 | TST-REQ-ALP-002-02 | Edge | REQ-ALP-002 | Given options, crypto, short, or margin candidates, When Alpaca filtering runs, Then each unsupported product is rejected with a reason. |
 | TST-REQ-ALP-003-01 | Happy | REQ-ALP-003 | Given Alpaca account, market data, position, and order operations, When adapters execute them, Then the official SDK or documented HTTP APIs are used. |
 | TST-REQ-ALP-003-02 | Edge | REQ-ALP-003 | Given an adapter without an approved Alpaca client binding, When live operations are requested, Then the operation is blocked. |
+| TST-REQ-ALP-003-03 | Focus | REQ-ALP-003 | Given dry-run mode is enabled and Alpaca is configured, When account and market data reads execute through the adapter boundary, Then approved read APIs are used without submitting to Alpaca paper or live order endpoints. |
 | TST-REQ-ALP-004-01 | Happy | REQ-ALP-004 | Given dev and prod settings for Claude and OpenAI, When Alpaca credentials are loaded, Then each environment and model has a distinct account identifier. |
 | TST-REQ-ALP-004-02 | Edge | REQ-ALP-004 | Given a missing Alpaca account identifier for one model provider, When live checks run, Then Alpaca live trading is blocked for that provider. |
 | TST-REQ-ALP-005-01 | Happy | REQ-ALP-005 | Given global dry-run mode is enabled, When an Alpaca stock or ETF order is approved, Then a simulated order is recorded without broker submission. |
@@ -75,10 +76,12 @@
 | TST-REQ-ALP-014-01 | Happy | REQ-ALP-014 | Given an authorized dashboard user, When Alpaca mode, enabled flag, risk limits, universe, or slippage is saved, Then the config is persisted. |
 | TST-REQ-ALP-014-02 | Edge | REQ-ALP-014 | Given an unauthorized user or invalid Alpaca config value, When the update is submitted, Then the dashboard rejects the change. |
 | TST-REQ-ALP-015-01 | Focus | REQ-ALP-015 | Given Alpaca market data is unavailable, rate-limited, stale, or outside configured trading hours, When live order checks run, Then the order is blocked and the reason is recorded. |
+| TST-REQ-ALP-015-02 | Focus | REQ-ALP-015 | Given Alpaca data is unavailable, stale, rate-limited, or outside trading hours, When live order checks run, Then affected live orders are blocked and the refusal reason is recorded. |
 | TST-REQ-ALP-016-01 | Happy | REQ-ALP-016 | Given distinct Alpaca account identifiers for each model in the same environment and mode, When duplicate checks run, Then Alpaca live trading remains eligible. |
 | TST-REQ-ALP-016-02 | Edge | REQ-ALP-016 | Given two model providers resolve to the same Alpaca account identifier in the same environment and mode, When checks run, Then live trading is blocked for the duplicate account. |
 | TST-REQ-ALP-017-01 | Happy | REQ-ALP-017 | Given Alpaca and Postgres agree on positions, open orders, and buying power, When reconciliation runs, Then Alpaca live orders may proceed to remaining checks. |
 | TST-REQ-ALP-017-02 | Edge | REQ-ALP-017 | Given reconciliation has not completed, When Alpaca live execution is requested, Then the order is blocked. |
+| TST-REQ-ALP-017-03 | Focus | REQ-ALP-017 | Given Alpaca account mode is configured with account and portfolio state, When live eligibility checks run, Then account ID, status, positions, open orders, and buying power are validated first. |
 | TST-REQ-ALP-018-01 | Happy | REQ-ALP-018 | Given reconciliation detects no unresolved mismatch, When Alpaca live checks run, Then the mismatch gate passes. |
 | TST-REQ-ALP-018-02 | Edge | REQ-ALP-018 | Given an unresolved broker and Postgres mismatch, When Alpaca live checks run, Then live orders are blocked for the affected provider and mismatch details are recorded. |
 
@@ -359,7 +362,7 @@
 | REQ-VEN-006 | TST-REQ-VEN-006-01 |
 | REQ-ALP-001 | TST-REQ-ALP-001-01, TST-REQ-ALP-001-02 |
 | REQ-ALP-002 | TST-REQ-ALP-002-01, TST-REQ-ALP-002-02 |
-| REQ-ALP-003 | TST-REQ-ALP-003-01, TST-REQ-ALP-003-02 |
+| REQ-ALP-003 | TST-REQ-ALP-003-01, TST-REQ-ALP-003-02, TST-REQ-ALP-003-03 |
 | REQ-ALP-004 | TST-REQ-ALP-004-01, TST-REQ-ALP-004-02 |
 | REQ-ALP-005 | TST-REQ-ALP-005-01, TST-REQ-ALP-005-02 |
 | REQ-ALP-006 | TST-REQ-ALP-006-01, TST-REQ-ALP-006-02 |
@@ -371,9 +374,9 @@
 | REQ-ALP-012 | TST-REQ-ALP-012-01, TST-REQ-ALP-012-02 |
 | REQ-ALP-013 | TST-REQ-ALP-013-01, TST-REQ-ALP-013-02 |
 | REQ-ALP-014 | TST-REQ-ALP-014-01, TST-REQ-ALP-014-02 |
-| REQ-ALP-015 | TST-REQ-ALP-015-01 |
+| REQ-ALP-015 | TST-REQ-ALP-015-01, TST-REQ-ALP-015-02 |
 | REQ-ALP-016 | TST-REQ-ALP-016-01, TST-REQ-ALP-016-02 |
-| REQ-ALP-017 | TST-REQ-ALP-017-01, TST-REQ-ALP-017-02 |
+| REQ-ALP-017 | TST-REQ-ALP-017-01, TST-REQ-ALP-017-02, TST-REQ-ALP-017-03 |
 | REQ-ALP-018 | TST-REQ-ALP-018-01, TST-REQ-ALP-018-02 |
 | REQ-DAT-001 | TST-REQ-DAT-001-01, TST-REQ-DAT-001-02 |
 | REQ-DAT-002 | TST-REQ-DAT-002-01, TST-REQ-DAT-002-02 |

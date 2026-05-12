@@ -1048,9 +1048,9 @@
 | AC-026-04 | If Alpaca reconciliation detects an unresolved mismatch, then the system shall block live orders for the affected model provider. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
