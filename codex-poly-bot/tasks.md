@@ -1083,9 +1083,9 @@
 | AC-027-03 | When provider cost is returned or estimated, the system shall reconcile budget ledger entries and emit structured cost status. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

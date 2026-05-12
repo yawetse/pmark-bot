@@ -1,16 +1,43 @@
 """LLM scoring orchestration helpers.
 
-REQ: REQ-LLM-001, REQ-LLM-002, REQ-LLM-004, REQ-LLM-005
+REQ: REQ-LLM-001, REQ-LLM-002, REQ-LLM-003, REQ-LLM-004,
+REQ-LLM-005, REQ-OBS-001
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Protocol
+from typing import Any, Protocol
+
+import httpx
 
 from app.domain import Instrument, ModelProvider, ScoringOutput
 from app.venues.polymarket import VenueCallResult
+
+
+SCORING_SYSTEM_PROMPT = (
+    "Return one JSON object with output_thesis, confidence, "
+    "estimated_probability, and cost_estimate for the candidate."
+)
+
+SCORING_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "output_thesis": {"type": "string"},
+        "confidence": {"type": "string"},
+        "estimated_probability": {"type": "string"},
+        "cost_estimate": {"type": "string"},
+    },
+    "required": [
+        "output_thesis",
+        "confidence",
+        "estimated_probability",
+        "cost_estimate",
+    ],
+}
 
 
 @dataclass(frozen=True)
@@ -73,6 +100,21 @@ class LlmBudgetLedger:
     spent: dict[ModelProvider, Decimal] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class LlmProviderCredential:
+    """Resolved provider API credential metadata.
+
+    REQ: REQ-LLM-001
+    """
+
+    api_key: str | None
+    credential_ref: str | None = None
+
+    @property
+    def present(self) -> bool:
+        return bool((self.api_key or "").strip())
+
+
 class LlmProvider(Protocol):
     """Provider protocol used by the scoring orchestration helpers.
 
@@ -85,6 +127,44 @@ class LlmProvider(Protocol):
 
     def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
         """Return a normalized scoring output for a request."""
+
+
+class LlmProviderTransport(Protocol):
+    """HTTP transport boundary for external LLM providers.
+
+    REQ: REQ-LLM-001, REQ-OBS-001
+    """
+
+    def post_json(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Post JSON to a provider and return parsed JSON."""
+
+
+@dataclass(frozen=True)
+class HttpxProviderTransport:
+    """Default HTTP transport used by external provider adapters.
+
+    REQ: REQ-LLM-001, REQ-OBS-001
+    """
+
+    timeout_seconds: float = 30.0
+
+    def post_json(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            return response.json()
 
 
 class FakeLlmProvider:
@@ -123,6 +203,128 @@ class FakeLlmProvider:
             estimated_probability=Decimal("0.60"),
             cost_estimate=self.cost_estimate,
             instrument=request.instrument,
+        )
+
+
+class OpenAIResponsesProvider:
+    """OpenAI Responses API adapter for normalized scoring.
+
+    REQ: REQ-LLM-001, REQ-LLM-003, REQ-OBS-001
+    """
+
+    model_provider = ModelProvider.OPENAI
+
+    def __init__(
+        self,
+        *,
+        credential: LlmProviderCredential,
+        transport: LlmProviderTransport | None = None,
+        remaining_budget: Decimal = Decimal("0"),
+        enabled: bool = True,
+        model: str = "gpt-5",
+        base_url: str = "https://api.openai.com",
+        max_output_tokens: int = 800,
+    ) -> None:
+        self.credential = credential
+        self.transport = transport or HttpxProviderTransport()
+        self.remaining_budget = _as_decimal(remaining_budget)
+        self.enabled = enabled and credential.present
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.max_output_tokens = max_output_tokens
+
+    def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
+        """Send a scoring request through OpenAI's Responses API.
+
+        REQ: REQ-LLM-001, REQ-LLM-003
+        """
+
+        body = self.transport.post_json(
+            url=f"{self.base_url}/v1/responses",
+            headers={
+                "Authorization": f"Bearer {self.credential.api_key}",
+                "Content-Type": "application/json",
+            },
+            payload={
+                "model": self.model,
+                "input": [
+                    {"role": "system", "content": SCORING_SYSTEM_PROMPT},
+                    {"role": "user", "content": _scoring_user_prompt(request)},
+                ],
+                "max_output_tokens": self.max_output_tokens,
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "codex_poly_score",
+                        "schema": SCORING_JSON_SCHEMA,
+                        "strict": True,
+                    }
+                },
+            },
+        )
+        return _score_from_provider_text(
+            text=_openai_response_text(body),
+            request=request,
+            model_provider=self.model_provider,
+        )
+
+
+class ClaudeMessagesProvider:
+    """Anthropic Claude Messages API adapter for normalized scoring.
+
+    REQ: REQ-LLM-001, REQ-LLM-003, REQ-OBS-001
+    """
+
+    model_provider = ModelProvider.CLAUDE
+
+    def __init__(
+        self,
+        *,
+        credential: LlmProviderCredential,
+        transport: LlmProviderTransport | None = None,
+        remaining_budget: Decimal = Decimal("0"),
+        enabled: bool = True,
+        model: str = "claude-opus-4-1-20250805",
+        base_url: str = "https://api.anthropic.com",
+        max_tokens: int = 800,
+    ) -> None:
+        self.credential = credential
+        self.transport = transport or HttpxProviderTransport()
+        self.remaining_budget = _as_decimal(remaining_budget)
+        self.enabled = enabled and credential.present
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.max_tokens = max_tokens
+
+    def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
+        """Send a scoring request through Anthropic's Messages API.
+
+        REQ: REQ-LLM-001, REQ-LLM-003
+        """
+
+        body = self.transport.post_json(
+            url=f"{self.base_url}/v1/messages",
+            headers={
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+                "x-api-key": str(self.credential.api_key),
+            },
+            payload={
+                "model": self.model,
+                "max_tokens": self.max_tokens,
+                "system": SCORING_SYSTEM_PROMPT,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": _scoring_user_prompt(request),
+                    }
+                ],
+            },
+        )
+        return _score_from_provider_text(
+            text=_claude_response_text(body),
+            request=request,
+            model_provider=self.model_provider,
         )
 
 
@@ -236,6 +438,46 @@ def record_provider_cost(
     )
 
 
+def reconcile_scoring_cost(
+    ledger: LlmBudgetLedger,
+    score: ScoringOutput,
+    *,
+    actual_cost: Decimal | str | None = None,
+) -> VenueCallResult:
+    """Reconcile returned or estimated scoring cost into budget status.
+
+    REQ: REQ-LLM-002, REQ-LLM-003, REQ-LLM-004
+    """
+
+    cost_source = "actual" if actual_cost is not None else "estimated"
+    cost = _as_decimal(actual_cost if actual_cost is not None else score.cost_estimate)
+    result = record_provider_cost(
+        ledger,
+        score.model_provider,
+        score.model_provider,
+        cost,
+    )
+    if not result.ok:
+        return result
+    budget = ledger.budgets.get(score.model_provider, Decimal("0"))
+    spent = ledger.spent.get(score.model_provider, Decimal("0"))
+    return VenueCallResult(
+        ok=True,
+        payload={
+            "budget_status": {
+                "budget": str(budget),
+                "provider": score.model_provider.value,
+                "remaining": str(budget - spent),
+                "spent": str(spent),
+            },
+            "cost": str(cost),
+            "cost_source": cost_source,
+            "instrument_id": score.instrument.identifier,
+            "provider": score.model_provider.value,
+        },
+    )
+
+
 def check_scoring_failure_gate(
     *,
     failures: tuple[ScoringFailure, ...],
@@ -266,7 +508,57 @@ def check_scoring_failure_gate(
     )
 
 
-def _as_decimal(value: Decimal) -> Decimal:
+def _scoring_user_prompt(request: LlmScoreRequest) -> str:
+    return (
+        f"Provider: {request.model_provider.value}\n"
+        f"Prompt version: {request.prompt_version}\n"
+        f"Instrument: {request.instrument.identifier}\n"
+        f"Context: {request.input_summary}"
+    )
+
+
+def _openai_response_text(body: dict[str, Any]) -> str:
+    output_text = body.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    for item in body.get("output", ()):
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", ()):
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                return content["text"]
+    raise ValueError("OpenAI response did not include output text")
+
+
+def _claude_response_text(body: dict[str, Any]) -> str:
+    for content in body.get("content", ()):
+        if isinstance(content, dict) and content.get("type") == "text":
+            text = content.get("text")
+            if isinstance(text, str) and text.strip():
+                return text
+    raise ValueError("Claude response did not include text content")
+
+
+def _score_from_provider_text(
+    *,
+    text: str,
+    request: LlmScoreRequest,
+    model_provider: ModelProvider,
+) -> ScoringOutput:
+    payload = json.loads(text)
+    return ScoringOutput(
+        model_provider=model_provider,
+        prompt_version=request.prompt_version,
+        input_summary=request.input_summary,
+        output_thesis=payload["output_thesis"],
+        confidence=payload["confidence"],
+        estimated_probability=payload["estimated_probability"],
+        cost_estimate=payload["cost_estimate"],
+        instrument=request.instrument,
+    )
+
+
+def _as_decimal(value: Decimal | str) -> Decimal:
     try:
         decimal = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:

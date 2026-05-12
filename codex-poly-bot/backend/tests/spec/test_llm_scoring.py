@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -18,13 +19,17 @@ from app.domain import (
 from app.services import (
     ActorContext,
     AuthService,
+    ClaudeMessagesProvider,
     ConfigPatchOperation,
     ConfigService,
     FakeLlmProvider,
     LlmBudgetLedger,
+    LlmProviderCredential,
     ScoringFailure,
+    OpenAIResponsesProvider,
     build_scoring_queue,
     check_scoring_failure_gate,
+    reconcile_scoring_cost,
     record_provider_cost,
     run_llm_scoring,
 )
@@ -38,6 +43,33 @@ def prediction_instrument() -> Instrument:
         outcome_id="yes",
         display_name="Will the event happen?",
     )
+
+
+def scoring_response_text(*, thesis: str, cost: str = "0.01") -> str:
+    return (
+        "{"
+        f"\"output_thesis\":\"{thesis}\","
+        "\"confidence\":\"0.70\","
+        "\"estimated_probability\":\"0.60\","
+        f"\"cost_estimate\":\"{cost}\""
+        "}"
+    )
+
+
+class RecordingProviderTransport:
+    def __init__(self, responses: tuple[dict[str, Any], ...]):
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    def post_json(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.calls.append({"url": url, "headers": headers, "payload": payload})
+        return self.responses.pop(0)
 
 
 def test_req_llm_001_01_eligible_polymarket_alpaca_candidates_scoring_runs_both_claude() -> None:
@@ -61,6 +93,66 @@ def test_req_llm_001_01_eligible_polymarket_alpaca_candidates_scoring_runs_both_
     }
     assert providers[0].call_count == 1
     assert providers[1].call_count == 1
+
+
+def test_req_llm_001_03_configured_credentials_send_scoring_to_openai_and_claude_adapters() -> None:
+    """TST-REQ-LLM-001-03: Validates REQ-LLM-001
+
+    Given: configured OpenAI and Claude credentials are present
+    When: eligible scoring requests run through provider adapters
+    Then: both providers receive scoring requests through their external API boundary
+    """
+    openai_transport = RecordingProviderTransport(
+        (
+            {
+                "output_text": scoring_response_text(
+                    thesis="OpenAI sees positive expected value",
+                    cost="0.015",
+                )
+            },
+        )
+    )
+    claude_transport = RecordingProviderTransport(
+        (
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": scoring_response_text(
+                            thesis="Claude sees positive expected value",
+                            cost="0.012",
+                        ),
+                    }
+                ]
+            },
+        )
+    )
+    providers = (
+        ClaudeMessagesProvider(
+            credential=LlmProviderCredential(api_key="claude-test-key"),
+            transport=claude_transport,
+            remaining_budget=Decimal("1.00"),
+        ),
+        OpenAIResponsesProvider(
+            credential=LlmProviderCredential(api_key="openai-test-key"),
+            transport=openai_transport,
+            remaining_budget=Decimal("1.00"),
+        ),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), providers)
+
+    assert result.ok
+    assert {score.model_provider for score in result.scores} == {
+        ModelProvider.CLAUDE,
+        ModelProvider.OPENAI,
+    }
+    assert openai_transport.calls[0]["url"] == "https://api.openai.com/v1/responses"
+    assert openai_transport.calls[0]["headers"]["Authorization"] == "Bearer openai-test-key"
+    assert openai_transport.calls[0]["payload"]["model"] == "gpt-5"
+    assert claude_transport.calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert claude_transport.calls[0]["headers"]["x-api-key"] == "claude-test-key"
+    assert claude_transport.calls[0]["payload"]["model"] == "claude-opus-4-1-20250805"
 
 
 def test_req_llm_001_02_one_model_provider_disabled_out_budget_scoring_runs() -> None:
@@ -113,6 +205,55 @@ def test_req_llm_002_01_claude_openai_budget_settings_scoring_costs_recorded_eac
     assert openai.ok
     assert ledger.spent[ModelProvider.CLAUDE] == Decimal("0.25")
     assert ledger.spent[ModelProvider.OPENAI] == Decimal("0.10")
+
+
+def test_req_llm_002_03_provider_cost_returned_or_estimated_reconciles_budget_status() -> None:
+    """TST-REQ-LLM-002-03: Validates REQ-LLM-002
+
+    Given: provider cost is returned or estimated
+    When: budget ledger reconciliation runs
+    Then: cost entries are recorded and structured budget status is emitted
+    """
+    ledger = LlmBudgetLedger(
+        budgets={
+            ModelProvider.OPENAI: Decimal("1.00"),
+            ModelProvider.CLAUDE: Decimal("1.00"),
+        }
+    )
+    openai_score = ScoringOutput(
+        model_provider=ModelProvider.OPENAI,
+        prompt_version="pm-v1",
+        input_summary="market context",
+        output_thesis="positive expected value",
+        confidence="0.70",
+        estimated_probability="0.60",
+        cost_estimate="0.015",
+        instrument=prediction_instrument(),
+    )
+    claude_score = ScoringOutput(
+        model_provider=ModelProvider.CLAUDE,
+        prompt_version="pm-v1",
+        input_summary="market context",
+        output_thesis="positive expected value",
+        confidence="0.71",
+        estimated_probability="0.61",
+        cost_estimate="0.012",
+        instrument=prediction_instrument(),
+    )
+
+    returned = reconcile_scoring_cost(
+        ledger,
+        openai_score,
+        actual_cost=Decimal("0.014"),
+    )
+    estimated = reconcile_scoring_cost(ledger, claude_score)
+
+    assert returned.ok
+    assert returned.payload["cost_source"] == "actual"
+    assert returned.payload["budget_status"]["remaining"] == "0.986"
+    assert estimated.ok
+    assert estimated.payload["cost_source"] == "estimated"
+    assert estimated.payload["budget_status"]["remaining"] == "0.988"
 
 
 def test_req_llm_002_02_scoring_event_attempts_consume_wrong_provider_budget_budget() -> None:
@@ -217,6 +358,49 @@ def test_req_llm_004_02_claude_exhausted_openai_budget_scoring_runs_openai_conti
 
     assert tuple(score.model_provider for score in result.scores) == (ModelProvider.OPENAI,)
     assert result.skipped_providers == (ModelProvider.CLAUDE,)
+
+
+def test_req_llm_004_03_budget_exhausted_stops_one_external_provider_other_continues() -> None:
+    """TST-REQ-LLM-004-03: Validates REQ-LLM-004
+
+    Given: OpenAI is exhausted and Claude has budget
+    When: scoring runs through external provider adapters
+    Then: OpenAI receives no request and Claude continues independently
+    """
+    openai_transport = RecordingProviderTransport(
+        ({"output_text": scoring_response_text(thesis="should not be called")},)
+    )
+    claude_transport = RecordingProviderTransport(
+        (
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": scoring_response_text(thesis="Claude continues"),
+                    }
+                ]
+            },
+        )
+    )
+    providers = (
+        OpenAIResponsesProvider(
+            credential=LlmProviderCredential(api_key="openai-test-key"),
+            transport=openai_transport,
+            remaining_budget=Decimal("0"),
+        ),
+        ClaudeMessagesProvider(
+            credential=LlmProviderCredential(api_key="claude-test-key"),
+            transport=claude_transport,
+            remaining_budget=Decimal("1.00"),
+        ),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), providers)
+
+    assert tuple(score.model_provider for score in result.scores) == (ModelProvider.CLAUDE,)
+    assert result.skipped_providers == (ModelProvider.OPENAI,)
+    assert openai_transport.calls == []
+    assert len(claude_transport.calls) == 1
 
 
 def test_req_llm_005_01_llm_scoring_succeeds_model_market_execution_eligibility_checked() -> None:

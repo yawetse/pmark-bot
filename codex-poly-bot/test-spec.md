@@ -146,12 +146,15 @@
 |---------|------|-----------|------------------|
 | TST-REQ-LLM-001-01 | Happy | REQ-LLM-001 | Given eligible Polymarket and Alpaca candidates, When scoring runs, Then both Claude and OpenAI providers evaluate the candidates. |
 | TST-REQ-LLM-001-02 | Edge | REQ-LLM-001 | Given one model provider is disabled or out of budget, When scoring runs, Then eligible remaining providers continue independently. |
+| TST-REQ-LLM-001-03 | Focus | REQ-LLM-001 | Given configured OpenAI and Claude credentials are present, When eligible scoring requests run through provider adapters, Then both providers receive scoring requests through their external API boundary. |
 | TST-REQ-LLM-002-01 | Happy | REQ-LLM-002 | Given Claude and OpenAI budget settings, When scoring costs are recorded, Then each provider budget is tracked separately. |
 | TST-REQ-LLM-002-02 | Edge | REQ-LLM-002 | Given a scoring event attempts to consume the wrong provider budget, When budget accounting runs, Then the event is rejected or corrected before persistence. |
+| TST-REQ-LLM-002-03 | Focus | REQ-LLM-002 | Given provider cost is returned or estimated, When budget ledger reconciliation runs, Then cost entries are recorded and structured budget status is emitted. |
 | TST-REQ-LLM-003-01 | Happy | REQ-LLM-003 | Given a successful model evaluation, When the score is persisted, Then provider, prompt version, input summary, thesis, confidence, probability, and cost estimate are stored. |
 | TST-REQ-LLM-003-02 | Edge | REQ-LLM-003 | Given a model response missing required scoring fields, When parsing runs, Then the score is marked failed and no live order can use it. |
 | TST-REQ-LLM-004-01 | Happy | REQ-LLM-004 | Given a model budget is exhausted, When scoring queues are built, Then no new requests are sent to that model. |
 | TST-REQ-LLM-004-02 | Edge | REQ-LLM-004 | Given Claude is exhausted and OpenAI has budget, When scoring runs, Then OpenAI continues while Claude is skipped. |
+| TST-REQ-LLM-004-03 | Focus | REQ-LLM-004 | Given OpenAI is exhausted and Claude has budget, When scoring runs through external provider adapters, Then OpenAI receives no request and Claude continues independently. |
 | TST-REQ-LLM-005-01 | Happy | REQ-LLM-005 | Given LLM scoring succeeds for a model and market, When execution eligibility is checked, Then the scoring failure gate passes. |
 | TST-REQ-LLM-005-02 | Edge | REQ-LLM-005 | Given LLM scoring fails for a model and market, When execution eligibility is checked in the same loop, Then live orders are blocked for that pair. |
 | TST-REQ-LLM-006-01 | Focus | REQ-LLM-006 | Given an authorized dashboard user changes model budgets or scoring settings, When the update is saved, Then the new scoring config is persisted. |
@@ -400,10 +403,10 @@
 | REQ-WAL-005 | TST-REQ-WAL-005-01, TST-REQ-WAL-005-02 |
 | REQ-WAL-006 | TST-REQ-WAL-006-01, TST-REQ-WAL-006-02 |
 | REQ-WAL-007 | TST-REQ-WAL-007-01 |
-| REQ-LLM-001 | TST-REQ-LLM-001-01, TST-REQ-LLM-001-02 |
-| REQ-LLM-002 | TST-REQ-LLM-002-01, TST-REQ-LLM-002-02 |
+| REQ-LLM-001 | TST-REQ-LLM-001-01, TST-REQ-LLM-001-02, TST-REQ-LLM-001-03 |
+| REQ-LLM-002 | TST-REQ-LLM-002-01, TST-REQ-LLM-002-02, TST-REQ-LLM-002-03 |
 | REQ-LLM-003 | TST-REQ-LLM-003-01, TST-REQ-LLM-003-02 |
-| REQ-LLM-004 | TST-REQ-LLM-004-01, TST-REQ-LLM-004-02 |
+| REQ-LLM-004 | TST-REQ-LLM-004-01, TST-REQ-LLM-004-02, TST-REQ-LLM-004-03 |
 | REQ-LLM-005 | TST-REQ-LLM-005-01, TST-REQ-LLM-005-02 |
 | REQ-LLM-006 | TST-REQ-LLM-006-01 |
 | REQ-LLM-007 | TST-REQ-LLM-007-01 |
