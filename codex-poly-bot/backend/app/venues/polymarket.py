@@ -1,18 +1,22 @@
 """Polymarket venue contract helpers.
 
-REQ: REQ-VEN-003, REQ-VEN-004, REQ-VEN-005, REQ-EXE-010,
-REQ-EXE-011, REQ-EXE-015
+REQ: REQ-VEN-001, REQ-VEN-003, REQ-VEN-004, REQ-VEN-005,
+REQ-DAT-001, REQ-DAT-002, REQ-DAT-005, REQ-EXE-010,
+REQ-EXE-011, REQ-EXE-015, REQ-EXE-016, REQ-EXE-017
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
 from app.bootstrap import configured_slippage_threshold
-from app.domain import OrderType, Venue, supported_polymarket_venues
+from app.db import RepositoryRegistry
+from app.domain import Environment, OrderType, Venue, supported_polymarket_venues
+from app.services.ingestion_service import check_market_data_freshness
 
 
 class VenueOperation(str, Enum):
@@ -120,6 +124,184 @@ def live_submit_contract(config: PolymarketVenueConfig) -> VenueCallResult:
     )
 
 
+def dry_run_read_contract(
+    config: PolymarketVenueConfig,
+    *,
+    snapshot_type: str,
+) -> VenueCallResult:
+    """Validate a Polymarket read path without enabling order submission.
+
+    REQ: REQ-VEN-004, REQ-DAT-001, REQ-DAT-002, REQ-EXE-017
+    """
+
+    config_result = validate_polymarket_config(config)
+    if not config_result.ok:
+        return config_result
+    if config.live_enabled:
+        return VenueCallResult(
+            ok=False,
+            refusal_reasons=("Polymarket read contract requires dry-run mode",),
+            payload={
+                "venue": config.venue.value,
+                "live_submit_attempted": False,
+            },
+        )
+    if not config.enabled:
+        return VenueCallResult(
+            ok=False,
+            refusal_reasons=("Polymarket venue disabled",),
+            payload={
+                "venue": config.venue.value,
+                "live_submit_attempted": False,
+            },
+        )
+    return VenueCallResult(
+        ok=True,
+        payload={
+            "client_boundary": config.client_boundary.value,
+            "live_submit_attempted": False,
+            "operation": "read_markets",
+            "snapshot_type": snapshot_type,
+            "venue": config.venue.value,
+        },
+    )
+
+
+def _record_polymarket_live_refusal(
+    *,
+    registry: RepositoryRegistry,
+    environment: Environment,
+    config: PolymarketVenueConfig,
+    refusal_reasons: tuple[str, ...],
+    entity_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict:
+    """Persist Polymarket live-order refusal events for auditability.
+
+    REQ: REQ-VEN-005, REQ-DAT-005, REQ-EXE-016
+    """
+
+    event_metadata: dict[str, Any] = {
+        "venue": config.venue.value,
+        "live_order_allowed": False,
+        "refusal_reasons": list(refusal_reasons),
+    }
+    if metadata:
+        event_metadata.update(metadata)
+    return registry.shared().record_audit_event(
+        event_type="polymarket_live_refusal",
+        actor="system",
+        action="polymarket.live_order_refused",
+        environment=environment,
+        entity_id=entity_id or config.venue.value,
+        metadata=event_metadata,
+        success=False,
+    )
+
+
+def polymarket_live_eligibility_gate(
+    *,
+    config: PolymarketVenueConfig,
+    environment: Environment,
+    registry: RepositoryRegistry,
+) -> VenueCallResult:
+    """Block live Polymarket eligibility for unsupported configuration.
+
+    REQ: REQ-VEN-005, REQ-EXE-016, REQ-EXE-017
+    """
+
+    result = validate_polymarket_config(config)
+    if result.ok:
+        return VenueCallResult(
+            ok=True,
+            payload={
+                "live_order_allowed": True,
+                "venue": config.venue.value,
+            },
+        )
+    audit_event = _record_polymarket_live_refusal(
+        registry=registry,
+        environment=environment,
+        config=config,
+        refusal_reasons=result.refusal_reasons,
+    )
+    return VenueCallResult(
+        ok=False,
+        refusal_reasons=result.refusal_reasons,
+        payload={
+            "audit_event_id": audit_event["id"],
+            "live_order_allowed": False,
+            "venue": config.venue.value,
+        },
+    )
+
+
+def polymarket_market_data_live_gate(
+    *,
+    config: PolymarketVenueConfig,
+    environment: Environment,
+    registry: RepositoryRegistry,
+    market_id: str,
+    observed_at: datetime | None,
+    now: datetime,
+) -> VenueCallResult:
+    """Block live Polymarket orders that depend on stale market data.
+
+    REQ: REQ-DAT-005, REQ-EXE-016, REQ-EXE-017
+    """
+
+    config_result = validate_polymarket_config(config)
+    if not config_result.ok:
+        return polymarket_live_eligibility_gate(
+            config=config,
+            environment=environment,
+            registry=registry,
+        )
+
+    freshness = check_market_data_freshness(
+        observed_at=observed_at,
+        now=now,
+        threshold=timedelta(seconds=config.stale_threshold_seconds),
+    )
+    if freshness.ok:
+        return VenueCallResult(
+            ok=True,
+            payload={
+                "age_seconds": freshness.age_seconds,
+                "live_order_allowed": True,
+                "market_id": market_id,
+                "threshold_seconds": freshness.threshold_seconds,
+                "venue": config.venue.value,
+            },
+        )
+
+    refusal_reasons = (freshness.refusal_reason or "STALE_MARKET_DATA",)
+    audit_event = _record_polymarket_live_refusal(
+        registry=registry,
+        environment=environment,
+        config=config,
+        refusal_reasons=refusal_reasons,
+        entity_id=market_id,
+        metadata={
+            "age_seconds": freshness.age_seconds,
+            "market_id": market_id,
+            "threshold_seconds": freshness.threshold_seconds,
+        },
+    )
+    return VenueCallResult(
+        ok=False,
+        refusal_reasons=refusal_reasons,
+        payload={
+            "age_seconds": freshness.age_seconds,
+            "audit_event_id": audit_event["id"],
+            "live_order_allowed": False,
+            "market_id": market_id,
+            "threshold_seconds": freshness.threshold_seconds,
+            "venue": config.venue.value,
+        },
+    )
+
+
 def allowed_when_venue_disabled(
     operation: VenueOperation,
     *,
@@ -208,7 +390,19 @@ class PolymarketContractClient:
 
     def __init__(self, config: PolymarketVenueConfig):
         self.config = config
+        self.read_attempts = 0
         self.submit_attempts = 0
+
+    def read_markets(self, *, snapshot_type: str = "full") -> VenueCallResult:
+        """Validate dry-run market reads and count approved read attempts.
+
+        REQ: REQ-VEN-004, REQ-DAT-001, REQ-DAT-002, REQ-EXE-017
+        """
+
+        result = dry_run_read_contract(self.config, snapshot_type=snapshot_type)
+        if result.ok:
+            self.read_attempts += 1
+        return result
 
     def submit_order(self) -> VenueCallResult:
         """Validate contract and count approved submit attempts.

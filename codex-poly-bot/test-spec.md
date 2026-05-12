@@ -36,8 +36,10 @@
 | TST-REQ-VEN-003-02 | Edge | REQ-VEN-003 | Given a venue is toggled from enabled to disabled, When the next loop starts, Then no stale enabled state allows scan, score, or trade. |
 | TST-REQ-VEN-004-01 | Happy | REQ-VEN-004 | Given live mode and an approved Polymarket order, When execution submits the order, Then the official SDK or documented API client is used. |
 | TST-REQ-VEN-004-02 | Edge | REQ-VEN-004 | Given a non-official Polymarket client implementation is configured, When live order submission is attempted, Then the system blocks the submission. |
+| TST-REQ-VEN-004-03 | Focus | REQ-VEN-004 | Given dry-run mode is enabled and Polymarket is configured, When market reads execute through the adapter boundary, Then approved read APIs are used and no live order submit is attempted. |
 | TST-REQ-VEN-005-01 | Happy | REQ-VEN-005 | Given an unsupported venue configuration for the environment, When live order checks run, Then live orders are blocked and the refusal reason is persisted. |
 | TST-REQ-VEN-005-02 | Edge | REQ-VEN-005 | Given multiple unsupported venue fields, When validation runs, Then the refusal event includes each relevant unsupported setting. |
+| TST-REQ-VEN-005-03 | Focus | REQ-VEN-005 | Given unsupported Polymarket venue configuration for the current environment, When live eligibility checks run, Then live orders are blocked and the refusal reason is persisted. |
 | TST-REQ-VEN-006-01 | Focus | REQ-VEN-006 | Given an authorized dashboard update to venue config, When the next trading loop starts, Then the updated venue config is applied without restart. |
 
 ### Alpaca Stock and ETF Integration
@@ -94,6 +96,7 @@
 | TST-REQ-DAT-004-02 | Edge | REQ-DAT-004 | Given a missing partition value, When an S3 object key is built, Then the system rejects the write before storing an incorrectly partitioned object. |
 | TST-REQ-DAT-005-01 | Happy | REQ-DAT-005 | Given fresh market data within the configured threshold, When live order checks run, Then the freshness gate passes. |
 | TST-REQ-DAT-005-02 | Edge | REQ-DAT-005 | Given stale market data beyond the configured threshold, When live order checks run, Then dependent live orders are blocked. |
+| TST-REQ-DAT-005-03 | Focus | REQ-DAT-005 | Given Polymarket market data is stale beyond the configured threshold, When live order checks run, Then dependent live orders are blocked and the refusal event is persisted. |
 | TST-REQ-DAT-006-01 | Focus | REQ-DAT-006 | Given raw snapshot lifecycle rules are synthesized, When infrastructure configuration is validated, Then raw snapshots have a 365-day retention policy. |
 | TST-REQ-DAT-007-01 | Focus | REQ-DAT-007 | Given normalized snapshot lifecycle rules are synthesized, When infrastructure configuration is validated, Then normalized snapshots have a 730-day retention policy. |
 | TST-REQ-DAT-008-01 | Focus | REQ-DAT-008 | Given an ingestion job fails after a prior checkpoint, When retry policy runs, Then the error is recorded, the checkpoint is preserved, and retry timing follows config. |
@@ -351,8 +354,8 @@
 | REQ-VEN-001 | TST-REQ-VEN-001-01, TST-REQ-VEN-001-02 |
 | REQ-VEN-002 | TST-REQ-VEN-002-01, TST-REQ-VEN-002-02 |
 | REQ-VEN-003 | TST-REQ-VEN-003-01, TST-REQ-VEN-003-02 |
-| REQ-VEN-004 | TST-REQ-VEN-004-01, TST-REQ-VEN-004-02 |
-| REQ-VEN-005 | TST-REQ-VEN-005-01, TST-REQ-VEN-005-02 |
+| REQ-VEN-004 | TST-REQ-VEN-004-01, TST-REQ-VEN-004-02, TST-REQ-VEN-004-03 |
+| REQ-VEN-005 | TST-REQ-VEN-005-01, TST-REQ-VEN-005-02, TST-REQ-VEN-005-03 |
 | REQ-VEN-006 | TST-REQ-VEN-006-01 |
 | REQ-ALP-001 | TST-REQ-ALP-001-01, TST-REQ-ALP-001-02 |
 | REQ-ALP-002 | TST-REQ-ALP-002-01, TST-REQ-ALP-002-02 |
@@ -376,7 +379,7 @@
 | REQ-DAT-002 | TST-REQ-DAT-002-01, TST-REQ-DAT-002-02 |
 | REQ-DAT-003 | TST-REQ-DAT-003-01, TST-REQ-DAT-003-02 |
 | REQ-DAT-004 | TST-REQ-DAT-004-01, TST-REQ-DAT-004-02 |
-| REQ-DAT-005 | TST-REQ-DAT-005-01, TST-REQ-DAT-005-02 |
+| REQ-DAT-005 | TST-REQ-DAT-005-01, TST-REQ-DAT-005-02, TST-REQ-DAT-005-03 |
 | REQ-DAT-006 | TST-REQ-DAT-006-01 |
 | REQ-DAT-007 | TST-REQ-DAT-007-01 |
 | REQ-DAT-008 | TST-REQ-DAT-008-01 |

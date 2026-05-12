@@ -1006,9 +1006,9 @@
 | AC-025-03 | If Polymarket market data is stale beyond the configured threshold, then the system shall block dependent live orders and persist the refusal event. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
