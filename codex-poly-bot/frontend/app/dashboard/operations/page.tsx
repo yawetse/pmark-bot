@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
-import { ConfigControls } from "@/components/dashboard/config-controls";
+import { OperationsView } from "@/components/dashboard/operations-view";
 import { getDashboardSession } from "@/lib/server/session";
 
-// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007
+// REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
 
-export default async function ConfigPage() {
+export default async function OperationsPage() {
   const sessionCheck = await getDashboardSession();
   if (sessionCheck.status === "missing") {
     redirect("/login");
@@ -20,11 +20,7 @@ export default async function ConfigPage() {
       <DashboardNav />
       <main className="page-shell">
         <div className="content-grid">
-          <ConfigControls />
-          <section className="panel">
-            <h2>Versioning</h2>
-            <p>Config saves use an expected version and apply on the next trading loop.</p>
-          </section>
+          <OperationsView />
         </div>
       </main>
     </>

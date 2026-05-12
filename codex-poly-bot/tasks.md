@@ -971,9 +971,9 @@
 | AC-024-04 | When order events are displayed, the dashboard shall show refused, submitted, filled, canceled, failed, and unknown states from persisted events. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

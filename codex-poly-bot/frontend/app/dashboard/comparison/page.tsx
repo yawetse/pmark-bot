@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 
+import { ComparisonView } from "@/components/dashboard/comparison-view";
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
-import { ConfigControls } from "@/components/dashboard/config-controls";
 import { getDashboardSession } from "@/lib/server/session";
 
-// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007
+// REQ: REQ-UI-011, REQ-CMP-002, REQ-CMP-003, REQ-CMP-004
 
-export default async function ConfigPage() {
+export default async function ComparisonPage() {
   const sessionCheck = await getDashboardSession();
   if (sessionCheck.status === "missing") {
     redirect("/login");
@@ -20,11 +20,7 @@ export default async function ConfigPage() {
       <DashboardNav />
       <main className="page-shell">
         <div className="content-grid">
-          <ConfigControls />
-          <section className="panel">
-            <h2>Versioning</h2>
-            <p>Config saves use an expected version and apply on the next trading loop.</p>
-          </section>
+          <ComparisonView />
         </div>
       </main>
     </>

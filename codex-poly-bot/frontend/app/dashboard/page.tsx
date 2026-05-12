@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { StatusOverview } from "@/components/dashboard/status-overview";
 import { WalletStatus } from "@/components/dashboard/wallet-status";
 import { getDashboardSession } from "@/lib/server/session";
@@ -17,14 +18,7 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <header className="topbar">
-        <div className="brand">codex-poly-bot</div>
-        <nav className="nav" aria-label="Dashboard">
-          <a href="/dashboard">Status</a>
-          <a href="/dashboard/config">Config</a>
-          <a href="/dashboard/system">System</a>
-        </nav>
-      </header>
+      <DashboardNav />
       <main className="page-shell">
         <div className="content-grid">
           <section className="panel">

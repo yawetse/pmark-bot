@@ -9,6 +9,6 @@ The dashboard is a Next.js App Router app. Browser code calls same-origin `/dash
 1. Install dependencies with `npm install`.
 2. Copy `.env.example` to `.env.local` and set local secrets.
 3. Run `npm run dev`.
-4. Run `npm run typecheck`, `npm run test:auth-boundary`, and `npm run test:dashboard-controls` before committing frontend changes.
+4. Run `npm run typecheck`, `npm run test:auth-boundary`, `npm run test:dashboard-controls`, and `npm run test:dashboard-operations` before committing frontend changes.
 
 `BACKEND_TOKEN_SIGNING_SECRET` and `DASHBOARD_SESSION_SECRET` must not use `NEXT_PUBLIC_*` names.

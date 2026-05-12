@@ -205,10 +205,13 @@
 | TST-REQ-EXE-013-02 | Edge | REQ-EXE-013 | Given any configured refusal reason is present, When live order placement is requested, Then the order is refused and the reason is persisted. |
 | TST-REQ-EXE-014-01 | Happy | REQ-EXE-014 | Given the kill switch is inactive, When live eligibility is checked, Then normal live gates apply. |
 | TST-REQ-EXE-014-02 | Edge | REQ-EXE-014 | Given the kill switch is activated, When live eligibility is checked, Then live trading is disabled for all models and venues. |
+| TST-REQ-EXE-014-03 | Focus | REQ-EXE-014 | Given the operations dashboard renders, When dashboard operations checks run, Then kill-switch state and degraded venue status are visible. |
 | TST-REQ-EXE-015-01 | Happy | REQ-EXE-015 | Given kill switch activation and enabled live venues with open orders, When kill switch handling runs, Then cancel attempts are issued for open orders. |
 | TST-REQ-EXE-015-02 | Edge | REQ-EXE-015 | Given a venue cancel attempt fails, When kill switch handling runs, Then the failure is recorded and remaining cancel attempts continue. |
+| TST-REQ-EXE-015-03 | Focus | REQ-EXE-015 | Given the operations dashboard renders, When dashboard operations checks run, Then cancel progress and manual-review state are visible. |
 | TST-REQ-EXE-016-01 | Happy | REQ-EXE-016 | Given an order is refused, submitted, filled, canceled, or failed, When the event is processed, Then it is persisted and visible in dashboard status. |
 | TST-REQ-EXE-016-02 | Edge | REQ-EXE-016 | Given event persistence fails, When an order event is processed, Then the system reports degraded status and avoids hiding the failure. |
+| TST-REQ-EXE-016-03 | Focus | REQ-EXE-016 | Given the operations dashboard renders order events, When dashboard operations checks run, Then refused, submitted, filled, canceled, failed, and unknown states are displayed. |
 | TST-REQ-EXE-017-01 | Happy | REQ-EXE-017 | Given dry-run is disabled, venue is enabled, account mode is valid, and all checks pass, When live execution runs, Then live orders are permitted. |
 | TST-REQ-EXE-017-02 | Edge | REQ-EXE-017 | Given dry-run is disabled but a venue is disabled or account mode fails checks, When live execution runs, Then live orders are blocked. |
 
@@ -263,8 +266,10 @@
 | TST-REQ-UI-009-01 | Focus | REQ-UI-009 | Given wallet metadata contains public identifiers and private secret references, When dashboard wallet views render, Then only public identifiers and health are shown. |
 | TST-REQ-UI-009-02 | Focus | REQ-UI-009 | Given frontend wallet status renders, When dashboard control checks run, Then public identifiers are displayed and private key or secret terms are absent. |
 | TST-REQ-UI-010-01 | Focus | REQ-UI-010 | Given Claude and OpenAI records exist, When dashboard model views render, Then positions, decisions, budgets, and P&L are separated by provider. |
+| TST-REQ-UI-010-02 | Focus | REQ-UI-010 | Given frontend model routes exist, When dashboard operations checks run, Then Claude and OpenAI model views show provider-specific positions, decisions, budgets, and P&L. |
 | TST-REQ-UI-011-01 | Happy | REQ-UI-011 | Given comparison metrics exist for Polymarket and Alpaca, When dashboard comparison views render, Then P&L, win rate, drawdown, cost, exposure, trade count, and return-to-risk are shown. |
 | TST-REQ-UI-011-02 | Edge | REQ-UI-011 | Given one model or venue has insufficient comparison data, When comparison views render, Then unavailable metrics are labeled without showing misleading zero values. |
+| TST-REQ-UI-011-03 | Focus | REQ-UI-011 | Given frontend comparison routes exist, When dashboard operations checks run, Then unavailable comparison metrics show caveats rather than zero values. |
 
 ### Cross-Market Comparison Analytics
 
@@ -418,9 +423,9 @@
 | REQ-EXE-011 | TST-REQ-EXE-011-01, TST-REQ-EXE-011-02 |
 | REQ-EXE-012 | TST-REQ-EXE-012-01, TST-REQ-EXE-012-02 |
 | REQ-EXE-013 | TST-REQ-EXE-013-01, TST-REQ-EXE-013-02 |
-| REQ-EXE-014 | TST-REQ-EXE-014-01, TST-REQ-EXE-014-02 |
-| REQ-EXE-015 | TST-REQ-EXE-015-01, TST-REQ-EXE-015-02 |
-| REQ-EXE-016 | TST-REQ-EXE-016-01, TST-REQ-EXE-016-02 |
+| REQ-EXE-014 | TST-REQ-EXE-014-01, TST-REQ-EXE-014-02, TST-REQ-EXE-014-03 |
+| REQ-EXE-015 | TST-REQ-EXE-015-01, TST-REQ-EXE-015-02, TST-REQ-EXE-015-03 |
+| REQ-EXE-016 | TST-REQ-EXE-016-01, TST-REQ-EXE-016-02, TST-REQ-EXE-016-03 |
 | REQ-EXE-017 | TST-REQ-EXE-017-01, TST-REQ-EXE-017-02 |
 | REQ-EXT-001 | TST-REQ-EXT-001-01, TST-REQ-EXT-001-02 |
 | REQ-EXT-002 | TST-REQ-EXT-002-01, TST-REQ-EXT-002-02 |
@@ -437,8 +442,8 @@
 | REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02, TST-REQ-UI-007-03 |
 | REQ-UI-008 | TST-REQ-UI-008-01, TST-REQ-UI-008-02, TST-REQ-UI-008-03 |
 | REQ-UI-009 | TST-REQ-UI-009-01, TST-REQ-UI-009-02 |
-| REQ-UI-010 | TST-REQ-UI-010-01 |
-| REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02 |
+| REQ-UI-010 | TST-REQ-UI-010-01, TST-REQ-UI-010-02 |
+| REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02, TST-REQ-UI-011-03 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |
