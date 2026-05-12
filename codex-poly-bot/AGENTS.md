@@ -4,6 +4,8 @@ This project is safe to inspect, install, and test without production trading se
 
 Local defaults keep live trading off, select Polymarket US as the default venue, and disable every venue. Use `.env.example` files as templates for local `.env` files. Do not place production wallet keys, broker credentials, or LLM API keys in the repo.
 
+Use `docs/codex-web.md` for Codex web setup, `docs/local-setup.md` for local Docker setup, and `docs/live-trading-checklist.md` before any live trading request.
+
 Run backend tests from `backend/`:
 
 ```bash

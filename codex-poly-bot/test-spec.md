@@ -135,6 +135,7 @@
 | TST-REQ-WAL-003-01 | Happy | REQ-WAL-003 | Given deployed environment settings, When private keys and API credentials are requested, Then they are read only from AWS Secrets Manager. |
 | TST-REQ-WAL-003-02 | Edge | REQ-WAL-003 | Given deployed environment settings and a local secret file path, When credential loading runs, Then local secret loading is rejected. |
 | TST-REQ-WAL-003-03 | Focus | REQ-WAL-003 | Given an ECS task attempts to read deployment secrets, When IAM secret scope is validated, Then only the current environment secret prefix is allowed. |
+| TST-REQ-WAL-003-04 | Focus | REQ-WAL-003 | Given wallet and deployment docs, When deployed secret handling is reviewed, Then deployed credentials are documented as AWS Secrets Manager values. |
 | TST-REQ-WAL-004-01 | Happy | REQ-WAL-004 | Given local development settings and gitignored `.env` values, When credential loading runs, Then private keys and API credentials are read from local environment values. |
 | TST-REQ-WAL-004-02 | Edge | REQ-WAL-004 | Given local development settings with missing `.env` values, When live checks run, Then orders requiring those credentials are refused. |
 | TST-REQ-WAL-005-01 | Happy | REQ-WAL-005 | Given wallet and credential metadata, When dashboard status is rendered, Then public identifiers and health are shown. |
@@ -226,6 +227,7 @@
 | TST-REQ-EXE-016-03 | Focus | REQ-EXE-016 | Given the operations dashboard renders order events, When dashboard operations checks run, Then refused, submitted, filled, canceled, failed, and unknown states are displayed. |
 | TST-REQ-EXE-017-01 | Happy | REQ-EXE-017 | Given dry-run is disabled, venue is enabled, account mode is valid, and all checks pass, When live execution runs, Then live orders are permitted. |
 | TST-REQ-EXE-017-02 | Edge | REQ-EXE-017 | Given dry-run is disabled but a venue is disabled or account mode fails checks, When live execution runs, Then live orders are blocked. |
+| TST-REQ-EXE-017-03 | Focus | REQ-EXE-017 | Given live trading checklist docs, When an operator prepares live trading, Then account, dry-run, venue, risk, auth, SES, and kill-switch checks are required. |
 
 ### Exit Monitoring
 
@@ -322,6 +324,7 @@
 |---------|------|-----------|------------------|
 | TST-REQ-DEP-001-01 | Happy | REQ-DEP-001 | Given local Docker and gitignored `.env` files, When local startup commands run, Then the app stack starts without production secrets. |
 | TST-REQ-DEP-001-02 | Edge | REQ-DEP-001 | Given required local env values are missing, When local startup runs, Then startup fails with safe dry-run defaults or clear setup errors. |
+| TST-REQ-DEP-001-03 | Focus | REQ-DEP-001 | Given local development docs, When a developer follows setup guidance, Then Docker startup and gitignored `.env` files are documented. |
 | TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined. |
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
@@ -330,6 +333,7 @@
 | TST-REQ-DEP-004-01 | Happy | REQ-DEP-004 | Given code is merged to `main`, When GitHub Actions runs, Then production deployment starts automatically. |
 | TST-REQ-DEP-004-02 | Edge | REQ-DEP-004 | Given production deployment tests fail, When GitHub Actions runs, Then production deploy steps do not execute. |
 | TST-REQ-DEP-004-03 | Focus | REQ-DEP-004 | Given code is merged to `main`, When the workflow is inspected, Then production deployment is selected after tests, migration safety, and ECR publish. |
+| TST-REQ-DEP-004-04 | Focus | REQ-DEP-004 | Given operations runbook docs, When a bad deploy occurs, Then ECS rollback and RDS restore-point guidance are documented. |
 | TST-REQ-DEP-005-01 | Happy | REQ-DEP-005 | Given CI is triggered, When workflow execution starts, Then tests run before build or deploy jobs. |
 | TST-REQ-DEP-005-02 | Edge | REQ-DEP-005 | Given tests fail in CI, When workflow execution continues, Then container build and deploy jobs are blocked. |
 | TST-REQ-DEP-005-03 | Focus | REQ-DEP-005 | Given the spec suite is ready for release review, When traceability verification scans spec tests, Then no pending red-phase placeholders remain. |
@@ -342,6 +346,7 @@
 | TST-REQ-DEP-007-02 | Edge | REQ-DEP-007 | Given `.env.example` contains a real-looking secret value, When secret scanning runs, Then validation fails. |
 | TST-REQ-DEP-008-01 | Happy | REQ-DEP-008 | Given Codex web setup docs and scripts, When a developer follows setup, Then dependencies, tests, and safe dry-run config are available. |
 | TST-REQ-DEP-008-02 | Edge | REQ-DEP-008 | Given setup runs without trading secrets, When dependency install and tests run, Then setup still succeeds with dry-run-safe defaults. |
+| TST-REQ-DEP-008-03 | Focus | REQ-DEP-008 | Given Codex web setup docs, When a developer installs dependencies and runs tests, Then production trading secrets are not required. |
 | TST-REQ-DEP-009-01 | Happy | REQ-DEP-009 | Given a Codex web environment without production trading secrets, When dependencies install, tests run, or code is inspected, Then those actions succeed. |
 | TST-REQ-DEP-009-02 | Edge | REQ-DEP-009 | Given code tries to require production secrets during import or tests, When CI or Codex setup runs, Then the test fails. |
 | TST-REQ-DEP-010-01 | Focus | REQ-DEP-010 | Given development and production deployments, When infrastructure and secret names are validated, Then resources, secrets, wallets, and config are separated by environment. |
@@ -409,7 +414,7 @@
 | REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02 |
 | REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02 |
 | REQ-WAL-002 | TST-REQ-WAL-002-01, TST-REQ-WAL-002-02 |
-| REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03 |
+| REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03, TST-REQ-WAL-003-04 |
 | REQ-WAL-004 | TST-REQ-WAL-004-01, TST-REQ-WAL-004-02 |
 | REQ-WAL-005 | TST-REQ-WAL-005-01, TST-REQ-WAL-005-02 |
 | REQ-WAL-006 | TST-REQ-WAL-006-01, TST-REQ-WAL-006-02 |
@@ -446,7 +451,7 @@
 | REQ-EXE-014 | TST-REQ-EXE-014-01, TST-REQ-EXE-014-02, TST-REQ-EXE-014-03 |
 | REQ-EXE-015 | TST-REQ-EXE-015-01, TST-REQ-EXE-015-02, TST-REQ-EXE-015-03 |
 | REQ-EXE-016 | TST-REQ-EXE-016-01, TST-REQ-EXE-016-02, TST-REQ-EXE-016-03 |
-| REQ-EXE-017 | TST-REQ-EXE-017-01, TST-REQ-EXE-017-02 |
+| REQ-EXE-017 | TST-REQ-EXE-017-01, TST-REQ-EXE-017-02, TST-REQ-EXE-017-03 |
 | REQ-EXT-001 | TST-REQ-EXT-001-01, TST-REQ-EXT-001-02 |
 | REQ-EXT-002 | TST-REQ-EXT-002-01, TST-REQ-EXT-002-02 |
 | REQ-EXT-003 | TST-REQ-EXT-003-01, TST-REQ-EXT-003-02 |
@@ -475,14 +480,14 @@
 | REQ-NOT-005 | TST-REQ-NOT-005-01, TST-REQ-NOT-005-02 |
 | REQ-NOT-006 | TST-REQ-NOT-006-01, TST-REQ-NOT-006-02 |
 | REQ-NOT-007 | TST-REQ-NOT-007-01, TST-REQ-NOT-007-02 |
-| REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02 |
+| REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02, TST-REQ-DEP-001-03 |
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02, TST-REQ-DEP-003-03 |
-| REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03 |
+| REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03, TST-REQ-DEP-004-04 |
 | REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04, TST-REQ-DEP-005-05 |
 | REQ-DEP-006 | TST-REQ-DEP-006-01, TST-REQ-DEP-006-02, TST-REQ-DEP-006-03 |
 | REQ-DEP-007 | TST-REQ-DEP-007-01, TST-REQ-DEP-007-02 |
-| REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02 |
+| REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02, TST-REQ-DEP-008-03 |
 | REQ-DEP-009 | TST-REQ-DEP-009-01, TST-REQ-DEP-009-02 |
 | REQ-DEP-010 | TST-REQ-DEP-010-01 |
 | REQ-OBS-001 | TST-REQ-OBS-001-01, TST-REQ-OBS-001-02 |

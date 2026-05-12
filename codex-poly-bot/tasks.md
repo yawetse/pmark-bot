@@ -1237,9 +1237,9 @@
 | AC-031-04 | If a bad deploy occurs, the operations runbook shall define ECS rollback and RDS restore-point guidance. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests or docs checks
-- [ ] Code or docs annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests or docs checks
+- [x] Code or docs annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

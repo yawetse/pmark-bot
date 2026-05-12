@@ -407,3 +407,80 @@ def test_req_dep_010_01_development_production_deployments_infrastructure_secret
         "/codex-poly-bot/development/",
         "/codex-poly-bot/production/",
     )
+
+def test_req_dep_001_03_local_development_docs_cover_docker_and_gitignored_env() -> None:
+    """TST-REQ-DEP-001-03: Validates REQ-DEP-001
+
+    Given: local development docs
+    When: a developer follows setup guidance
+    Then: Docker startup and gitignored `.env` files are documented
+    """
+    text = (PROJECT_ROOT / "docs" / "local-setup.md").read_text()
+
+    assert "docker compose up" in text
+    assert ".env" in text
+    assert "gitignored" in text
+
+def test_req_dep_008_03_codex_web_docs_install_and_test_without_production_secrets() -> None:
+    """TST-REQ-DEP-008-03: Validates REQ-DEP-008
+
+    Given: Codex web setup docs
+    When: a developer installs dependencies and runs tests
+    Then: production trading secrets are not required
+    """
+    text = (PROJECT_ROOT / "docs" / "codex-web.md").read_text()
+    lower_text = text.lower()
+
+    assert "./scripts/setup-local.sh" in text
+    assert "production trading secrets are not required" in lower_text
+    assert "pytest" in text
+    assert "npm run typecheck" in text
+
+def test_req_exe_017_03_live_trading_checklist_requires_safety_gates() -> None:
+    """TST-REQ-EXE-017-03: Validates REQ-EXE-017
+
+    Given: live trading checklist docs
+    When: an operator prepares live trading
+    Then: account, dry-run, venue, risk, auth, SES, and kill-switch checks are required
+    """
+    text = (PROJECT_ROOT / "docs" / "live-trading-checklist.md").read_text().lower()
+
+    for phrase in (
+        "wallet",
+        "account",
+        "dry-run",
+        "venue",
+        "risk",
+        "auth",
+        "ses",
+        "kill switch",
+    ):
+        assert phrase in text
+
+def test_req_dep_004_04_operations_runbook_defines_ecs_rollback_and_rds_restore() -> None:
+    """TST-REQ-DEP-004-04: Validates REQ-DEP-004
+
+    Given: operations runbook docs
+    When: a bad deploy occurs
+    Then: ECS rollback and RDS restore-point guidance are documented
+    """
+    text = (PROJECT_ROOT / "docs" / "operations-runbook.md").read_text().lower()
+
+    assert "ecs rollback" in text
+    assert "aws ecs update-service" in text
+    assert "rds restore" in text
+    assert "restore point" in text
+
+def test_req_wal_003_04_documentation_keeps_deployed_secrets_in_aws() -> None:
+    """TST-REQ-WAL-003-04: Validates REQ-WAL-003
+
+    Given: wallet and deployment docs
+    When: deployed secret handling is reviewed
+    Then: deployed credentials are documented as AWS Secrets Manager values
+    """
+    wallet_docs = (PROJECT_ROOT / "docs" / "wallets-and-accounts.md").read_text()
+    deployment_docs = (PROJECT_ROOT / "docs" / "deployment.md").read_text()
+
+    assert "AWS Secrets Manager" in wallet_docs
+    assert "/codex-poly-bot/{environment}/" in wallet_docs
+    assert "Trading credentials are not stored in GitHub Actions secrets" in deployment_docs
