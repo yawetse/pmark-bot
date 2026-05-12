@@ -42,9 +42,9 @@
 | AC-001-04 | If Codex web lacks production trading secrets, then dependency installation and tests shall still run with safe mocked defaults. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -82,9 +82,9 @@
 | AC-002-03 | When an order, position, score, or decision model is serialized, the system shall preserve REQ traceable fields needed for persistence and audit. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -123,9 +123,9 @@
 | AC-003-04 | When audit, trade, and position records are created, the system shall retain them indefinitely unless a later archive policy is configured. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -160,9 +160,9 @@
 | AC-004-04 | When the app runs in AWS, the system shall send structured application logs to CloudWatch. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -213,9 +213,9 @@
 | AC-005-06 | When default Alpaca configuration is seeded, the system shall set max position `100.00`, max daily loss `100.00`, max open positions `5`, max symbol allocation `0.10`, and market-order slippage threshold `0.005`. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -245,9 +245,9 @@
 | AC-006-03 | If a mutation request has an invalid origin or CSRF context, then the system shall reject the request before any state change. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -278,9 +278,9 @@
 | AC-007-03 | If dependency installation fails, then the setup script shall stop with a clear error message. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -320,9 +320,9 @@
 | AC-008-04 | When a venue is disabled after an order exists, the system shall still allow cancel, status, and reconciliation calls for known open orders. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -362,9 +362,9 @@
 | AC-009-04 | When Alpaca reconciliation runs, the system shall compare account ID, account status, buying power, positions, and open orders against Postgres. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -403,9 +403,9 @@
 | AC-010-04 | If SES delivery fails, then the email adapter shall return retryable failure metadata without losing the delivery attempt. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -441,9 +441,9 @@
 | AC-011-04 | If a live order lacks a wallet or brokerage credential, then the system shall refuse the order and record the refusal reason. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -474,9 +474,9 @@
 | AC-012-03 | If a provider call times out or returns invalid output, then the system shall persist a scoring failure and block live orders for that provider and market in the current loop. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -513,9 +513,9 @@
 | AC-013-04 | If market data is stale beyond a configured threshold, then the system shall block live orders that depend on that data. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -550,9 +550,9 @@
 | AC-014-04 | If LLM scoring fails for a market, then the system shall block live orders for that model and market in the current loop. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -593,9 +593,9 @@
 | AC-015-07 | When a configured target wallet action is observed after the configured delay, the whale-copy strategy shall emit a traceable strategy signal or a neutral stale-data signal. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -650,9 +650,9 @@
 | AC-016-05 | If Alpaca reconciliation is stale or mismatched, then the system shall block Alpaca live orders for the affected model provider. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -692,9 +692,9 @@
 | AC-017-04 | When the kill switch is activated, the system shall disable live trading and attempt to cancel open orders for enabled live venues. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -728,9 +728,9 @@
 | AC-018-04 | While live mode is enabled, the exit monitor shall route approved exits through risk and execution. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -762,9 +762,9 @@
 | AC-019-04 | When comparison metrics are calculated, the system shall use the documented formulas from the approved HLD and preserve unavailable-state caveats. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
@@ -813,9 +813,9 @@
 | AC-020-04 | When notification delivery is not fully configured, the notification skeleton shall record no-op job status without blocking the trading loop. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 
