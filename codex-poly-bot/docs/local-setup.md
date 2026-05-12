@@ -27,6 +27,8 @@ The `.env` and `.env.local` paths are gitignored. Keep local wallet keys, broker
 6. Run the backend API with `backend/.venv/bin/uvicorn app.main:create_app --factory --app-dir backend --reload --port 8000`.
 7. Run the dashboard with `cd frontend && npm run dev`.
 
+For local dashboard testing without GitHub OAuth secrets, start the frontend with `ALLOW_LOCAL_AUTH_BYPASS=true`, `DASHBOARD_ALLOWED_USERS=yaw`, and local session secrets. This bypass is disabled in production.
+
 ## Local Trading Safety
 
 Local setup is safe for dependency installation, code inspection, and tests. The default runtime mode is dry-run, venue adapters are disabled, and missing live credentials must block live orders before a venue call.
