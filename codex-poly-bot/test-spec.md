@@ -325,6 +325,7 @@
 | TST-REQ-DEP-001-01 | Happy | REQ-DEP-001 | Given local Docker and gitignored `.env` files, When local startup commands run, Then the app stack starts without production secrets. |
 | TST-REQ-DEP-001-02 | Edge | REQ-DEP-001 | Given required local env values are missing, When local startup runs, Then startup fails with safe dry-run defaults or clear setup errors. |
 | TST-REQ-DEP-001-03 | Focus | REQ-DEP-001 | Given local development docs, When a developer follows setup guidance, Then Docker startup and gitignored `.env` files are documented. |
+| TST-REQ-DEP-001-04 | Focus | REQ-DEP-001 | Given the local Docker Compose contract, When the app stack services are inspected, Then backend and frontend services run the real app processes. |
 | TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined. |
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
@@ -480,7 +481,7 @@
 | REQ-NOT-005 | TST-REQ-NOT-005-01, TST-REQ-NOT-005-02 |
 | REQ-NOT-006 | TST-REQ-NOT-006-01, TST-REQ-NOT-006-02 |
 | REQ-NOT-007 | TST-REQ-NOT-007-01, TST-REQ-NOT-007-02 |
-| REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02, TST-REQ-DEP-001-03 |
+| REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02, TST-REQ-DEP-001-03, TST-REQ-DEP-001-04 |
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02, TST-REQ-DEP-003-03 |
 | REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03, TST-REQ-DEP-004-04 |

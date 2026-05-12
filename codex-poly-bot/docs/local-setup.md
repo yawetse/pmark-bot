@@ -21,7 +21,7 @@ The `.env` and `.env.local` paths are gitignored. Keep local wallet keys, broker
 
 1. Run `./scripts/setup-local.sh` from the project root. The script creates `backend/.venv`, installs backend test dependencies from `backend/pyproject.toml`, and runs the safe setup tests.
 2. Install frontend dependencies with `cd frontend && npm install`.
-3. Start local services with `docker compose up`. The compose contract starts Postgres, checks backend safe defaults, and keeps the frontend container as a placeholder.
+3. Start local services with `docker compose up`. The compose contract starts Postgres, the FastAPI backend on port `8000`, and the Next.js dashboard on port `3000`.
 4. Run backend tests directly with `backend/.venv/bin/python -m pytest`.
 5. Run frontend checks with `cd frontend && npm run typecheck && npm run test:auth-boundary && npm run test:dashboard-controls && npm run test:dashboard-operations`.
 6. Run the backend API with `backend/.venv/bin/uvicorn app.main:create_app --factory --app-dir backend --reload --port 8000`.

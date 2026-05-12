@@ -1,6 +1,9 @@
+# REQ: REQ-DEP-001, REQ-DEP-007, REQ-DEP-009, REQ-EXE-001
 services:
   backend:
-    image: python:3.13-slim
+    build:
+      context: ./backend
+    image: codex-poly-bot-backend:local
     working_dir: /app
     volumes:
       - ./backend:/app
@@ -11,25 +14,58 @@ services:
       POLYMARKET_US_ENABLED: "false"
       POLYMARKET_INTERNATIONAL_ENABLED: "false"
       ALPACA_ENABLED: "false"
+      DATABASE_URL: postgresql://codex_poly_bot:change-me@postgres:5432/codex_poly_bot
+    ports:
+      - "8000:8000"
     command:
-      - python
-      - -c
-      - "from app.bootstrap import safe_defaults; assert safe_defaults().global_execution_mode == 'dry_run'; print('backend safe defaults ok')"
+      - uvicorn
+      - app.main:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
 
   frontend:
-    image: node:22-alpine
+    build:
+      context: ./frontend
+    image: codex-poly-bot-frontend:local
     working_dir: /app
-    volumes:
-      - ./frontend:/app
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
-    command:
-      - node
-      - -e
-      - "console.log('frontend placeholder ok')"
+      BACKEND_API_BASE_URL: http://backend:8000
+      BACKEND_TOKEN_SIGNING_SECRET: local-dev-session-secret
+      DASHBOARD_SESSION_SECRET: local-dev-session-secret
+      DASHBOARD_CSRF_TOKEN: local-dev-csrf-token
+      DASHBOARD_ALLOWED_USERS: yaw
+      ALLOW_LOCAL_AUTH_BYPASS: "true"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      backend:
+        condition: service_healthy
 
   postgres:
     image: postgres:16

@@ -421,6 +421,24 @@ def test_req_dep_001_03_local_development_docs_cover_docker_and_gitignored_env()
     assert ".env" in text
     assert "gitignored" in text
 
+def test_req_dep_001_04_docker_compose_runs_backend_and_frontend_apps() -> None:
+    """TST-REQ-DEP-001-04: Validates REQ-DEP-001
+
+    Given: the local Docker Compose contract
+    When: the app stack services are inspected
+    Then: backend and frontend services run the real app processes
+    """
+    text = (PROJECT_ROOT / "docker-compose.yml").read_text()
+
+    assert "context: ./backend" in text
+    assert "context: ./frontend" in text
+    assert "uvicorn" in text
+    assert "app.main:create_app" in text
+    assert "8000:8000" in text
+    assert "3000:3000" in text
+    assert "frontend placeholder" not in text
+    assert "backend safe defaults ok" not in text
+
 def test_req_dep_008_03_codex_web_docs_install_and_test_without_production_secrets() -> None:
     """TST-REQ-DEP-008-03: Validates REQ-DEP-008
 
