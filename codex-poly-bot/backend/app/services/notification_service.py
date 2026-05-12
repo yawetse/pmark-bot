@@ -1,14 +1,17 @@
 """Notification rendering, alert, and cooldown helpers.
 
-REQ: REQ-NOT-002, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005
+REQ: REQ-NOT-001, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004,
+REQ-NOT-005, REQ-NOT-006, REQ-NOT-007, REQ-OBS-001
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from app.adapters.aws import EmailDeliveryResult, EmailMessage, InMemorySesEmailAdapter
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,97 @@ class RenderedDigest:
     body: str
     unavailable_sections: tuple[str, ...] = ()
     delivery_allowed: bool = True
+
+
+@dataclass(frozen=True)
+class NotificationSettings:
+    """Runtime notification settings for the next notification loop.
+
+    REQ: REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005,
+    REQ-NOT-006, REQ-NOT-007
+    """
+
+    recipients: dict[str, str]
+    thresholds: dict[str, Decimal] = field(default_factory=dict)
+    digest_schedule_utc: str = "13:00"
+    cooldown_seconds: int = 1800
+    retry_delay_seconds: int = 300
+
+    @classmethod
+    def from_config(cls, payload: dict[str, Any]) -> NotificationSettings:
+        """Build notification loop settings from persisted config.
+
+        REQ: REQ-NOT-006
+        """
+
+        thresholds = {
+            key: _as_decimal(value)
+            for key, value in payload.get("thresholds", {}).items()
+        }
+        return cls(
+            recipients=dict(payload.get("recipients", {})),
+            thresholds=thresholds,
+            digest_schedule_utc=str(payload.get("digest_schedule_utc", "13:00")),
+            cooldown_seconds=int(payload.get("cooldown_seconds", 1800)),
+            retry_delay_seconds=int(payload.get("retry_delay_seconds", 300)),
+        )
+
+    @property
+    def recipient_emails(self) -> tuple[str, ...]:
+        return tuple(email for email in self.recipients.values() if str(email).strip())
+
+
+@dataclass(frozen=True)
+class NotificationSendResult:
+    """Notification delivery result emitted by notification loop helpers.
+
+    REQ: REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-007
+    """
+
+    sent: bool
+    notification_type: str
+    message_id: str | None = None
+    skipped_reason: str | None = None
+    retryable: bool = False
+    next_retry_at: datetime | None = None
+    error_summary: str | None = None
+
+
+@dataclass(frozen=True)
+class NotificationDeliveryRecord:
+    """Recorded notification delivery attempt.
+
+    REQ: REQ-NOT-007, REQ-OBS-001
+    """
+
+    notification_type: str
+    recipients: tuple[str, ...]
+    subject: str
+    attempted_at: datetime
+    sent: bool
+    message_id: str | None = None
+    skipped_reason: str | None = None
+    retryable: bool = False
+    next_retry_at: datetime | None = None
+    error_summary: str | None = None
+
+
+@dataclass
+class NotificationDeliveryLedger:
+    """In-memory notification delivery ledger used by tests and dry-run mode.
+
+    REQ: REQ-NOT-007, REQ-OBS-001
+    """
+
+    records: list[NotificationDeliveryRecord] = field(default_factory=list)
+
+    def record(self, record: NotificationDeliveryRecord) -> None:
+        """Record one notification delivery result.
+
+        REQ: REQ-NOT-007
+        """
+
+        self.records.append(record)
 
 
 @dataclass(frozen=True)
@@ -138,6 +232,50 @@ def render_daily_digest(inputs: DigestInputs) -> RenderedDigest:
     )
 
 
+def send_scheduled_daily_digest(
+    *,
+    settings: NotificationSettings,
+    inputs: DigestInputs,
+    now: datetime,
+    ses_adapter: InMemorySesEmailAdapter,
+    delivery_ledger: NotificationDeliveryLedger,
+    last_sent_at: datetime | None = None,
+) -> NotificationSendResult:
+    """Send the daily digest when the configured UTC schedule is reached.
+
+    REQ: REQ-NOT-001, REQ-NOT-002, REQ-NOT-006, REQ-NOT-007
+    """
+
+    if not _digest_schedule_due(now, settings.digest_schedule_utc, last_sent_at):
+        return _record_notification_result(
+            delivery_ledger=delivery_ledger,
+            delivery=EmailDeliveryResult(sent=False, attempt_recorded=False, skipped_reason="schedule not reached"),
+            message=EmailMessage(recipients=settings.recipient_emails, subject="Daily digest", body=""),
+            notification_type="daily_digest",
+            now=now,
+            retry_delay_seconds=settings.retry_delay_seconds,
+        )
+    digest = render_daily_digest(inputs)
+    return _deliver_notification(
+        delivery_ledger=delivery_ledger,
+        delivery=ses_adapter.send_digest(
+            EmailMessage(
+                recipients=settings.recipient_emails,
+                subject="Daily digest",
+                body=digest.body,
+            )
+        ),
+        message=EmailMessage(
+            recipients=settings.recipient_emails,
+            subject="Daily digest",
+            body=digest.body,
+        ),
+        notification_type="daily_digest",
+        now=now,
+        retry_delay_seconds=settings.retry_delay_seconds,
+    )
+
+
 def detect_large_movement_alert(
     movement: PositionMovement,
     *,
@@ -166,6 +304,86 @@ def detect_large_movement_alert(
             f"{change_usd} USD / {change_pct:.2%}"
         ),
     )
+
+
+def send_large_movement_alert(
+    *,
+    settings: NotificationSettings,
+    movement: PositionMovement,
+    alert_key: str,
+    now: datetime,
+    ses_adapter: InMemorySesEmailAdapter,
+    cooldown_ledger: AlertCooldownLedger,
+    delivery_ledger: NotificationDeliveryLedger,
+) -> NotificationSendResult:
+    """Send a large movement alert when thresholds and cooldown allow it.
+
+    REQ: REQ-NOT-003, REQ-NOT-005, REQ-NOT-006, REQ-NOT-007
+    """
+
+    decision = detect_large_movement_alert(
+        movement,
+        threshold_usd=settings.thresholds.get("position_usd", Decimal("25")),
+        threshold_pct=settings.thresholds.get("position_pct", Decimal("0.10")),
+    )
+    if not decision.should_send:
+        return _record_notification_result(
+            delivery_ledger=delivery_ledger,
+            delivery=EmailDeliveryResult(
+                sent=False,
+                attempt_recorded=False,
+                skipped_reason=decision.skipped_reason,
+            ),
+            message=EmailMessage(
+                recipients=settings.recipient_emails,
+                subject=decision.subject,
+                body=decision.body,
+            ),
+            notification_type=decision.alert_type,
+            now=now,
+            retry_delay_seconds=settings.retry_delay_seconds,
+        )
+
+    cooldown = alert_allowed_by_cooldown(
+        cooldown_ledger,
+        alert_key,
+        now,
+        cooldown_seconds=settings.cooldown_seconds,
+    )
+    if not cooldown.allowed:
+        return _record_notification_result(
+            delivery_ledger=delivery_ledger,
+            delivery=EmailDeliveryResult(
+                sent=False,
+                attempt_recorded=False,
+                skipped_reason=cooldown.skipped_reason,
+            ),
+            message=EmailMessage(
+                recipients=settings.recipient_emails,
+                subject=decision.subject,
+                body=decision.body,
+            ),
+            notification_type=decision.alert_type,
+            now=now,
+            retry_delay_seconds=settings.retry_delay_seconds,
+        )
+
+    message = EmailMessage(
+        recipients=settings.recipient_emails,
+        subject=decision.subject,
+        body=decision.body,
+    )
+    result = _deliver_notification(
+        delivery_ledger=delivery_ledger,
+        delivery=ses_adapter.send_alert(message),
+        message=message,
+        notification_type=decision.alert_type,
+        now=now,
+        retry_delay_seconds=settings.retry_delay_seconds,
+    )
+    if result.sent:
+        cooldown_ledger.record_sent(alert_key, now)
+    return result
 
 
 def detect_daily_pnl_alert(
@@ -218,6 +436,77 @@ def alert_allowed_by_cooldown(
         next_allowed_at=next_allowed_at,
         skipped_reason="alert cooldown active",
     )
+
+
+def _deliver_notification(
+    *,
+    delivery_ledger: NotificationDeliveryLedger,
+    delivery: EmailDeliveryResult,
+    message: EmailMessage,
+    notification_type: str,
+    now: datetime,
+    retry_delay_seconds: int,
+) -> NotificationSendResult:
+    return _record_notification_result(
+        delivery_ledger=delivery_ledger,
+        delivery=delivery,
+        message=message,
+        notification_type=notification_type,
+        now=now,
+        retry_delay_seconds=retry_delay_seconds,
+    )
+
+
+def _record_notification_result(
+    *,
+    delivery_ledger: NotificationDeliveryLedger,
+    delivery: EmailDeliveryResult,
+    message: EmailMessage,
+    notification_type: str,
+    now: datetime,
+    retry_delay_seconds: int,
+) -> NotificationSendResult:
+    next_retry_at = now + timedelta(seconds=retry_delay_seconds) if delivery.retryable else None
+    delivery_ledger.record(
+        NotificationDeliveryRecord(
+            notification_type=notification_type,
+            recipients=message.recipients,
+            subject=message.subject,
+            attempted_at=now,
+            sent=delivery.sent,
+            message_id=delivery.message_id,
+            skipped_reason=delivery.skipped_reason,
+            retryable=delivery.retryable,
+            next_retry_at=next_retry_at,
+            error_summary=delivery.error_summary,
+        )
+    )
+    return NotificationSendResult(
+        sent=delivery.sent,
+        notification_type=notification_type,
+        message_id=delivery.message_id,
+        skipped_reason=delivery.skipped_reason,
+        retryable=delivery.retryable,
+        next_retry_at=next_retry_at,
+        error_summary=delivery.error_summary,
+    )
+
+
+def _digest_schedule_due(
+    now: datetime,
+    schedule_utc: str,
+    last_sent_at: datetime | None,
+) -> bool:
+    scheduled = _parse_hhmm(schedule_utc)
+    current = now.astimezone(UTC)
+    if last_sent_at is not None and last_sent_at.astimezone(UTC).date() == current.date():
+        return False
+    return current.time().replace(second=0, microsecond=0) >= scheduled
+
+
+def _parse_hhmm(value: str) -> time:
+    hour_text, minute_text = value.split(":", 1)
+    return time(hour=int(hour_text), minute=int(minute_text))
 
 
 def _as_decimal(value: Any) -> Decimal:

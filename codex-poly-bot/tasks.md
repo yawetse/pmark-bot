@@ -1119,9 +1119,9 @@
 | AC-028-04 | When notification settings change in the dashboard, the system shall apply recipients, thresholds, schedules, and cooldowns on the next notification loop. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

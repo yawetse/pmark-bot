@@ -298,16 +298,20 @@
 |---------|------|-----------|------------------|
 | TST-REQ-NOT-001-01 | Happy | REQ-NOT-001 | Given the daily digest schedule fires and allowlisted users exist, When notifications run, Then SES sends digest email to allowlisted users. |
 | TST-REQ-NOT-001-02 | Edge | REQ-NOT-001 | Given no allowlisted recipients exist, When digest notifications run, Then no email is sent and the skipped reason is recorded. |
+| TST-REQ-NOT-001-03 | Focus | REQ-NOT-001 | Given the daily digest schedule is reached and allowlisted recipients exist, When the notification loop runs, Then SES sends the rendered digest to the configured allowlist. |
 | TST-REQ-NOT-002-01 | Happy | REQ-NOT-002 | Given digest inputs are available, When the digest is rendered, Then it includes P&L, open positions, trades, exits, refused orders, budget, ingestion, and risk status. |
 | TST-REQ-NOT-002-02 | Edge | REQ-NOT-002 | Given one digest input source is unavailable, When the digest is rendered, Then the missing section is marked unavailable and delivery can still proceed if policy allows. |
 | TST-REQ-NOT-003-01 | Happy | REQ-NOT-003 | Given a position P&L change reaches 25 USD or 10 percent by default, When movement detection runs, Then SES sends a large-movement alert. |
 | TST-REQ-NOT-003-02 | Edge | REQ-NOT-003 | Given a position P&L change is below both default thresholds, When movement detection runs, Then no large-movement alert is sent. |
+| TST-REQ-NOT-003-03 | Focus | REQ-NOT-003 | Given position P&L crosses the alert threshold and no cooldown is active, When alert delivery runs, Then SES sends the alert and records cooldown for the alert key. |
 | TST-REQ-NOT-004-01 | Happy | REQ-NOT-004 | Given daily realized or unrealized P&L crosses a configured threshold, When notification checks run, Then SES sends an alert. |
 | TST-REQ-NOT-004-02 | Edge | REQ-NOT-004 | Given daily P&L remains within thresholds, When notification checks run, Then no threshold alert is sent. |
 | TST-REQ-NOT-005-01 | Happy | REQ-NOT-005 | Given default notification config, When an alert was sent less than 30 minutes ago for the same market and provider, Then another alert is suppressed. |
 | TST-REQ-NOT-005-02 | Edge | REQ-NOT-005 | Given the 30-minute cooldown has elapsed, When the alert condition still holds, Then a new alert is allowed. |
 | TST-REQ-NOT-006-01 | Focus | REQ-NOT-006 | Given an authorized dashboard user changes recipients, thresholds, schedules, or cooldowns, When notification config is saved, Then the updated settings persist. |
+| TST-REQ-NOT-006-02 | Focus | REQ-NOT-006 | Given notification settings change in the dashboard, When the next notification loop reads config, Then recipients, thresholds, schedule, and cooldown use the updated values. |
 | TST-REQ-NOT-007-01 | Focus | REQ-NOT-007 | Given SES delivery fails, When retry policy runs, Then the failure is recorded and retry timing follows config. |
+| TST-REQ-NOT-007-02 | Focus | REQ-NOT-007 | Given SES delivery fails, When notification delivery handles the result, Then the failure is recorded and next retry timing follows policy. |
 
 ### Deployment, CI/CD, and Codex Web Setup
 
@@ -457,13 +461,13 @@
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |
 | REQ-CMP-004 | TST-REQ-CMP-004-01 |
-| REQ-NOT-001 | TST-REQ-NOT-001-01, TST-REQ-NOT-001-02 |
+| REQ-NOT-001 | TST-REQ-NOT-001-01, TST-REQ-NOT-001-02, TST-REQ-NOT-001-03 |
 | REQ-NOT-002 | TST-REQ-NOT-002-01, TST-REQ-NOT-002-02 |
-| REQ-NOT-003 | TST-REQ-NOT-003-01, TST-REQ-NOT-003-02 |
+| REQ-NOT-003 | TST-REQ-NOT-003-01, TST-REQ-NOT-003-02, TST-REQ-NOT-003-03 |
 | REQ-NOT-004 | TST-REQ-NOT-004-01, TST-REQ-NOT-004-02 |
 | REQ-NOT-005 | TST-REQ-NOT-005-01, TST-REQ-NOT-005-02 |
-| REQ-NOT-006 | TST-REQ-NOT-006-01 |
-| REQ-NOT-007 | TST-REQ-NOT-007-01 |
+| REQ-NOT-006 | TST-REQ-NOT-006-01, TST-REQ-NOT-006-02 |
+| REQ-NOT-007 | TST-REQ-NOT-007-01, TST-REQ-NOT-007-02 |
 | REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02 |
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02 |
