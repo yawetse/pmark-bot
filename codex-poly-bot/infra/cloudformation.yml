@@ -1,33 +1,256 @@
+# REQ: REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-WAL-003,
+# REQ-DAT-003, REQ-DAT-006, REQ-DAT-007, REQ-NOT-001,
+# REQ-OBS-002, REQ-DB-001, REQ-DB-002, REQ-DB-003
 AWSTemplateFormatVersion: "2010-09-09"
-Description: codex-poly-bot deployment contract
+Description: codex-poly-bot AWS deployment contract
 Metadata:
   DeploymentRegion: us-east-1
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    AllowedValues:
+      - development
+      - production
+  ProjectName:
+    Type: String
+    Default: codex-poly-bot
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  SesIdentityEmail:
+    Type: String
+  DatabaseUsername:
+    Type: String
+    Default: codexbot
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+
 Resources:
   BackendRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: codex-poly-bot-backend
+      RepositoryName: !Sub "${ProjectName}-${EnvironmentName}-backend"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+
   FrontendRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: codex-poly-bot-frontend
-  Cluster:
-    Type: AWS::ECS::Cluster
-  BackendService:
-    Type: AWS::ECS::Service
+      RepositoryName: !Sub "${ProjectName}-${EnvironmentName}-frontend"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+
+  SnapshotBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      LaunchType: FARGATE
-      Cluster: !Ref Cluster
+      BucketName: !Sub "${ProjectName}-${EnvironmentName}-snapshots-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: raw-snapshot-retention
+            Status: Enabled
+            Filter:
+              Prefix: raw/
+            ExpirationInDays: 365
+          - Id: normalized-snapshot-retention
+            Status: Enabled
+            Filter:
+              Prefix: normalized/
+            ExpirationInDays: 730
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} ${EnvironmentName} database access"
+      VpcId: !Ref VpcId
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} ${EnvironmentName} ECS service access"
+      VpcId: !Ref VpcId
+
+  DatabaseIngressFromService:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref ServiceSecurityGroup
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${ProjectName} ${EnvironmentName} postgres subnets"
+      SubnetIds: !Ref PrivateSubnetIds
+
   Database:
     Type: AWS::RDS::DBInstance
     Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-${EnvironmentName}-postgres"
       Engine: postgres
       DBInstanceClass: db.t4g.micro
-  SnapshotBucket:
-    Type: AWS::S3::Bucket
+      AllocatedStorage: 20
+      StorageEncrypted: true
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      MasterUsername: !Ref DatabaseUsername
+      MasterUserPassword: !Ref DatabasePassword
+      BackupRetentionPeriod: 7
+      DeletionProtection: !If [IsProduction, true, false]
+
   TradingSecret:
     Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/codex-poly-bot/${EnvironmentName}/trading/runtime"
+      Description: !Sub "${ProjectName} ${EnvironmentName} runtime trading credentials"
+
+  WalletSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/codex-poly-bot/${EnvironmentName}/wallets/bootstrap"
+      Description: !Sub "${ProjectName} ${EnvironmentName} wallet bootstrap secret"
+
   ApplicationLogGroup:
     Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/ecs/${ProjectName}/${EnvironmentName}"
+      RetentionInDays: 30
+
   SesIdentity:
     Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref SesIdentityEmail
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ProjectName}-${EnvironmentName}-cluster"
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvironmentName}-task-execution"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvironmentName}-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  TaskSecretAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ProjectName}-${EnvironmentName}-secret-scope"
+      Roles:
+        - !Ref TaskRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/codex-poly-bot/${EnvironmentName}/*"
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt SnapshotBucket.Arn
+              - !Sub "${SnapshotBucket.Arn}/*"
+          - Effect: Allow
+            Action:
+              - ses:SendEmail
+              - ses:SendRawEmail
+            Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesIdentityEmail}"
+
+  BackendTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ProjectName}-${EnvironmentName}-backend"
+      Cpu: "512"
+      Memory: "1024"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: backend
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-${EnvironmentName}-backend:latest"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+          Environment:
+            - Name: ENVIRONMENT
+              Value: !Ref EnvironmentName
+            - Name: SNAPSHOT_BUCKET
+              Value: !Ref SnapshotBucket
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: backend
+
+  BackendService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub "${ProjectName}-${EnvironmentName}-backend"
+      LaunchType: FARGATE
+      Cluster: !Ref Cluster
+      DesiredCount: 1
+      TaskDefinition: !Ref BackendTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+          Subnets: !Ref PrivateSubnetIds
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentName, production]
+
+Outputs:
+  BackendRepositoryUri:
+    Value: !GetAtt BackendRepository.RepositoryUri
+  FrontendRepositoryUri:
+    Value: !GetAtt FrontendRepository.RepositoryUri
+  SnapshotBucketName:
+    Value: !Ref SnapshotBucket
+  ClusterName:
+    Value: !Ref Cluster

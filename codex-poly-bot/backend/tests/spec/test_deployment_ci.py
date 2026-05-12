@@ -18,12 +18,14 @@ from app.bootstrap import (
     env_files_are_gitignored,
     env_examples_have_no_secrets,
     github_actions_environment_for_branch,
+    iam_secret_scope_check,
     local_app_stack_services_ready,
     load_runtime_defaults,
     local_startup_check,
     required_paths_exist,
     safe_defaults,
     scan_env_examples_for_secret_values,
+    s3_lifecycle_policy_check,
 )
 
 
@@ -62,14 +64,16 @@ def test_req_dep_002_01_cloudformation_parameters_us_east_1_infrastructure_templ
 
     Given: CloudFormation parameters for us-east-1
     When: infrastructure templates are validated
-    Then: ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, and SES resources are defined
+    Then: ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined
     """
     check = aws_infrastructure_check(PROJECT_ROOT)
 
     assert check.ok
     assert check.region == "us-east-1"
     assert check.resources == (
+        "ecr",
         "ecs_fargate",
+        "iam",
         "rds_postgres",
         "s3",
         "secrets_manager",
@@ -91,6 +95,43 @@ def test_req_dep_002_02_non_us_east_1_deployment_target_deployment_validation() 
     assert blocked.refusal_reason == "deployment region must be us-east-1"
     assert override.ok
     assert override.override_required
+
+def test_req_dat_006_02_cloudformation_s3_raw_lifecycle_retains_365_days() -> None:
+    """TST-REQ-DAT-006-02: Validates REQ-DAT-006
+
+    Given: S3 buckets are created by infrastructure
+    When: lifecycle rules are validated
+    Then: raw snapshots are retained for 365 days
+    """
+    check = s3_lifecycle_policy_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert check.raw_retention_days == 365
+
+def test_req_dat_007_02_cloudformation_s3_normalized_lifecycle_retains_730_days() -> None:
+    """TST-REQ-DAT-007-02: Validates REQ-DAT-007
+
+    Given: S3 buckets are created by infrastructure
+    When: lifecycle rules are validated
+    Then: normalized snapshots are retained for 730 days
+    """
+    check = s3_lifecycle_policy_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert check.normalized_retention_days == 730
+
+def test_req_wal_003_03_ecs_task_role_scopes_secret_access_to_environment_prefix() -> None:
+    """TST-REQ-WAL-003-03: Validates REQ-WAL-003
+
+    Given: an ECS task attempts to read deployment secrets
+    When: IAM secret scope is validated
+    Then: only the current environment secret prefix is allowed
+    """
+    check = iam_secret_scope_check(PROJECT_ROOT)
+
+    assert check.ok
+    assert check.denies_cross_environment
+    assert check.secret_resource_pattern is not None
 
 def test_req_dep_003_01_code_merged_develop_github_actions_runs_development_deployment() -> None:
     """TST-REQ-DEP-003-01: Validates REQ-DEP-003

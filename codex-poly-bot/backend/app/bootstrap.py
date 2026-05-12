@@ -40,7 +40,9 @@ AWS_PARAMETER_FILES = {
     "production": "infra/parameters/prod.json",
 }
 AWS_REQUIRED_RESOURCE_MARKERS = {
+    "ecr": ("AWS::ECR::Repository",),
     "ecs_fargate": ("AWS::ECS::Service", "FARGATE"),
+    "iam": ("AWS::IAM::Role", "AWS::IAM::Policy"),
     "rds_postgres": ("AWS::RDS::DBInstance", "postgres"),
     "s3": ("AWS::S3::Bucket",),
     "secrets_manager": ("AWS::SecretsManager::Secret",),
@@ -106,6 +108,32 @@ class AwsInfrastructureCheck:
     ok: bool
     region: str | None
     resources: tuple[str, ...]
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class S3LifecyclePolicyCheck:
+    """S3 snapshot lifecycle retention validation result.
+
+    REQ: REQ-DAT-006, REQ-DAT-007
+    """
+
+    ok: bool
+    raw_retention_days: int | None
+    normalized_retention_days: int | None
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class IamSecretScopeCheck:
+    """IAM secret-scope validation result.
+
+    REQ: REQ-WAL-003, REQ-DEP-010
+    """
+
+    ok: bool
+    secret_resource_pattern: str | None
+    denies_cross_environment: bool
     errors: tuple[str, ...] = ()
 
 
@@ -549,6 +577,74 @@ def aws_infrastructure_check(root: Path = PROJECT_ROOT) -> AwsInfrastructureChec
     )
 
 
+def s3_lifecycle_policy_check(root: Path = PROJECT_ROOT) -> S3LifecyclePolicyCheck:
+    """Validate raw and normalized snapshot lifecycle retention in CloudFormation.
+
+    REQ: REQ-DAT-006, REQ-DAT-007
+    """
+
+    template_path = root / AWS_INFRA_TEMPLATE_RELATIVE_PATH
+    if not template_path.is_file():
+        return S3LifecyclePolicyCheck(
+            ok=False,
+            raw_retention_days=None,
+            normalized_retention_days=None,
+            errors=(f"missing:{AWS_INFRA_TEMPLATE_RELATIVE_PATH}",),
+        )
+    template_text = template_path.read_text()
+    raw_days = _lifecycle_retention_days(template_text, "raw/")
+    normalized_days = _lifecycle_retention_days(template_text, "normalized/")
+    errors: list[str] = []
+    if raw_days != 365:
+        errors.append("raw snapshot retention must be 365 days")
+    if normalized_days != 730:
+        errors.append("normalized snapshot retention must be 730 days")
+    return S3LifecyclePolicyCheck(
+        ok=not errors,
+        raw_retention_days=raw_days,
+        normalized_retention_days=normalized_days,
+        errors=tuple(errors),
+    )
+
+
+def iam_secret_scope_check(root: Path = PROJECT_ROOT) -> IamSecretScopeCheck:
+    """Validate ECS task IAM policy only permits current-environment secrets.
+
+    REQ: REQ-WAL-003, REQ-DEP-010
+    """
+
+    template_path = root / AWS_INFRA_TEMPLATE_RELATIVE_PATH
+    if not template_path.is_file():
+        return IamSecretScopeCheck(
+            ok=False,
+            secret_resource_pattern=None,
+            denies_cross_environment=False,
+            errors=(f"missing:{AWS_INFRA_TEMPLATE_RELATIVE_PATH}",),
+        )
+    template_text = template_path.read_text()
+    scoped_pattern = (
+        "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:"
+        "secret:/codex-poly-bot/${EnvironmentName}/*"
+    )
+    broad_patterns = (
+        "secret:/codex-poly-bot/*",
+        "secret:*",
+        "Resource: \"*\"",
+        "Resource: '*'",
+    )
+    errors: list[str] = []
+    if scoped_pattern not in template_text:
+        errors.append("secret access must be scoped to EnvironmentName")
+    if any(pattern in template_text for pattern in broad_patterns):
+        errors.append("secret access must not use a broad wildcard")
+    return IamSecretScopeCheck(
+        ok=not errors,
+        secret_resource_pattern=scoped_pattern if scoped_pattern in template_text else None,
+        denies_cross_environment=not any(pattern in template_text for pattern in broad_patterns),
+        errors=tuple(errors),
+    )
+
+
 def github_actions_environment_for_branch(branch: str) -> str | None:
     """Return automatic deployment environment for a Git branch.
 
@@ -693,4 +789,19 @@ def _template_metadata_value(template_text: str, key: str) -> str | None:
         stripped = line.strip()
         if stripped.startswith(marker):
             return stripped.split(":", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+def _lifecycle_retention_days(template_text: str, prefix: str) -> int | None:
+    lines = template_text.splitlines()
+    for index, line in enumerate(lines):
+        if f"Prefix: {prefix}" not in line:
+            continue
+        for candidate in lines[index : index + 8]:
+            stripped = candidate.strip()
+            if stripped.startswith("ExpirationInDays:"):
+                try:
+                    return int(stripped.split(":", 1)[1].strip())
+                except ValueError:
+                    return None
     return None

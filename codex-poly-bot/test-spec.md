@@ -101,7 +101,9 @@
 | TST-REQ-DAT-005-02 | Edge | REQ-DAT-005 | Given stale market data beyond the configured threshold, When live order checks run, Then dependent live orders are blocked. |
 | TST-REQ-DAT-005-03 | Focus | REQ-DAT-005 | Given Polymarket market data is stale beyond the configured threshold, When live order checks run, Then dependent live orders are blocked and the refusal event is persisted. |
 | TST-REQ-DAT-006-01 | Focus | REQ-DAT-006 | Given raw snapshot lifecycle rules are synthesized, When infrastructure configuration is validated, Then raw snapshots have a 365-day retention policy. |
+| TST-REQ-DAT-006-02 | Focus | REQ-DAT-006 | Given S3 buckets are created by infrastructure, When lifecycle rules are validated, Then raw snapshots are retained for 365 days. |
 | TST-REQ-DAT-007-01 | Focus | REQ-DAT-007 | Given normalized snapshot lifecycle rules are synthesized, When infrastructure configuration is validated, Then normalized snapshots have a 730-day retention policy. |
+| TST-REQ-DAT-007-02 | Focus | REQ-DAT-007 | Given S3 buckets are created by infrastructure, When lifecycle rules are validated, Then normalized snapshots are retained for 730 days. |
 | TST-REQ-DAT-008-01 | Focus | REQ-DAT-008 | Given an ingestion job fails after a prior checkpoint, When retry policy runs, Then the error is recorded, the checkpoint is preserved, and retry timing follows config. |
 
 ### Postgres Persistence
@@ -132,6 +134,7 @@
 | TST-REQ-WAL-002-02 | Edge | REQ-WAL-002 | Given missing or unsupported CLI inputs, When wallet generation runs, Then no wallet material is produced and validation errors are returned. |
 | TST-REQ-WAL-003-01 | Happy | REQ-WAL-003 | Given deployed environment settings, When private keys and API credentials are requested, Then they are read only from AWS Secrets Manager. |
 | TST-REQ-WAL-003-02 | Edge | REQ-WAL-003 | Given deployed environment settings and a local secret file path, When credential loading runs, Then local secret loading is rejected. |
+| TST-REQ-WAL-003-03 | Focus | REQ-WAL-003 | Given an ECS task attempts to read deployment secrets, When IAM secret scope is validated, Then only the current environment secret prefix is allowed. |
 | TST-REQ-WAL-004-01 | Happy | REQ-WAL-004 | Given local development settings and gitignored `.env` values, When credential loading runs, Then private keys and API credentials are read from local environment values. |
 | TST-REQ-WAL-004-02 | Edge | REQ-WAL-004 | Given local development settings with missing `.env` values, When live checks run, Then orders requiring those credentials are refused. |
 | TST-REQ-WAL-005-01 | Happy | REQ-WAL-005 | Given wallet and credential metadata, When dashboard status is rendered, Then public identifiers and health are shown. |
@@ -319,7 +322,7 @@
 |---------|------|-----------|------------------|
 | TST-REQ-DEP-001-01 | Happy | REQ-DEP-001 | Given local Docker and gitignored `.env` files, When local startup commands run, Then the app stack starts without production secrets. |
 | TST-REQ-DEP-001-02 | Edge | REQ-DEP-001 | Given required local env values are missing, When local startup runs, Then startup fails with safe dry-run defaults or clear setup errors. |
-| TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, and SES resources are defined. |
+| TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined. |
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
 | TST-REQ-DEP-003-02 | Edge | REQ-DEP-003 | Given a branch other than `develop` or `main`, When GitHub Actions runs, Then automatic environment deployment is not triggered. |
@@ -390,8 +393,8 @@
 | REQ-DAT-003 | TST-REQ-DAT-003-01, TST-REQ-DAT-003-02 |
 | REQ-DAT-004 | TST-REQ-DAT-004-01, TST-REQ-DAT-004-02 |
 | REQ-DAT-005 | TST-REQ-DAT-005-01, TST-REQ-DAT-005-02, TST-REQ-DAT-005-03 |
-| REQ-DAT-006 | TST-REQ-DAT-006-01 |
-| REQ-DAT-007 | TST-REQ-DAT-007-01 |
+| REQ-DAT-006 | TST-REQ-DAT-006-01, TST-REQ-DAT-006-02 |
+| REQ-DAT-007 | TST-REQ-DAT-007-01, TST-REQ-DAT-007-02 |
 | REQ-DAT-008 | TST-REQ-DAT-008-01 |
 | REQ-DB-001 | TST-REQ-DB-001-01, TST-REQ-DB-001-02 |
 | REQ-DB-002 | TST-REQ-DB-002-01, TST-REQ-DB-002-02 |
@@ -402,7 +405,7 @@
 | REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02 |
 | REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02 |
 | REQ-WAL-002 | TST-REQ-WAL-002-01, TST-REQ-WAL-002-02 |
-| REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02 |
+| REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03 |
 | REQ-WAL-004 | TST-REQ-WAL-004-01, TST-REQ-WAL-004-02 |
 | REQ-WAL-005 | TST-REQ-WAL-005-01, TST-REQ-WAL-005-02 |
 | REQ-WAL-006 | TST-REQ-WAL-006-01, TST-REQ-WAL-006-02 |
