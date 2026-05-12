@@ -1,3 +1,5 @@
+# REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006,
+# REQ-DEP-010, REQ-OBS-002
 name: CI
 
 on:
@@ -6,6 +8,9 @@ on:
     branches:
       - main
       - develop
+
+env:
+  AWS_REGION: us-east-1
 
 jobs:
   backend-tests:
@@ -44,13 +49,129 @@ jobs:
           npm run test:dashboard-controls
           npm run test:dashboard-operations
 
-  container-build:
-    name: Container build gate
+  migration-safety:
+    name: Migration safety
     runs-on: ubuntu-latest
     needs:
       - backend-tests
       - frontend-check
     steps:
       - uses: actions/checkout@v4
-      - name: Build gate placeholder
-        run: echo "Container build waits for tests."
+      - name: Reject destructive migrations
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          markers = (
+              "drop table",
+              "drop column",
+              "alter column",
+              "drop constraint",
+              "truncate table",
+          )
+          migration_paths = list(Path("codex-poly-bot").glob("**/migrations/**/*.sql"))
+          for path in migration_paths:
+              text = " ".join(path.read_text().lower().split())
+              matches = [marker for marker in markers if marker in text]
+              if matches:
+                  raise SystemExit(
+                      f"{path} requires expand/contract split: {', '.join(matches)}"
+                  )
+          PY
+
+  container-build:
+    name: Container build and ECR publish
+    runs-on: ubuntu-latest
+    needs:
+      - backend-tests
+      - frontend-check
+      - migration-safety
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select deploy environment
+        id: env
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "deploy_env=production" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
+            echo "deploy_env=development" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_env=none" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build backend image
+        run: docker build -t codex-poly-bot-backend -f codex-poly-bot/backend/Dockerfile codex-poly-bot/backend
+      - name: Build frontend image
+        run: docker build -t codex-poly-bot-frontend -f codex-poly-bot/frontend/Dockerfile codex-poly-bot/frontend
+      - name: Configure AWS credentials
+        if: steps.env.outputs.deploy_env != 'none' && github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to ECR
+        if: steps.env.outputs.deploy_env != 'none' && github.event_name == 'push'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Push images to ECR
+        if: steps.env.outputs.deploy_env != 'none' && github.event_name == 'push'
+        env:
+          DEPLOY_ENV: ${{ steps.env.outputs.deploy_env }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker tag codex-poly-bot-backend $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:${GITHUB_SHA}
+          docker tag codex-poly-bot-frontend $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:${GITHUB_SHA}
+          docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:${GITHUB_SHA}
+          docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:${GITHUB_SHA}
+
+  deploy-development:
+    name: Deploy development
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs:
+      - backend-tests
+      - frontend-check
+      - migration-safety
+      - container-build
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy ECS service
+        run: |
+          aws ecs update-service \
+            --cluster codex-poly-bot-development-cluster \
+            --service codex-poly-bot-development-backend \
+            --force-new-deployment
+
+  deploy-production:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - backend-tests
+      - frontend-check
+      - migration-safety
+      - container-build
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy ECS service
+        run: |
+          aws ecs update-service \
+            --cluster codex-poly-bot-production-cluster \
+            --service codex-poly-bot-production-backend \
+            --force-new-deployment

@@ -1193,9 +1193,9 @@
 | AC-030-04 | If a migration is destructive or contract-phase, then CI shall reject the automatic deploy and require an expand/contract split. |
 
 **Definition of Done:**
-- [ ] All acceptance criteria passing as automated tests
-- [ ] Code annotated with REQ-* traceability
-- [ ] No regressions in existing tests
+- [x] All acceptance criteria passing as automated tests
+- [x] Code annotated with REQ-* traceability
+- [x] No regressions in existing tests
 
 ---
 

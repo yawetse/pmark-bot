@@ -22,6 +22,7 @@ from app.bootstrap import (
     local_app_stack_services_ready,
     load_runtime_defaults,
     local_startup_check,
+    migration_safety_gate,
     required_paths_exist,
     safe_defaults,
     scan_env_examples_for_secret_values,
@@ -160,6 +161,20 @@ def test_req_dep_003_02_branch_other_than_develop_main_github_actions_runs() -> 
     assert not plan.deploy_selected
     assert plan.blocked_reason == "branch is not deployable"
 
+def test_req_dep_003_03_workflow_develop_branch_deploys_development_after_build() -> None:
+    """TST-REQ-DEP-003-03: Validates REQ-DEP-003
+
+    Given: code is merged to `develop`
+    When: the workflow is inspected
+    Then: development deployment is selected after tests, migration safety, and ECR publish
+    """
+    workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+
+    assert "deploy-development:" in workflow_text
+    assert "github.ref == 'refs/heads/develop'" in workflow_text
+    assert "container-build" in workflow_text
+    assert "migration-safety" in workflow_text
+
 def test_req_dep_004_01_code_merged_main_github_actions_runs_production_deployment() -> None:
     """TST-REQ-DEP-004-01: Validates REQ-DEP-004
 
@@ -186,6 +201,20 @@ def test_req_dep_004_02_production_deployment_tests_fail_github_actions_runs_pro
     assert not plan.ecr_publish
     assert not plan.ecs_deploy
     assert plan.blocked_reason == "tests failed"
+
+def test_req_dep_004_03_workflow_main_branch_deploys_production_after_build() -> None:
+    """TST-REQ-DEP-004-03: Validates REQ-DEP-004
+
+    Given: code is merged to `main`
+    When: the workflow is inspected
+    Then: production deployment is selected after tests, migration safety, and ECR publish
+    """
+    workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+
+    assert "deploy-production:" in workflow_text
+    assert "github.ref == 'refs/heads/main'" in workflow_text
+    assert "container-build" in workflow_text
+    assert "migration-safety" in workflow_text
 
 def test_req_dep_005_01_ci_triggered_workflow_execution_starts_tests_run_before() -> None:
     """TST-REQ-DEP-005-01: Validates REQ-DEP-005
@@ -214,6 +243,29 @@ def test_req_dep_005_02_tests_fail_in_ci_workflow_execution_continues_container(
     assert not check.errors
     assert ci_blocks_build_and_deploy_on_test_failure(PROJECT_ROOT)
 
+def test_req_dep_005_05_destructive_migration_rejected_requires_expand_contract_split() -> None:
+    """TST-REQ-DEP-005-05: Validates REQ-DEP-005
+
+    Given: a migration is destructive or contract-phase
+    When: CI evaluates migration safety
+    Then: automatic deploy is rejected and an expand/contract split is required
+    """
+    destructive = migration_safety_gate("ALTER TABLE positions DROP COLUMN legacy_state;")
+    safe = migration_safety_gate("ALTER TABLE positions ADD COLUMN new_state text;")
+    plan = deployment_plan_for_branch(
+        "main",
+        tests_passed=True,
+        ecr_publish_ok=True,
+        migration_safe=destructive.ok,
+    )
+
+    assert not destructive.ok
+    assert destructive.requires_expand_contract
+    assert destructive.destructive_markers == ("drop column",)
+    assert safe.ok
+    assert not plan.ecs_deploy
+    assert plan.blocked_reason == "migration requires expand/contract split"
+
 def test_req_dep_006_01_tests_pass_deployment_workflow_runs_backend_frontend_images() -> None:
     """TST-REQ-DEP-006-01: Validates REQ-DEP-006
 
@@ -226,6 +278,22 @@ def test_req_dep_006_01_tests_pass_deployment_workflow_runs_backend_frontend_ima
     assert plan.build_images == ("backend", "frontend")
     assert plan.ecr_publish
     assert plan.ecs_deploy
+
+def test_req_dep_006_03_workflow_publishes_ecr_images_before_ecs_deploy() -> None:
+    """TST-REQ-DEP-006-03: Validates REQ-DEP-006
+
+    Given: tests and migration safety pass
+    When: the workflow is inspected
+    Then: backend and frontend images are pushed to ECR before ECS deployment
+    """
+    workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    build_index = workflow_text.index("container-build:")
+    deploy_index = workflow_text.index("deploy-production:")
+
+    assert build_index < deploy_index
+    assert "docker build -t codex-poly-bot-backend" in workflow_text
+    assert "docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend" in workflow_text
+    assert "aws ecs update-service" in workflow_text
 
 def test_req_dep_006_02_ecr_publish_fails_deployment_workflow_runs_ecs_deployment() -> None:
     """TST-REQ-DEP-006-02: Validates REQ-DEP-006

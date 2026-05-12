@@ -326,14 +326,18 @@
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
 | TST-REQ-DEP-003-02 | Edge | REQ-DEP-003 | Given a branch other than `develop` or `main`, When GitHub Actions runs, Then automatic environment deployment is not triggered. |
+| TST-REQ-DEP-003-03 | Focus | REQ-DEP-003 | Given code is merged to `develop`, When the workflow is inspected, Then development deployment is selected after tests, migration safety, and ECR publish. |
 | TST-REQ-DEP-004-01 | Happy | REQ-DEP-004 | Given code is merged to `main`, When GitHub Actions runs, Then production deployment starts automatically. |
 | TST-REQ-DEP-004-02 | Edge | REQ-DEP-004 | Given production deployment tests fail, When GitHub Actions runs, Then production deploy steps do not execute. |
+| TST-REQ-DEP-004-03 | Focus | REQ-DEP-004 | Given code is merged to `main`, When the workflow is inspected, Then production deployment is selected after tests, migration safety, and ECR publish. |
 | TST-REQ-DEP-005-01 | Happy | REQ-DEP-005 | Given CI is triggered, When workflow execution starts, Then tests run before build or deploy jobs. |
 | TST-REQ-DEP-005-02 | Edge | REQ-DEP-005 | Given tests fail in CI, When workflow execution continues, Then container build and deploy jobs are blocked. |
 | TST-REQ-DEP-005-03 | Focus | REQ-DEP-005 | Given the spec suite is ready for release review, When traceability verification scans spec tests, Then no pending red-phase placeholders remain. |
 | TST-REQ-DEP-005-04 | Focus | REQ-DEP-005 | Given frontend code is present, When CI runs, Then npm install, typecheck, and auth-boundary checks run before build or deploy jobs. |
+| TST-REQ-DEP-005-05 | Focus | REQ-DEP-005 | Given a migration is destructive or contract-phase, When CI evaluates migration safety, Then automatic deploy is rejected and an expand/contract split is required. |
 | TST-REQ-DEP-006-01 | Happy | REQ-DEP-006 | Given tests pass, When deployment workflow runs, Then backend and frontend images are built and published to ECR before ECS deployment. |
 | TST-REQ-DEP-006-02 | Edge | REQ-DEP-006 | Given ECR publish fails, When deployment workflow runs, Then ECS deployment is skipped and failure status is reported. |
+| TST-REQ-DEP-006-03 | Focus | REQ-DEP-006 | Given tests and migration safety pass, When the workflow is inspected, Then backend and frontend images are pushed to ECR before ECS deployment. |
 | TST-REQ-DEP-007-01 | Happy | REQ-DEP-007 | Given repo setup files are inspected, When `.env.example` files are validated, Then required local config keys are documented without secrets. |
 | TST-REQ-DEP-007-02 | Edge | REQ-DEP-007 | Given `.env.example` contains a real-looking secret value, When secret scanning runs, Then validation fails. |
 | TST-REQ-DEP-008-01 | Happy | REQ-DEP-008 | Given Codex web setup docs and scripts, When a developer follows setup, Then dependencies, tests, and safe dry-run config are available. |
@@ -473,10 +477,10 @@
 | REQ-NOT-007 | TST-REQ-NOT-007-01, TST-REQ-NOT-007-02 |
 | REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02 |
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
-| REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02 |
-| REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02 |
-| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04 |
-| REQ-DEP-006 | TST-REQ-DEP-006-01, TST-REQ-DEP-006-02 |
+| REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02, TST-REQ-DEP-003-03 |
+| REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03 |
+| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04, TST-REQ-DEP-005-05 |
+| REQ-DEP-006 | TST-REQ-DEP-006-01, TST-REQ-DEP-006-02, TST-REQ-DEP-006-03 |
 | REQ-DEP-007 | TST-REQ-DEP-007-01, TST-REQ-DEP-007-02 |
 | REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02 |
 | REQ-DEP-009 | TST-REQ-DEP-009-01, TST-REQ-DEP-009-02 |

@@ -34,6 +34,13 @@ SAFE_SECRET_PLACEHOLDERS = ("", "change-me", "set-locally", "optional-in-dry-run
 CI_WORKFLOW_RELATIVE_PATH = ".github/workflows/ci.yml"
 CI_TEST_JOB_NAMES = ("backend-tests", "frontend-check")
 CI_GATED_JOB_MARKERS = ("build", "deploy", "ecr", "ecs", "container")
+DESTRUCTIVE_MIGRATION_MARKERS = (
+    "drop table",
+    "drop column",
+    "alter column",
+    "drop constraint",
+    "truncate table",
+)
 AWS_INFRA_TEMPLATE_RELATIVE_PATH = "infra/cloudformation.yml"
 AWS_PARAMETER_FILES = {
     "development": "infra/parameters/dev.json",
@@ -164,6 +171,19 @@ class DeploymentPlan:
     ecr_publish: bool = False
     ecs_deploy: bool = False
     blocked_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class MigrationSafetyResult:
+    """Migration safety gate result for automatic deploys.
+
+    REQ: REQ-DEP-005
+    """
+
+    ok: bool
+    requires_expand_contract: bool = False
+    refusal_reason: str | None = None
+    destructive_markers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -663,10 +683,11 @@ def deployment_plan_for_branch(
     *,
     tests_passed: bool,
     ecr_publish_ok: bool,
+    migration_safe: bool = True,
 ) -> DeploymentPlan:
     """Build a deployment plan gated by tests and ECR publish status.
 
-    REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-006
+    REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006
     """
 
     environment = github_actions_environment_for_branch(branch)
@@ -684,6 +705,14 @@ def deployment_plan_for_branch(
             deploy_selected=True,
             build_images=("backend", "frontend"),
             blocked_reason="tests failed",
+        )
+    if not migration_safe:
+        return DeploymentPlan(
+            branch=branch,
+            environment=environment,
+            deploy_selected=True,
+            build_images=("backend", "frontend"),
+            blocked_reason="migration requires expand/contract split",
         )
     if not ecr_publish_ok:
         return DeploymentPlan(
@@ -703,6 +732,26 @@ def deployment_plan_for_branch(
         ecr_publish=True,
         ecs_deploy=True,
     )
+
+
+def migration_safety_gate(migration_sql: str) -> MigrationSafetyResult:
+    """Reject destructive or contract-phase migrations from automatic deploy.
+
+    REQ: REQ-DEP-005
+    """
+
+    normalized = " ".join(migration_sql.lower().split())
+    markers = tuple(
+        marker for marker in DESTRUCTIVE_MIGRATION_MARKERS if marker in normalized
+    )
+    if markers:
+        return MigrationSafetyResult(
+            ok=False,
+            requires_expand_contract=True,
+            refusal_reason="migration requires expand/contract split",
+            destructive_markers=markers,
+        )
+    return MigrationSafetyResult(ok=True)
 
 
 def deployment_resource_separation_check(
