@@ -169,7 +169,9 @@ def test_req_dep_003_03_workflow_develop_branch_deploys_development_after_build(
     Then: development deployment is selected after tests, migration safety, and ECR publish
     """
     workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    root_workflow = PROJECT_ROOT.parent / ".github" / "workflows" / "codex-poly-bot-ci.yml"
 
+    assert root_workflow.is_file()
     assert "deploy-development:" in workflow_text
     assert "github.ref == 'refs/heads/develop'" in workflow_text
     assert "container-build" in workflow_text
@@ -293,7 +295,28 @@ def test_req_dep_006_03_workflow_publishes_ecr_images_before_ecs_deploy() -> Non
     assert build_index < deploy_index
     assert "docker build -t codex-poly-bot-backend" in workflow_text
     assert "docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend" in workflow_text
+    assert "codex-poly-bot-$DEPLOY_ENV-backend:latest" in workflow_text
+    assert "codex-poly-bot-$DEPLOY_ENV-frontend:latest" in workflow_text
     assert "aws ecs update-service" in workflow_text
+    assert "--service codex-poly-bot-production-frontend" in workflow_text
+
+def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -> None:
+    """TST-REQ-DEP-002-03: Validates REQ-DEP-002
+
+    Given: CloudFormation infrastructure
+    When: public application resources are inspected
+    Then: ALB, frontend service, backend service, and runtime env settings are defined
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+
+    assert "AWS::ElasticLoadBalancingV2::LoadBalancer" in text
+    assert "FrontendTaskDefinition" in text
+    assert "FrontendService" in text
+    assert "BackendTargetGroup" in text
+    assert "FrontendTargetGroup" in text
+    assert "DASHBOARD_ALLOWED_USERS" in text
+    assert "BACKEND_TOKEN_SIGNING_SECRET" in text
+    assert "ApplicationUrl" in text
 
 def test_req_dep_006_02_ecr_publish_fails_deployment_workflow_runs_ecs_deployment() -> None:
     """TST-REQ-DEP-006-02: Validates REQ-DEP-006

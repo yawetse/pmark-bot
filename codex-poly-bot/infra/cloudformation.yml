@@ -1,6 +1,6 @@
 # REQ: REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-WAL-003,
 # REQ-DAT-003, REQ-DAT-006, REQ-DAT-007, REQ-NOT-001,
-# REQ-OBS-002, REQ-DB-001, REQ-DB-002, REQ-DB-003
+# REQ-OBS-002, REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006
 AWSTemplateFormatVersion: "2010-09-09"
 Description: codex-poly-bot AWS deployment contract
 Metadata:
@@ -21,6 +21,10 @@ Parameters:
     Type: List<AWS::EC2::Subnet::Id>
   PublicSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
   SesIdentityEmail:
     Type: String
   DatabaseUsername:
@@ -29,6 +33,28 @@ Parameters:
   DatabasePassword:
     Type: String
     NoEcho: true
+  DashboardAllowedUsers:
+    Type: String
+    Default: yawetse
+  BackendTokenSigningSecret:
+    Type: String
+    NoEcho: true
+  DashboardSessionSecret:
+    Type: String
+    NoEcho: true
+  DashboardCsrfToken:
+    Type: String
+    NoEcho: true
+  GithubClientId:
+    Type: String
+    Default: ""
+  GithubClientSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentName, production]
 
 Resources:
   BackendRepository:
@@ -63,13 +89,11 @@ Resources:
         Rules:
           - Id: raw-snapshot-retention
             Status: Enabled
-            Filter:
-              Prefix: raw/
+            Prefix: raw/
             ExpirationInDays: 365
           - Id: normalized-snapshot-retention
             Status: Enabled
-            Filter:
-              Prefix: normalized/
+            Prefix: normalized/
             ExpirationInDays: 730
 
   DatabaseSecurityGroup:
@@ -78,11 +102,31 @@ Resources:
       GroupDescription: !Sub "${ProjectName} ${EnvironmentName} database access"
       VpcId: !Ref VpcId
 
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ProjectName} ${EnvironmentName} public load balancer"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
   ServiceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: !Sub "${ProjectName} ${EnvironmentName} ECS service access"
       VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
 
   DatabaseIngressFromService:
     Type: AWS::EC2::SecurityGroupIngress
@@ -104,6 +148,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub "${ProjectName}-${EnvironmentName}-postgres"
       Engine: postgres
+      DBName: codexbot
       DBInstanceClass: db.t4g.micro
       AllocatedStorage: 20
       StorageEncrypted: true
@@ -143,6 +188,62 @@ Resources:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub "${ProjectName}-${EnvironmentName}-cluster"
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Subnets: !Ref PublicSubnetIds
+      Type: application
+
+  FrontendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: "200-399"
+      Port: 3000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  BackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: "200"
+      Port: 8000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  BackendListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref BackendTargetGroup
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/*
+              - /health
+      ListenerArn: !Ref HttpListener
+      Priority: 10
 
   TaskExecutionRole:
     Type: AWS::IAM::Role
@@ -216,10 +317,34 @@ Resources:
           PortMappings:
             - ContainerPort: 8000
           Environment:
+            - Name: APP_ENV
+              Value: !Ref EnvironmentName
             - Name: ENVIRONMENT
               Value: !Ref EnvironmentName
             - Name: SNAPSHOT_BUCKET
               Value: !Ref SnapshotBucket
+            - Name: DATABASE_URL
+              Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}:5432/codexbot"
+            - Name: LIVE_ENABLED
+              Value: "false"
+            - Name: DEFAULT_SELECTED_VENUE
+              Value: polymarket_us
+            - Name: POLYMARKET_US_ENABLED
+              Value: "false"
+            - Name: POLYMARKET_INTERNATIONAL_ENABLED
+              Value: "false"
+            - Name: ALPACA_ENABLED
+              Value: "false"
+            - Name: DASHBOARD_ALLOWED_USERS
+              Value: !Ref DashboardAllowedUsers
+            - Name: BACKEND_TOKEN_SIGNING_SECRET
+              Value: !Ref BackendTokenSigningSecret
+            - Name: DASHBOARD_CSRF_TOKEN
+              Value: !Ref DashboardCsrfToken
+            - Name: NEXTAUTH_URL
+              Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+            - Name: DASHBOARD_TRUSTED_ORIGINS
+              Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -227,25 +352,98 @@ Resources:
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: backend
 
+  FrontendTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ProjectName}-${EnvironmentName}-frontend"
+      Cpu: "512"
+      Memory: "1024"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: frontend
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-${EnvironmentName}-frontend:latest"
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+          Environment:
+            - Name: NEXT_PUBLIC_API_BASE_URL
+              Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+            - Name: BACKEND_API_BASE_URL
+              Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+            - Name: NEXT_PUBLIC_APP_ENV
+              Value: !Ref EnvironmentName
+            - Name: BACKEND_TOKEN_SIGNING_SECRET
+              Value: !Ref BackendTokenSigningSecret
+            - Name: DASHBOARD_SESSION_SECRET
+              Value: !Ref DashboardSessionSecret
+            - Name: DASHBOARD_CSRF_TOKEN
+              Value: !Ref DashboardCsrfToken
+            - Name: DASHBOARD_ALLOWED_USERS
+              Value: !Ref DashboardAllowedUsers
+            - Name: NEXTAUTH_URL
+              Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+            - Name: GITHUB_CLIENT_ID
+              Value: !Ref GithubClientId
+            - Name: GITHUB_CLIENT_SECRET
+              Value: !Ref GithubClientSecret
+            - Name: ALLOW_LOCAL_AUTH_BYPASS
+              Value: "false"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ApplicationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: frontend
+
   BackendService:
     Type: AWS::ECS::Service
+    DependsOn:
+      - BackendListenerRule
     Properties:
       ServiceName: !Sub "${ProjectName}-${EnvironmentName}-backend"
       LaunchType: FARGATE
       Cluster: !Ref Cluster
-      DesiredCount: 1
+      DesiredCount: !Ref DesiredCount
       TaskDefinition: !Ref BackendTaskDefinition
+      LoadBalancers:
+        - ContainerName: backend
+          ContainerPort: 8000
+          TargetGroupArn: !Ref BackendTargetGroup
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
+          AssignPublicIp: ENABLED
           SecurityGroups:
             - !Ref ServiceSecurityGroup
-          Subnets: !Ref PrivateSubnetIds
+          Subnets: !Ref PublicSubnetIds
 
-Conditions:
-  IsProduction: !Equals [!Ref EnvironmentName, production]
+  FrontendService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HttpListener
+    Properties:
+      ServiceName: !Sub "${ProjectName}-${EnvironmentName}-frontend"
+      LaunchType: FARGATE
+      Cluster: !Ref Cluster
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref FrontendTaskDefinition
+      LoadBalancers:
+        - ContainerName: frontend
+          ContainerPort: 3000
+          TargetGroupArn: !Ref FrontendTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+          Subnets: !Ref PublicSubnetIds
 
 Outputs:
+  ApplicationUrl:
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
   BackendRepositoryUri:
     Value: !GetAtt BackendRepository.RepositoryUri
   FrontendRepositoryUri:
@@ -254,3 +452,7 @@ Outputs:
     Value: !Ref SnapshotBucket
   ClusterName:
     Value: !Ref Cluster
+  BackendServiceName:
+    Value: !GetAtt BackendService.Name
+  FrontendServiceName:
+    Value: !GetAtt FrontendService.Name

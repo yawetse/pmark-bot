@@ -253,6 +253,7 @@
 | TST-REQ-UI-001-01 | Happy | REQ-UI-001 | Given backend and frontend services are running, When the dashboard loads, Then the Next.js UI retrieves data from FastAPI services. |
 | TST-REQ-UI-001-02 | Edge | REQ-UI-001 | Given FastAPI is unavailable, When the dashboard loads status views, Then the UI shows degraded API state without exposing internals. |
 | TST-REQ-UI-001-03 | Focus | REQ-UI-001 | Given the backend app is created, When health and dashboard API routes are called, Then FastAPI exposes liveness and authenticated dashboard endpoints. |
+| TST-REQ-UI-001-04 | Focus | REQ-UI-001 | Given deployed dashboard environment variables, When the FastAPI app loads default settings, Then auth, CSRF, origin, and environment settings come from the environment. |
 | TST-REQ-UI-002-01 | Happy | REQ-UI-002 | Given an unauthenticated user, When the dashboard is opened, Then GitHub OAuth login is required. |
 | TST-REQ-UI-002-02 | Edge | REQ-UI-002 | Given an invalid OAuth callback or state value, When login completes, Then access is denied and the event is logged. |
 | TST-REQ-UI-002-03 | Focus | REQ-UI-002 | Given a protected dashboard route and server-side session helper, When frontend auth checks run, Then unauthenticated users are redirected to login before protected views load. |
@@ -328,6 +329,7 @@
 | TST-REQ-DEP-001-04 | Focus | REQ-DEP-001 | Given the local Docker Compose contract, When the app stack services are inspected, Then backend and frontend services run the real app processes. |
 | TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined. |
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
+| TST-REQ-DEP-002-03 | Focus | REQ-DEP-002 | Given CloudFormation infrastructure, When public application resources are inspected, Then ALB, frontend service, backend service, and runtime env settings are defined. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
 | TST-REQ-DEP-003-02 | Edge | REQ-DEP-003 | Given a branch other than `develop` or `main`, When GitHub Actions runs, Then automatic environment deployment is not triggered. |
 | TST-REQ-DEP-003-03 | Focus | REQ-DEP-003 | Given code is merged to `develop`, When the workflow is inspected, Then development deployment is selected after tests, migration safety, and ECR publish. |
@@ -459,7 +461,7 @@
 | REQ-EXT-004 | TST-REQ-EXT-004-01, TST-REQ-EXT-004-02 |
 | REQ-EXT-005 | TST-REQ-EXT-005-01, TST-REQ-EXT-005-02 |
 | REQ-EXT-006 | TST-REQ-EXT-006-01, TST-REQ-EXT-006-02 |
-| REQ-UI-001 | TST-REQ-UI-001-01, TST-REQ-UI-001-02, TST-REQ-UI-001-03 |
+| REQ-UI-001 | TST-REQ-UI-001-01, TST-REQ-UI-001-02, TST-REQ-UI-001-03, TST-REQ-UI-001-04 |
 | REQ-UI-002 | TST-REQ-UI-002-01, TST-REQ-UI-002-02, TST-REQ-UI-002-03 |
 | REQ-UI-003 | TST-REQ-UI-003-01, TST-REQ-UI-003-02, TST-REQ-UI-003-03, TST-REQ-UI-003-04 |
 | REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03, TST-REQ-UI-004-04 |
@@ -482,7 +484,7 @@
 | REQ-NOT-006 | TST-REQ-NOT-006-01, TST-REQ-NOT-006-02 |
 | REQ-NOT-007 | TST-REQ-NOT-007-01, TST-REQ-NOT-007-02 |
 | REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02, TST-REQ-DEP-001-03, TST-REQ-DEP-001-04 |
-| REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02 |
+| REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02, TST-REQ-DEP-002-03 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02, TST-REQ-DEP-003-03 |
 | REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03, TST-REQ-DEP-004-04 |
 | REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04, TST-REQ-DEP-005-05 |

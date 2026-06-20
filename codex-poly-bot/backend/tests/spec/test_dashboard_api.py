@@ -41,6 +41,29 @@ def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
     assert dashboard.json()["data_source"] == "fastapi"
 
 
+def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> None:
+    """TST-REQ-UI-001-04: Validates REQ-UI-001
+
+    Given: deployed dashboard environment variables
+    When: the FastAPI app loads default settings
+    Then: auth, CSRF, origin, and environment settings come from the environment
+    """
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("DASHBOARD_ALLOWED_USERS", "yawetse,operator")
+    monkeypatch.setenv("BACKEND_TOKEN_SIGNING_SECRET", "deploy-token-secret")
+    monkeypatch.setenv("DASHBOARD_CSRF_TOKEN", "deploy-csrf")
+    monkeypatch.setenv("NEXTAUTH_URL", "https://dashboard.example.com")
+
+    app = create_app()
+    settings = app.state.settings
+
+    assert settings.environment == Environment.DEVELOPMENT
+    assert settings.allowed_usernames == ("yawetse", "operator")
+    assert settings.signing_secret == "deploy-token-secret"
+    assert settings.csrf_token == "deploy-csrf"
+    assert settings.trusted_origins == ("https://dashboard.example.com",)
+
+
 def test_req_ui_003_03_dashboard_api_blocks_unauthenticated_and_unallowlisted_users() -> None:
     """TST-REQ-UI-003-03: Validates REQ-UI-003
 
