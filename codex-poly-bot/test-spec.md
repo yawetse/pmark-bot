@@ -330,6 +330,7 @@
 | TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined. |
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
 | TST-REQ-DEP-002-03 | Focus | REQ-DEP-002 | Given CloudFormation infrastructure, When public application resources are inspected, Then ALB, frontend service, backend service, and runtime env settings are defined. |
+| TST-REQ-DEP-002-04 | Focus | REQ-DEP-002 | Given ALB listener rules, When frontend auth and backend API routes are inspected, Then /api/auth/* is routed to the frontend before backend /api/* routing. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
 | TST-REQ-DEP-003-02 | Edge | REQ-DEP-003 | Given a branch other than `develop` or `main`, When GitHub Actions runs, Then automatic environment deployment is not triggered. |
 | TST-REQ-DEP-003-03 | Focus | REQ-DEP-003 | Given code is merged to `develop`, When the workflow is inspected, Then development deployment is selected after tests, migration safety, and ECR publish. |
@@ -484,7 +485,7 @@
 | REQ-NOT-006 | TST-REQ-NOT-006-01, TST-REQ-NOT-006-02 |
 | REQ-NOT-007 | TST-REQ-NOT-007-01, TST-REQ-NOT-007-02 |
 | REQ-DEP-001 | TST-REQ-DEP-001-01, TST-REQ-DEP-001-02, TST-REQ-DEP-001-03, TST-REQ-DEP-001-04 |
-| REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02, TST-REQ-DEP-002-03 |
+| REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02, TST-REQ-DEP-002-03, TST-REQ-DEP-002-04 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02, TST-REQ-DEP-003-03 |
 | REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03, TST-REQ-DEP-004-04 |
 | REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04, TST-REQ-DEP-005-05 |

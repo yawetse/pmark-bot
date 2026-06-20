@@ -318,6 +318,23 @@ def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -
     assert "BACKEND_TOKEN_SIGNING_SECRET" in text
     assert "ApplicationUrl" in text
 
+def test_req_dep_002_04_cloudformation_keeps_frontend_auth_routes_on_frontend() -> None:
+    """TST-REQ-DEP-002-04: Validates REQ-DEP-002
+
+    Given: CloudFormation ALB listener rules
+    When: frontend auth and backend API routes are inspected
+    Then: /api/auth/* is routed to the frontend before backend /api/* routing
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+    auth_rule_index = text.index("FrontendAuthListenerRule")
+    backend_rule_index = text.index("BackendListenerRule")
+
+    assert auth_rule_index < backend_rule_index
+    assert "- /api/auth/*" in text
+    assert "Priority: 5" in text[auth_rule_index:backend_rule_index]
+    assert "- /api/*" in text[backend_rule_index:]
+    assert "Priority: 10" in text[backend_rule_index:]
+
 def test_req_dep_006_02_ecr_publish_fails_deployment_workflow_runs_ecs_deployment() -> None:
     """TST-REQ-DEP-006-02: Validates REQ-DEP-006
 

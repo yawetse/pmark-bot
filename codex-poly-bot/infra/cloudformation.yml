@@ -230,6 +230,20 @@ Resources:
       Port: 80
       Protocol: HTTP
 
+  FrontendAuthListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/auth/*
+      ListenerArn: !Ref HttpListener
+      Priority: 5
+
   BackendListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Properties:
