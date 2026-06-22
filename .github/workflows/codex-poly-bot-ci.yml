@@ -20,6 +20,23 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
+  select-environment:
+    name: Select deploy environment
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_env: ${{ steps.env.outputs.deploy_env }}
+    steps:
+      - name: Select environment
+        id: env
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            echo "deploy_env=production" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
+            echo "deploy_env=development" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_env=none" >> "$GITHUB_OUTPUT"
+          fi
+
   backend-tests:
     name: Backend tests
     runs-on: ubuntu-latest
@@ -86,56 +103,92 @@ jobs:
                   )
           PY
 
-  container-build:
-    name: Container build and ECR publish
+  infrastructure-deploy:
+    name: Infrastructure deploy
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
     needs:
+      - select-environment
       - backend-tests
       - frontend-check
       - migration-safety
+    environment: ${{ needs.select-environment.outputs.deploy_env }}
     permissions:
       id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Select deploy environment
-        id: env
-        run: |
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            echo "deploy_env=production" >> "$GITHUB_OUTPUT"
-          elif [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
-            echo "deploy_env=development" >> "$GITHUB_OUTPUT"
-          else
-            echo "deploy_env=none" >> "$GITHUB_OUTPUT"
-          fi
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy CloudFormation stack
+        env:
+          APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
+          BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
+          DASHBOARD_CSRF_TOKEN: ${{ secrets.DASHBOARD_CSRF_TOKEN }}
+          DASHBOARD_SESSION_SECRET: ${{ secrets.DASHBOARD_SESSION_SECRET }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          DATABASE_USERNAME: ${{ vars.DATABASE_USERNAME }}
+          DESIRED_COUNT: ${{ vars.DESIRED_COUNT }}
+          DASHBOARD_GITHUB_CLIENT_ID: ${{ vars.DASHBOARD_GITHUB_CLIENT_ID }}
+          DASHBOARD_GITHUB_CLIENT_SECRET: ${{ secrets.DASHBOARD_GITHUB_CLIENT_SECRET }}
+          PRIVATE_SUBNET_IDS: ${{ vars.PRIVATE_SUBNET_IDS }}
+          PUBLIC_SUBNET_IDS: ${{ vars.PUBLIC_SUBNET_IDS }}
+          SES_IDENTITY_EMAIL: ${{ vars.SES_IDENTITY_EMAIL }}
+          VPC_ID: ${{ vars.VPC_ID }}
+        run: ./codex-poly-bot/scripts/deploy-stack.sh "${{ needs.select-environment.outputs.deploy_env }}"
+
+  container-build:
+    name: Container build and ECR publish
+    runs-on: ubuntu-latest
+    needs:
+      - select-environment
+      - backend-tests
+      - frontend-check
+      - migration-safety
+      - infrastructure-deploy
+    if: |
+      always() &&
+      needs.backend-tests.result == 'success' &&
+      needs.frontend-check.result == 'success' &&
+      needs.migration-safety.result == 'success' &&
+      (needs.infrastructure-deploy.result == 'success' || needs.infrastructure-deploy.result == 'skipped')
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
       - name: Build backend image
         run: docker build -t codex-poly-bot-backend -f codex-poly-bot/backend/Dockerfile codex-poly-bot/backend
       - name: Build frontend image
         run: docker build -t codex-poly-bot-frontend -f codex-poly-bot/frontend/Dockerfile codex-poly-bot/frontend
       - name: Configure AWS credentials
-        if: steps.env.outputs.deploy_env != 'none' && github.event_name == 'push'
+        if: needs.select-environment.outputs.deploy_env != 'none' && github.event_name == 'push'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Login to ECR
-        if: steps.env.outputs.deploy_env != 'none' && github.event_name == 'push'
+        if: needs.select-environment.outputs.deploy_env != 'none' && github.event_name == 'push'
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
       - name: Push images to ECR
-        if: steps.env.outputs.deploy_env != 'none' && github.event_name == 'push'
+        if: needs.select-environment.outputs.deploy_env != 'none' && github.event_name == 'push'
         env:
-          DEPLOY_ENV: ${{ steps.env.outputs.deploy_env }}
+          DEPLOY_ENV: ${{ needs.select-environment.outputs.deploy_env }}
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          docker tag codex-poly-bot-backend $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:${GITHUB_SHA}
-          docker tag codex-poly-bot-frontend $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:${GITHUB_SHA}
-          docker tag codex-poly-bot-backend $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:latest
-          docker tag codex-poly-bot-frontend $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:latest
-          docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:${GITHUB_SHA}
-          docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:${GITHUB_SHA}
-          docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:latest
-          docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:latest
+          docker tag codex-poly-bot-backend "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:${GITHUB_SHA}"
+          docker tag codex-poly-bot-frontend "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:${GITHUB_SHA}"
+          docker tag codex-poly-bot-backend "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:latest"
+          docker tag codex-poly-bot-frontend "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:latest"
+          docker push "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:${GITHUB_SHA}"
+          docker push "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:${GITHUB_SHA}"
+          docker push "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend:latest"
+          docker push "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-frontend:latest"
 
   deploy-development:
     name: Deploy development
@@ -145,12 +198,13 @@ jobs:
       - backend-tests
       - frontend-check
       - migration-safety
+      - infrastructure-deploy
       - container-build
+    environment: development
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -165,6 +219,9 @@ jobs:
             --cluster codex-poly-bot-development-cluster \
             --service codex-poly-bot-development-frontend \
             --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster codex-poly-bot-development-cluster \
+            --services codex-poly-bot-development-backend codex-poly-bot-development-frontend
 
   deploy-production:
     name: Deploy production
@@ -174,12 +231,13 @@ jobs:
       - backend-tests
       - frontend-check
       - migration-safety
+      - infrastructure-deploy
       - container-build
+    environment: production
     permissions:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -194,3 +252,6 @@ jobs:
             --cluster codex-poly-bot-production-cluster \
             --service codex-poly-bot-production-frontend \
             --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster codex-poly-bot-production-cluster \
+            --services codex-poly-bot-production-backend codex-poly-bot-production-frontend

@@ -1,10 +1,24 @@
 {
   "environment": "production",
   "secret_prefix": "/codex-poly-bot/production/",
+  "domain": {
+    "application_domain_name": "codex-poly-bot.repetere.net",
+    "ses_identity": "asyncdoc.net"
+  },
+  "runtime": {
+    "live_enabled": true,
+    "trading_account_mode": "live",
+    "default_selected_venue": "polymarket_us",
+    "polymarket_us_enabled": true,
+    "polymarket_international_enabled": false,
+    "alpaca_enabled": true
+  },
   "resource_names": [
     "codex-poly-bot-prod-rds",
     "codex-poly-bot-prod-snapshots",
     "codex-poly-bot-prod-ecs",
-    "codex-poly-bot-prod-wallet"
+    "codex-poly-bot-prod-wallet",
+    "codex-poly-bot-prod-openai-secret",
+    "codex-poly-bot-prod-anthropic-secret"
   ]
 }
