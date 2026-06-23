@@ -1,10 +1,24 @@
 {
   "environment": "development",
   "secret_prefix": "/codex-poly-bot/development/",
+  "domain": {
+    "application_domain_name": "dev-codex-poly-bot.repetere.net",
+    "ses_identity": "asyncdoc.net"
+  },
+  "runtime": {
+    "live_enabled": false,
+    "trading_account_mode": "paper",
+    "default_selected_venue": "alpaca",
+    "polymarket_us_enabled": false,
+    "polymarket_international_enabled": false,
+    "alpaca_enabled": true
+  },
   "resource_names": [
     "codex-poly-bot-dev-rds",
     "codex-poly-bot-dev-snapshots",
     "codex-poly-bot-dev-ecs",
-    "codex-poly-bot-dev-wallet"
+    "codex-poly-bot-dev-wallet",
+    "codex-poly-bot-dev-openai-secret",
+    "codex-poly-bot-dev-anthropic-secret"
   ]
 }

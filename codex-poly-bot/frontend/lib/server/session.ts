@@ -36,7 +36,7 @@ export async function createOAuthState(): Promise<string> {
     maxAge: OAUTH_STATE_TTL_SECONDS,
     path: "/",
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookiesEnabled(),
   });
   return state;
 }
@@ -62,7 +62,7 @@ export async function setDashboardSession(username: string): Promise<void> {
     maxAge: SESSION_TTL_SECONDS,
     path: "/",
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookiesEnabled(),
   });
 }
 
@@ -107,6 +107,14 @@ function sessionSecret(): string {
     throw new Error("DASHBOARD_SESSION_SECRET or BACKEND_TOKEN_SIGNING_SECRET is required");
   }
   return secret;
+}
+
+function secureCookiesEnabled(): boolean {
+  const appUrl = process.env.NEXTAUTH_URL;
+  if (appUrl) {
+    return appUrl.startsWith("https://");
+  }
+  return process.env.NODE_ENV === "production";
 }
 
 function safeEqual(left: string, right: string): boolean {

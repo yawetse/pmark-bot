@@ -8,6 +8,7 @@ REQ-UI-011, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +31,21 @@ class AppSettings:
     trusted_origins: tuple[str, ...] = ("http://localhost:3000",)
     csrf_token: str = "local-dev-csrf-token"
     environment: Environment = Environment.LOCAL
+
+    @classmethod
+    def from_env(cls) -> "AppSettings":
+        """Load deployed app settings from environment variables.
+
+        REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006
+        """
+
+        return cls(
+            allowed_usernames=_csv_env("DASHBOARD_ALLOWED_USERS", ("yaw",)),
+            signing_secret=os.environ.get("BACKEND_TOKEN_SIGNING_SECRET", "local-dev-session-secret"),
+            trusted_origins=_trusted_origins_from_env(),
+            csrf_token=os.environ.get("DASHBOARD_CSRF_TOKEN", "local-dev-csrf-token"),
+            environment=_environment_from_env(),
+        )
 
 
 @dataclass
@@ -78,7 +94,7 @@ def create_app(
     REQ: REQ-UI-001, REQ-OBS-006
     """
 
-    resolved_settings = settings or AppSettings()
+    resolved_settings = settings or AppSettings.from_env()
     resolved_services = services or build_dashboard_api_services(resolved_settings)
     app = FastAPI(title="codex-poly-bot backend")
     app.state.settings = resolved_settings
@@ -93,3 +109,24 @@ def create_app(
     )
     app.include_router(build_dashboard_router(resolved_settings, resolved_services))
     return app
+
+
+def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    values = tuple(item.strip() for item in os.environ.get(name, "").split(",") if item.strip())
+    return values or default
+
+
+def _trusted_origins_from_env() -> tuple[str, ...]:
+    configured = list(_csv_env("DASHBOARD_TRUSTED_ORIGINS", ()))
+    nextauth_url = os.environ.get("NEXTAUTH_URL")
+    if nextauth_url:
+        configured.append(nextauth_url)
+    return tuple(dict.fromkeys(configured)) or ("http://localhost:3000",)
+
+
+def _environment_from_env() -> Environment:
+    raw_value = os.environ.get("APP_ENV") or os.environ.get("ENVIRONMENT") or Environment.LOCAL.value
+    try:
+        return Environment(raw_value)
+    except ValueError:
+        return Environment.LOCAL

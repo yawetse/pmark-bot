@@ -8,6 +8,8 @@ Live trading requires separate credentials by environment, venue, and model prov
 
 Local development may read private keys and API credentials from gitignored `.env` files. Keep local values non-production. Tests and dry-runs must continue to pass with empty credential values.
 
+Use `scripts/sync-env-files.py` to normalize `.env.local`, `.env.development`, and `.env.production` without printing credential values. The script preserves existing values by default and can fill missing values from AWS Secrets Manager after `aws login` succeeds.
+
 ## Deployed Environments
 
 Deployed environments must read private keys, brokerage credentials, LLM API keys, dashboard secrets, and SES settings from AWS Secrets Manager. Secret names use this prefix:

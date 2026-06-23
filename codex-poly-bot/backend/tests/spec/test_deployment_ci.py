@@ -169,7 +169,9 @@ def test_req_dep_003_03_workflow_develop_branch_deploys_development_after_build(
     Then: development deployment is selected after tests, migration safety, and ECR publish
     """
     workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    root_workflow = PROJECT_ROOT.parent / ".github" / "workflows" / "codex-poly-bot-ci.yml"
 
+    assert root_workflow.is_file()
     assert "deploy-development:" in workflow_text
     assert "github.ref == 'refs/heads/develop'" in workflow_text
     assert "container-build" in workflow_text
@@ -292,8 +294,89 @@ def test_req_dep_006_03_workflow_publishes_ecr_images_before_ecs_deploy() -> Non
 
     assert build_index < deploy_index
     assert "docker build -t codex-poly-bot-backend" in workflow_text
-    assert "docker push $ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend" in workflow_text
+    assert 'docker push "$ECR_REGISTRY/codex-poly-bot-$DEPLOY_ENV-backend' in workflow_text
+    assert "codex-poly-bot-$DEPLOY_ENV-backend:latest" in workflow_text
+    assert "codex-poly-bot-$DEPLOY_ENV-frontend:latest" in workflow_text
     assert "aws ecs update-service" in workflow_text
+    assert "aws ecs wait services-stable" in workflow_text
+    assert "--service codex-poly-bot-production-frontend" in workflow_text
+
+def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -> None:
+    """TST-REQ-DEP-002-03: Validates REQ-DEP-002
+
+    Given: CloudFormation infrastructure
+    When: public application resources are inspected
+    Then: ALB, frontend service, backend service, and runtime env settings are defined
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+
+    assert "AWS::ElasticLoadBalancingV2::LoadBalancer" in text
+    assert "FrontendTaskDefinition" in text
+    assert "FrontendService" in text
+    assert "BackendTargetGroup" in text
+    assert "FrontendTargetGroup" in text
+    assert "DASHBOARD_ALLOWED_USERS" in text
+    assert "BACKEND_TOKEN_SIGNING_SECRET" in text
+    assert "ApplicationUrl" in text
+
+def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injection() -> None:
+    """TST-REQ-DEP-002-05: Validates REQ-DEP-002 and REQ-WAL-003
+
+    Given: production-safe remote deployment
+    When: CloudFormation infrastructure is inspected
+    Then: HTTPS, custom-domain URLs, and LLM secrets are configured by environment
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+
+    assert "ApplicationDomainName" in text
+    assert "CertificateArn" in text
+    assert "Protocol: HTTPS" in text
+    assert "StatusCode: HTTP_301" in text
+    assert "OPENAI_API_KEY" in text
+    assert "/codex-poly-bot/${EnvironmentName}/openai/api-key" in text
+    assert "ANTHROPIC_API_KEY" in text
+    assert "/codex-poly-bot/${EnvironmentName}/anthropic/api-key" in text
+    assert "TaskExecutionSecretAccessPolicy" in text
+
+def test_req_dep_002_04_cloudformation_keeps_frontend_auth_routes_on_frontend() -> None:
+    """TST-REQ-DEP-002-04: Validates REQ-DEP-002
+
+    Given: CloudFormation ALB listener rules
+    When: frontend auth and backend API routes are inspected
+    Then: /api/auth/* is routed to the frontend before backend /api/* routing
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+    auth_rule_index = text.index("FrontendAuthListenerRule")
+    backend_rule_index = text.index("BackendListenerRule")
+
+    assert auth_rule_index < backend_rule_index
+    assert "- /api/auth/*" in text
+    assert "Priority: 5" in text[auth_rule_index:backend_rule_index]
+    assert "- /api/*" in text[backend_rule_index:]
+    assert "Priority: 10" in text[backend_rule_index:]
+
+def test_req_dep_006_04_workflow_deploys_infrastructure_before_ecr_publish() -> None:
+    """TST-REQ-DEP-006-04: Validates REQ-DEP-006
+
+    Given: GitHub Actions deploys a branch environment
+    When: the workflow is inspected
+    Then: CloudFormation runs before ECR publish and ECS waits for stability
+    """
+    workflow_text = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    root_workflow_text = (
+        PROJECT_ROOT.parent / ".github" / "workflows" / "codex-poly-bot-ci.yml"
+    ).read_text()
+
+    for text in (workflow_text, root_workflow_text):
+        infra_index = text.index("infrastructure-deploy:")
+        build_index = text.index("container-build:")
+        deploy_index = text.index("deploy-production:")
+        assert infra_index < build_index < deploy_index
+        assert "Deploy CloudFormation stack" in text
+        assert "./codex-poly-bot/scripts/deploy-stack.sh" in text
+        assert "environment: production" in text
+        assert "environment: development" in text
+        assert "aws ecs wait services-stable" in text
 
 def test_req_dep_006_02_ecr_publish_fails_deployment_workflow_runs_ecs_deployment() -> None:
     """TST-REQ-DEP-006-02: Validates REQ-DEP-006

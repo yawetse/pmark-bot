@@ -23,6 +23,8 @@ const serverSession = read(files.serverSession);
 assert.match(serverSession, /import "server-only"/);
 assert.match(serverSession, /DASHBOARD_ALLOWED_USERS/);
 assert.match(serverSession, /httpOnly: true/);
+assert.match(serverSession, /secureCookiesEnabled/);
+assert.match(serverSession, /NEXTAUTH_URL/);
 
 const proxy = read(files.proxy);
 assert.match(proxy, /mintBackendToken/);

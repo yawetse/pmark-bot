@@ -1,13 +1,20 @@
 # REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006,
 # REQ-DEP-010, REQ-OBS-002
-name: CI
+name: Codex Poly Bot CI
 
 on:
   pull_request:
+    paths:
+      - "codex-poly-bot/**"
+      - ".github/workflows/codex-poly-bot-ci.yml"
   push:
     branches:
       - main
       - develop
+    paths:
+      - "codex-poly-bot/**"
+      - ".github/workflows/codex-poly-bot-ci.yml"
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-east-1
