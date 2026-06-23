@@ -81,6 +81,24 @@ Set these GitHub environment secrets for both environments:
 - `DATABASE_PASSWORD`
 - `DASHBOARD_GITHUB_CLIENT_SECRET`
 
+## GitHub OAuth Callback URLs
+
+Use a separate GitHub OAuth app for each deployed environment. The frontend sends a `redirect_uri` built from `NEXTAUTH_URL`, and CloudFormation sets `NEXTAUTH_URL` from `APPLICATION_DOMAIN_NAME`.
+
+| Environment | GitHub OAuth app callback URL |
+| --- | --- |
+| `development` | `https://dev-codex-poly-bot.repetere.net/api/auth/github/callback` |
+| `production` | `https://codex-poly-bot.repetere.net/api/auth/github/callback` |
+
+Store each OAuth app's client ID in that environment's `DASHBOARD_GITHUB_CLIENT_ID` variable and the matching client secret in `DASHBOARD_GITHUB_CLIENT_SECRET`. A GitHub "redirect_uri is not associated with this application" error means the callback URL registered on the OAuth app does not match the URL sent by `/api/auth/github/start`.
+
+Verify the deployed redirect before testing login:
+
+```bash
+curl -sSI https://dev-codex-poly-bot.repetere.net/api/auth/github/start | grep -i '^location:'
+curl -sSI https://codex-poly-bot.repetere.net/api/auth/github/start | grep -i '^location:'
+```
+
 Trading credentials are not stored in GitHub Actions secrets. Live venue, wallet, broker, LLM, and notification secrets must be stored in AWS Secrets Manager under the active environment prefix. The ECS task definitions inject `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from `/codex-poly-bot/{environment}/openai/api-key` and `/codex-poly-bot/{environment}/anthropic/api-key`.
 
 CloudFormation creates placeholder OpenAI and Anthropic secret values so ECS can start before provider keys exist. Replace those AWS Secrets Manager values with provider-issued API keys before using model-backed workflows.
