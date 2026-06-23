@@ -10,18 +10,73 @@ from pydantic import ValidationError
 from tests.spec.helpers import pending
 from app.bootstrap import load_runtime_defaults, safe_defaults, venue_operation_gate, with_venue_enabled
 from app.db import RepositoryRegistry
-from app.domain import Environment, Instrument, InstrumentType, Venue, supported_polymarket_venues
-from app.services import ActorContext, AuthService, ConfigPatchOperation, ConfigService
+from app.domain import Environment, Instrument, InstrumentType, OrderType, Venue, supported_polymarket_venues
+from app.services import (
+    ActorContext,
+    AuthService,
+    ConfigPatchOperation,
+    ConfigService,
+    PolymarketExecutionRequest,
+    execute_polymarket_order,
+)
 from app.venues import (
+    POLYMARKET_US_API_BASE_URL,
+    PolymarketApiCredentials,
     PolymarketClientBoundary,
     PolymarketContractClient,
+    PolymarketLiveOrderAdapter,
+    PolymarketLiveOrderRequest,
     PolymarketVenueConfig,
     VenueOperation,
     allowed_when_venue_disabled,
+    build_polymarket_order_payload,
     polymarket_live_eligibility_gate,
     polymarket_market_data_live_gate,
     validate_polymarket_config,
 )
+
+
+class FakePolymarketOrders:
+    def __init__(self) -> None:
+        self.create_calls: list[dict] = []
+        self.preview_calls: list[dict] = []
+
+    def create(self, params: dict) -> dict:
+        self.create_calls.append(params)
+        return {"id": "pm-order-1", "executions": []}
+
+    def preview(self, params: dict) -> dict:
+        self.preview_calls.append(params)
+        return {"order": {"id": "pm-preview-1"}}
+
+
+class FakePolymarketMarkets:
+    def __init__(self) -> None:
+        self.list_calls: list[dict | None] = []
+
+    def list(self, params: dict | None = None) -> dict:
+        self.list_calls.append(params)
+        return {"markets": [{"slug": "will-fed-cut"}]}
+
+
+class FakePolymarketAccount:
+    def __init__(self) -> None:
+        self.balance_calls = 0
+
+    def balances(self) -> dict:
+        self.balance_calls += 1
+        return {"balances": []}
+
+
+class FakePolymarketSdkClient:
+    def __init__(self) -> None:
+        self.orders = FakePolymarketOrders()
+        self.markets = FakePolymarketMarkets()
+        self.account = FakePolymarketAccount()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_req_ven_001_01_supported_venue_configs_polymarket_us_international_venue_adapters() -> None:
@@ -175,6 +230,201 @@ def test_req_ven_004_03_dry_run_polymarket_read_uses_approved_read_boundary_with
     assert result.payload["live_submit_attempted"] is False
     assert client.read_attempts == 1
     assert client.submit_attempts == 0
+
+
+def test_req_ven_004_04_polymarket_us_order_payload_maps_to_official_sdk_shape() -> None:
+    """TST-REQ-VEN-004-04: Validates REQ-VEN-004
+
+    Given: a validated Polymarket US limit order request
+    When: the adapter builds an SDK payload
+    Then: the payload uses the official SDK field names and amount objects
+    """
+    result = build_polymarket_order_payload(
+        PolymarketLiveOrderRequest(
+            market_slug="will-fed-cut",
+            intent="ORDER_INTENT_BUY_LONG",
+            order_type=OrderType.LIMIT,
+            price="0.55",
+            quantity="2",
+            tif="TIME_IN_FORCE_GOOD_TILL_CANCEL",
+        )
+    )
+
+    assert result.ok
+    payload = result.payload["order_payload"]
+    assert payload["marketSlug"] == "will-fed-cut"
+    assert payload["intent"] == "ORDER_INTENT_BUY_LONG"
+    assert payload["type"] == "ORDER_TYPE_LIMIT"
+    assert payload["price"] == {"value": "0.55", "currency": "USD"}
+    assert payload["quantity"] == 2
+    assert payload["manualOrderIndicator"] == "MANUAL_ORDER_INDICATOR_AUTOMATIC"
+
+
+def test_req_ven_004_05_polymarket_us_sdk_live_adapter_submits_order_through_official_sdk() -> None:
+    """TST-REQ-VEN-004-05: Validates REQ-VEN-004
+
+    Given: live mode, credentials, and a fake official SDK client
+    When: execution submits a Polymarket US order
+    Then: the adapter calls `orders.create` and returns only safe metadata
+    """
+    sdk = FakePolymarketSdkClient()
+    adapter = PolymarketLiveOrderAdapter(
+        config=PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+            base_url=POLYMARKET_US_API_BASE_URL,
+            credential_ref="/codex-poly-bot/production/polymarket/secret-key",
+        ),
+        credentials=PolymarketApiCredentials(key_id="pm-key", secret_key="pm-secret"),
+        client_factory=lambda: sdk,
+    )
+
+    result = adapter.submit_order(
+        PolymarketLiveOrderRequest(
+            market_slug="will-fed-cut",
+            intent="ORDER_INTENT_BUY_LONG",
+            order_type=OrderType.LIMIT,
+            price="0.55",
+            quantity="2",
+        )
+    )
+
+    assert result.ok
+    assert sdk.orders.create_calls[0]["marketSlug"] == "will-fed-cut"
+    assert sdk.orders.create_calls[0]["price"] == {"value": "0.55", "currency": "USD"}
+    assert sdk.orders.preview_calls == []
+    assert sdk.closed is True
+    assert result.payload["operation"] == "submit_order"
+    assert result.payload["venue_order_id"] == "pm-order-1"
+    assert "pm-secret" not in str(result.payload)
+
+
+def test_req_ven_004_06_polymarket_us_sdk_preview_does_not_create_live_order() -> None:
+    """TST-REQ-VEN-004-06: Validates REQ-VEN-004
+
+    Given: a Polymarket US adapter and live order request
+    When: preview is requested
+    Then: the adapter calls `orders.preview` and does not create an order
+    """
+    sdk = FakePolymarketSdkClient()
+    adapter = PolymarketLiveOrderAdapter(
+        config=PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+            base_url=POLYMARKET_US_API_BASE_URL,
+            credential_ref="/codex-poly-bot/production/polymarket/secret-key",
+        ),
+        credentials=PolymarketApiCredentials(key_id="pm-key", secret_key="pm-secret"),
+        client_factory=lambda: sdk,
+    )
+
+    result = adapter.preview_order(
+        PolymarketLiveOrderRequest(
+            market_slug="will-fed-cut",
+            intent="ORDER_INTENT_BUY_LONG",
+            order_type=OrderType.LIMIT,
+            price="0.55",
+            quantity="2",
+        )
+    )
+
+    assert result.ok
+    assert sdk.orders.create_calls == []
+    assert sdk.orders.preview_calls[0]["request"]["marketSlug"] == "will-fed-cut"
+    assert result.payload["operation"] == "preview_order"
+
+
+def test_req_ven_004_07_missing_polymarket_secret_blocks_before_sdk_call() -> None:
+    """TST-REQ-VEN-004-07: Validates REQ-VEN-004
+
+    Given: a live adapter with missing API secret
+    When: submission is attempted
+    Then: the adapter refuses before creating an SDK client
+    """
+    factory_called = False
+
+    def client_factory() -> FakePolymarketSdkClient:
+        nonlocal factory_called
+        factory_called = True
+        return FakePolymarketSdkClient()
+
+    adapter = PolymarketLiveOrderAdapter(
+        config=PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+            base_url=POLYMARKET_US_API_BASE_URL,
+            credential_ref="/codex-poly-bot/production/polymarket/secret-key",
+        ),
+        credentials=PolymarketApiCredentials(key_id="pm-key", secret_key=""),
+        client_factory=client_factory,
+    )
+
+    result = adapter.submit_order(
+        PolymarketLiveOrderRequest(
+            market_slug="will-fed-cut",
+            intent="ORDER_INTENT_BUY_LONG",
+            order_type=OrderType.LIMIT,
+            price="0.55",
+            quantity="2",
+        )
+    )
+
+    assert not result.ok
+    assert "missing Polymarket secret key" in result.refusal_reasons
+    assert factory_called is False
+
+
+def test_req_ven_004_08_execution_service_routes_polymarket_live_orders_to_adapter() -> None:
+    """TST-REQ-VEN-004-08: Validates REQ-VEN-004
+
+    Given: a risk-approved Polymarket live execution request
+    When: execution runs in live mode
+    Then: the service submits through the configured adapter boundary
+    """
+
+    class Submitter:
+        def __init__(self) -> None:
+            self.calls: list[PolymarketLiveOrderRequest] = []
+
+        def submit_order(self, request: PolymarketLiveOrderRequest):
+            self.calls.append(request)
+            return type(
+                "Result",
+                (),
+                {
+                    "ok": True,
+                    "payload": {"venue_order_id": "pm-order-1"},
+                    "refusal_reason": None,
+                },
+            )()
+
+    order = PolymarketLiveOrderRequest(
+        market_slug="will-fed-cut",
+        intent="ORDER_INTENT_BUY_LONG",
+        order_type=OrderType.LIMIT,
+        price="0.55",
+        quantity="2",
+    )
+    submitter = Submitter()
+
+    result = execute_polymarket_order(
+        PolymarketExecutionRequest(
+            global_execution_mode="live",
+            risk_approved=True,
+            order=order,
+        ),
+        submitter=submitter,
+    )
+
+    assert result.status == "submitted"
+    assert result.broker_submitted is True
+    assert submitter.calls == [order]
 
 def test_req_ven_005_01_unsupported_venue_configuration_environment_live_order_checks_run() -> None:
     """TST-REQ-VEN-005-01: Validates REQ-VEN-005

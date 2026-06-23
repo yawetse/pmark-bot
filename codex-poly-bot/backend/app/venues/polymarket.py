@@ -11,12 +11,45 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import Any
+import os
+from typing import Any, Callable, Protocol
 
 from app.bootstrap import configured_slippage_threshold
 from app.db import RepositoryRegistry
 from app.domain import Environment, OrderType, Venue, supported_polymarket_venues
-from app.services.ingestion_service import check_market_data_freshness
+
+
+POLYMARKET_US_API_BASE_URL = "https://api.polymarket.us"
+POLYMARKET_US_GATEWAY_BASE_URL = "https://gateway.polymarket.us"
+
+POLYMARKET_ORDER_INTENTS = frozenset(
+    {
+        "ORDER_INTENT_BUY_LONG",
+        "ORDER_INTENT_SELL_LONG",
+        "ORDER_INTENT_BUY_SHORT",
+        "ORDER_INTENT_SELL_SHORT",
+    }
+)
+POLYMARKET_ORDER_TYPES = {
+    OrderType.LIMIT.value: "ORDER_TYPE_LIMIT",
+    OrderType.MARKET.value: "ORDER_TYPE_MARKET",
+    "ORDER_TYPE_LIMIT": "ORDER_TYPE_LIMIT",
+    "ORDER_TYPE_MARKET": "ORDER_TYPE_MARKET",
+}
+POLYMARKET_TIME_IN_FORCE = frozenset(
+    {
+        "TIME_IN_FORCE_GOOD_TILL_CANCEL",
+        "TIME_IN_FORCE_GOOD_TILL_DATE",
+        "TIME_IN_FORCE_IMMEDIATE_OR_CANCEL",
+        "TIME_IN_FORCE_FILL_OR_KILL",
+    }
+)
+POLYMARKET_MANUAL_ORDER_INDICATORS = frozenset(
+    {
+        "MANUAL_ORDER_INDICATOR_MANUAL",
+        "MANUAL_ORDER_INDICATOR_AUTOMATIC",
+    }
+)
 
 
 class VenueOperation(str, Enum):
@@ -73,8 +106,96 @@ class PolymarketVenueConfig:
     client_boundary: PolymarketClientBoundary
     base_url: str
     credential_ref: str | None = None
+    gateway_base_url: str = POLYMARKET_US_GATEWAY_BASE_URL
     jurisdiction_supported: bool = True
     stale_threshold_seconds: int = 60
+    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
+class PolymarketApiCredentials:
+    """Polymarket US API credentials for SDK authentication.
+
+    REQ: REQ-WAL-005, REQ-WAL-006, REQ-VEN-004
+    """
+
+    key_id: str
+    secret_key: str
+
+    @classmethod
+    def from_env(cls, environ: dict[str, str] | None = None) -> PolymarketApiCredentials:
+        """Load API credentials without exposing private material.
+
+        REQ: REQ-WAL-005, REQ-WAL-006
+        """
+
+        source = environ if environ is not None else os.environ
+        return cls(
+            key_id=source.get("POLYMARKET_KEY_ID", "").strip(),
+            secret_key=(
+                source.get("POLYMARKET_SECRET_KEY", "").strip()
+                or source.get("POLYMARKET_PRIVATE_KEY", "").strip()
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class PolymarketLiveOrderRequest:
+    """Venue-native Polymarket US live order request.
+
+    REQ: REQ-VEN-004, REQ-EXE-010, REQ-EXE-011
+    """
+
+    market_slug: str
+    intent: str
+    order_type: OrderType | str
+    tif: str = "TIME_IN_FORCE_GOOD_TILL_CANCEL"
+    price: Decimal | str | None = None
+    quantity: Decimal | str | int | float | None = None
+    cash_order_qty: Decimal | str | None = None
+    participate_dont_initiate: bool = False
+    good_till_time: str | None = None
+    manual_order_indicator: str = "MANUAL_ORDER_INDICATOR_AUTOMATIC"
+    synchronous_execution: bool = True
+    max_block_time: str | None = None
+    current_price: Decimal | str | None = None
+    slippage_tolerance_bips: int | None = None
+    slippage_tolerance_ticks: int | None = None
+
+
+class PolymarketUsOrdersClient(Protocol):
+    """Subset of the official SDK orders resource used by the adapter."""
+
+    def create(self, params: dict[str, Any]) -> Any:
+        ...
+
+    def preview(self, params: dict[str, Any]) -> Any:
+        ...
+
+
+class PolymarketUsMarketsClient(Protocol):
+    """Subset of the official SDK markets resource used by the adapter."""
+
+    def list(self, params: dict[str, Any] | None = None) -> Any:
+        ...
+
+
+class PolymarketUsAccountClient(Protocol):
+    """Subset of the official SDK account resource used by the adapter."""
+
+    def balances(self) -> Any:
+        ...
+
+
+class PolymarketUsSdkClient(Protocol):
+    """Subset of the official SDK client used by this service boundary."""
+
+    orders: PolymarketUsOrdersClient
+    markets: PolymarketUsMarketsClient
+    account: PolymarketUsAccountClient
+
+    def close(self) -> None:
+        ...
 
 
 def validate_polymarket_config(config: PolymarketVenueConfig) -> VenueCallResult:
@@ -250,6 +371,8 @@ def polymarket_market_data_live_gate(
     REQ: REQ-DAT-005, REQ-EXE-016, REQ-EXE-017
     """
 
+    from app.services.ingestion_service import check_market_data_freshness
+
     config_result = validate_polymarket_config(config)
     if not config_result.ok:
         return polymarket_live_eligibility_gate(
@@ -382,6 +505,374 @@ def check_market_order_slippage(
             "estimated_slippage": str(observed),
             "threshold": str(threshold),
         },
+    )
+
+
+def validate_polymarket_credentials(credentials: PolymarketApiCredentials) -> VenueCallResult:
+    """Validate that SDK authentication can be attempted.
+
+    REQ: REQ-WAL-005, REQ-WAL-006, REQ-VEN-004
+    """
+
+    reasons: list[str] = []
+    if not credentials.key_id.strip():
+        reasons.append("missing Polymarket key id")
+    if not credentials.secret_key.strip():
+        reasons.append("missing Polymarket secret key")
+    return VenueCallResult(ok=not reasons, refusal_reasons=tuple(reasons))
+
+
+def build_polymarket_order_payload(request: PolymarketLiveOrderRequest) -> VenueCallResult:
+    """Build the official SDK order payload after local validation.
+
+    REQ: REQ-VEN-004, REQ-EXE-010, REQ-EXE-011
+    """
+
+    reasons: list[str] = []
+    market_slug = request.market_slug.strip()
+    intent = request.intent.strip().upper()
+    order_type_raw = request.order_type.value if isinstance(request.order_type, OrderType) else str(request.order_type)
+    order_type = POLYMARKET_ORDER_TYPES.get(order_type_raw.strip().lower()) or POLYMARKET_ORDER_TYPES.get(
+        order_type_raw.strip().upper()
+    )
+    tif = request.tif.strip().upper()
+    manual_order_indicator = request.manual_order_indicator.strip().upper()
+
+    if not market_slug:
+        reasons.append("missing Polymarket market slug")
+    if intent not in POLYMARKET_ORDER_INTENTS:
+        reasons.append("unsupported Polymarket order intent")
+    if order_type not in set(POLYMARKET_ORDER_TYPES.values()):
+        reasons.append("unsupported order type")
+    if tif not in POLYMARKET_TIME_IN_FORCE:
+        reasons.append("unsupported Polymarket time in force")
+    if manual_order_indicator not in POLYMARKET_MANUAL_ORDER_INDICATORS:
+        reasons.append("unsupported Polymarket manual order indicator")
+
+    price_amount = _amount_payload(request.price, "price", reasons) if request.price is not None else None
+    quantity = _numeric_payload(request.quantity, "quantity", reasons) if request.quantity is not None else None
+    cash_order_qty = (
+        _amount_payload(request.cash_order_qty, "cash_order_qty", reasons)
+        if request.cash_order_qty is not None
+        else None
+    )
+    current_price = (
+        _amount_payload(request.current_price, "current_price", reasons)
+        if request.current_price is not None
+        else None
+    )
+    if order_type == "ORDER_TYPE_LIMIT":
+        if price_amount is None:
+            reasons.append("limit orders require price")
+        if quantity is None:
+            reasons.append("limit orders require quantity")
+    if order_type == "ORDER_TYPE_MARKET" and quantity is None and cash_order_qty is None:
+        reasons.append("market orders require quantity or cash order quantity")
+    if request.slippage_tolerance_bips is not None and request.slippage_tolerance_bips < 0:
+        reasons.append("slippage tolerance bips cannot be negative")
+    if request.slippage_tolerance_ticks is not None and request.slippage_tolerance_ticks < 0:
+        reasons.append("slippage tolerance ticks cannot be negative")
+    if reasons:
+        return VenueCallResult(ok=False, refusal_reasons=tuple(reasons))
+
+    payload: dict[str, Any] = {
+        "marketSlug": market_slug,
+        "intent": intent,
+        "type": order_type,
+        "tif": tif,
+        "manualOrderIndicator": manual_order_indicator,
+        "synchronousExecution": request.synchronous_execution,
+    }
+    if price_amount is not None:
+        payload["price"] = price_amount
+    if quantity is not None:
+        payload["quantity"] = quantity
+    if cash_order_qty is not None:
+        payload["cashOrderQty"] = cash_order_qty
+    if request.participate_dont_initiate:
+        payload["participateDontInitiate"] = True
+    if request.good_till_time:
+        payload["goodTillTime"] = request.good_till_time
+    if request.max_block_time:
+        payload["maxBlockTime"] = request.max_block_time
+    slippage_tolerance: dict[str, Any] = {}
+    if current_price is not None:
+        slippage_tolerance["currentPrice"] = current_price
+    if request.slippage_tolerance_bips is not None:
+        slippage_tolerance["bips"] = request.slippage_tolerance_bips
+    if request.slippage_tolerance_ticks is not None:
+        slippage_tolerance["ticks"] = request.slippage_tolerance_ticks
+    if slippage_tolerance:
+        payload["slippageTolerance"] = slippage_tolerance
+
+    return VenueCallResult(
+        ok=True,
+        payload={
+            "order_payload": payload,
+            "market_slug": market_slug,
+            "order_type": order_type,
+            "intent": intent,
+        },
+    )
+
+
+def _decimal_payload(value: Decimal | str | int | float, field_name: str, reasons: list[str]) -> Decimal | None:
+    try:
+        decimal = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        reasons.append(f"{field_name} must be a decimal")
+        return None
+    if not decimal.is_finite():
+        reasons.append(f"{field_name} must be finite")
+        return None
+    if decimal <= 0:
+        reasons.append(f"{field_name} must be positive")
+        return None
+    return decimal
+
+
+def _amount_payload(
+    value: Decimal | str | int | float | None,
+    field_name: str,
+    reasons: list[str],
+) -> dict[str, str] | None:
+    if value is None:
+        return None
+    decimal = _decimal_payload(value, field_name, reasons)
+    if decimal is None:
+        return None
+    return {"value": format(decimal, "f"), "currency": "USD"}
+
+
+def _numeric_payload(
+    value: Decimal | str | int | float | None,
+    field_name: str,
+    reasons: list[str],
+) -> int | float | None:
+    if value is None:
+        return None
+    decimal = _decimal_payload(value, field_name, reasons)
+    if decimal is None:
+        return None
+    if decimal == decimal.to_integral_value():
+        return int(decimal)
+    return float(decimal)
+
+
+def _response_value(response: Any, key: str) -> Any:
+    if isinstance(response, dict):
+        return response.get(key)
+    return getattr(response, key, None)
+
+
+class PolymarketLiveOrderAdapter:
+    """Real Polymarket US adapter backed by the official SDK.
+
+    REQ: REQ-VEN-004, REQ-EXE-010, REQ-EXE-011, REQ-EXE-017
+    """
+
+    def __init__(
+        self,
+        *,
+        config: PolymarketVenueConfig,
+        credentials: PolymarketApiCredentials,
+        client_factory: Callable[[], PolymarketUsSdkClient] | None = None,
+    ) -> None:
+        self.config = config
+        self.credentials = credentials
+        self._client_factory = client_factory
+
+    def verify_credentials(self) -> VenueCallResult:
+        """Check read-only authenticated access without returning account data.
+
+        REQ: REQ-WAL-005, REQ-WAL-006, REQ-EXE-017
+        """
+
+        preflight = self._preflight(require_official_sdk=False)
+        if not preflight.ok:
+            return preflight
+        client = self._new_client()
+        try:
+            client.account.balances()
+            return VenueCallResult(
+                ok=True,
+                payload={
+                    "operation": "verify_credentials",
+                    "venue": self.config.venue.value,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - exact SDK exceptions vary by installed version.
+            return self._sdk_failure(exc, operation="verify_credentials")
+        finally:
+            self._close_client(client)
+
+    def read_markets(self, *, limit: int = 50, slugs: tuple[str, ...] = ()) -> VenueCallResult:
+        """Read markets through the official SDK without order submission.
+
+        REQ: REQ-VEN-004, REQ-DAT-001, REQ-DAT-002, REQ-EXE-017
+        """
+
+        preflight = self._preflight(require_official_sdk=False)
+        if not preflight.ok:
+            return preflight
+        if limit <= 0:
+            return VenueCallResult(ok=False, refusal_reasons=("market read limit must be positive",))
+        params: dict[str, Any] = {"limit": limit}
+        if slugs:
+            params["slug"] = list(slugs)
+        client = self._new_client()
+        try:
+            response = client.markets.list(params)
+            markets = _response_value(response, "markets") or ()
+            return VenueCallResult(
+                ok=True,
+                payload={
+                    "client_boundary": self.config.client_boundary.value,
+                    "market_count": len(markets),
+                    "operation": "read_markets",
+                    "venue": self.config.venue.value,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - exact SDK exceptions vary by installed version.
+            return self._sdk_failure(exc, operation="read_markets")
+        finally:
+            self._close_client(client)
+
+    def preview_order(self, request: PolymarketLiveOrderRequest) -> VenueCallResult:
+        """Preview an order through the official SDK without creating it.
+
+        REQ: REQ-VEN-004, REQ-EXE-017
+        """
+
+        return self._send_order(request, create=False)
+
+    def submit_order(self, request: PolymarketLiveOrderRequest) -> VenueCallResult:
+        """Submit a live order through the official SDK.
+
+        REQ: REQ-VEN-004, REQ-EXE-010, REQ-EXE-011
+        """
+
+        return self._send_order(request, create=True)
+
+    def _send_order(self, request: PolymarketLiveOrderRequest, *, create: bool) -> VenueCallResult:
+        preflight = self._preflight(require_official_sdk=True)
+        if not preflight.ok:
+            return preflight
+        payload_result = build_polymarket_order_payload(request)
+        if not payload_result.ok:
+            return payload_result
+        order_payload = payload_result.payload["order_payload"]
+        client = self._new_client()
+        try:
+            if create:
+                response = client.orders.create(order_payload)
+                operation = "submit_order"
+            else:
+                response = client.orders.preview({"request": order_payload})
+                operation = "preview_order"
+            venue_order_id = _response_value(response, "id")
+            return VenueCallResult(
+                ok=True,
+                payload={
+                    "client_boundary": self.config.client_boundary.value,
+                    "intent": payload_result.payload["intent"],
+                    "market_slug": payload_result.payload["market_slug"],
+                    "operation": operation,
+                    "order_type": payload_result.payload["order_type"],
+                    "venue": self.config.venue.value,
+                    "venue_order_id": str(venue_order_id) if venue_order_id else None,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - exact SDK exceptions vary by installed version.
+            return self._sdk_failure(exc, operation="submit_order" if create else "preview_order")
+        finally:
+            self._close_client(client)
+
+    def _preflight(self, *, require_official_sdk: bool) -> VenueCallResult:
+        config_result = validate_polymarket_config(self.config)
+        if not config_result.ok:
+            return config_result
+        if not self.config.enabled:
+            return VenueCallResult(ok=False, refusal_reasons=("Polymarket venue disabled",))
+        if require_official_sdk and self.config.client_boundary != PolymarketClientBoundary.OFFICIAL_SDK:
+            return VenueCallResult(
+                ok=False,
+                refusal_reasons=("Polymarket live adapter requires official SDK",),
+            )
+        credentials_result = validate_polymarket_credentials(self.credentials)
+        if not credentials_result.ok:
+            return credentials_result
+        return VenueCallResult(ok=True)
+
+    def _new_client(self) -> PolymarketUsSdkClient:
+        if self._client_factory is not None:
+            return self._client_factory()
+        from polymarket_us import PolymarketUS
+
+        return PolymarketUS(
+            key_id=self.credentials.key_id,
+            secret_key=self.credentials.secret_key,
+            gateway_base_url=self.config.gateway_base_url,
+            api_base_url=self.config.base_url,
+            timeout=self.config.timeout_seconds,
+        )
+
+    def _sdk_failure(self, exc: Exception, *, operation: str) -> VenueCallResult:
+        status_code = getattr(exc, "status_code", None)
+        request_id = getattr(exc, "request_id", None)
+        payload: dict[str, Any] = {
+            "error_type": type(exc).__name__,
+            "operation": operation,
+            "venue": self.config.venue.value,
+        }
+        if status_code is not None:
+            payload["status_code"] = status_code
+        if request_id:
+            payload["request_id"] = request_id
+        return VenueCallResult(
+            ok=False,
+            refusal_reasons=("Polymarket SDK call failed",),
+            payload=payload,
+        )
+
+    @staticmethod
+    def _close_client(client: PolymarketUsSdkClient) -> None:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+
+
+def polymarket_us_live_adapter_from_env(
+    environ: dict[str, str] | None = None,
+) -> PolymarketLiveOrderAdapter:
+    """Build a production Polymarket US adapter from environment variables.
+
+    REQ: REQ-WAL-005, REQ-WAL-006, REQ-VEN-004
+    """
+
+    source = environ if environ is not None else os.environ
+    live_enabled = source.get("LIVE_ENABLED", "false").strip().lower() == "true"
+    enabled = source.get("POLYMARKET_US_ENABLED", "false").strip().lower() == "true"
+    config = PolymarketVenueConfig(
+        venue=Venue.POLYMARKET_US,
+        enabled=enabled,
+        live_enabled=live_enabled,
+        client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+        base_url=(
+            source.get("POLYMARKET_API_BASE_URL", "").strip()
+            or source.get("POLYMARKET_BASE_URL", "").strip()
+            or POLYMARKET_US_API_BASE_URL
+        ),
+        gateway_base_url=source.get("POLYMARKET_GATEWAY_BASE_URL", POLYMARKET_US_GATEWAY_BASE_URL).strip()
+        or POLYMARKET_US_GATEWAY_BASE_URL,
+        credential_ref=source.get(
+            "POLYMARKET_CREDENTIAL_REF",
+            f"/codex-poly-bot/{source.get('ENVIRONMENT', 'local')}/polymarket/secret-key",
+        ),
+    )
+    return PolymarketLiveOrderAdapter(
+        config=config,
+        credentials=PolymarketApiCredentials.from_env(source),
     )
 
 
