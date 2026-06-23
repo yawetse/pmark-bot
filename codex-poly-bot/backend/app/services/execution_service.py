@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
 from app.domain import ModelProvider, Venue
-from app.venues.polymarket import VenueCallResult
+from app.venues.polymarket import PolymarketLiveOrderRequest, VenueCallResult
 
 
 class AlpacaVenueSubmitter(Protocol):
@@ -21,6 +21,16 @@ class AlpacaVenueSubmitter(Protocol):
     """
 
     def submit_order(self, *, account_mode: str, symbol: str, notional: Decimal) -> str:
+        ...
+
+
+class PolymarketVenueSubmitter(Protocol):
+    """Minimal Polymarket submitter boundary used by execution tests.
+
+    REQ: REQ-VEN-004, REQ-EXE-010
+    """
+
+    def submit_order(self, request: PolymarketLiveOrderRequest) -> VenueCallResult:
         ...
 
 
@@ -36,6 +46,19 @@ class AlpacaExecutionRequest:
     risk_approved: bool
     symbol: str
     notional: Decimal | str
+    risk_refusal_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class PolymarketExecutionRequest:
+    """Polymarket execution request after risk evaluation.
+
+    REQ: REQ-VEN-004, REQ-EXE-010, REQ-EXE-011
+    """
+
+    global_execution_mode: str
+    risk_approved: bool
+    order: PolymarketLiveOrderRequest
     risk_refusal_reason: str | None = None
 
 
@@ -188,6 +211,61 @@ def execute_dry_run_order(
             "notional": str(notional),
             "submit_calls": submitter.submit_calls,
         },
+    )
+
+
+def execute_polymarket_order(
+    request: PolymarketExecutionRequest,
+    *,
+    submitter: PolymarketVenueSubmitter,
+) -> ExecutionResult:
+    """Record simulated Polymarket orders or submit approved live orders.
+
+    REQ: REQ-VEN-004, REQ-EXE-010, REQ-EXE-011
+    """
+
+    if not request.risk_approved:
+        return ExecutionResult(
+            status="refused",
+            order_recorded=False,
+            broker_submitted=False,
+            refusal_reason=request.risk_refusal_reason or "RISK_CHECK_FAILED",
+        )
+    if request.global_execution_mode == "dry_run":
+        return ExecutionResult(
+            status="simulated",
+            order_recorded=True,
+            broker_submitted=False,
+            payload={
+                "market_slug": request.order.market_slug,
+                "order_type": request.order.order_type.value
+                if hasattr(request.order.order_type, "value")
+                else str(request.order.order_type),
+                "venue": Venue.POLYMARKET_US.value,
+            },
+        )
+    if request.global_execution_mode != "live":
+        return ExecutionResult(
+            status="refused",
+            order_recorded=False,
+            broker_submitted=False,
+            refusal_reason="LIVE_DISABLED",
+        )
+
+    venue_result = submitter.submit_order(request.order)
+    if not venue_result.ok:
+        return ExecutionResult(
+            status="refused",
+            order_recorded=False,
+            broker_submitted=False,
+            refusal_reason=venue_result.refusal_reason,
+            payload=venue_result.payload,
+        )
+    return ExecutionResult(
+        status="submitted",
+        order_recorded=True,
+        broker_submitted=True,
+        payload=venue_result.payload,
     )
 
 

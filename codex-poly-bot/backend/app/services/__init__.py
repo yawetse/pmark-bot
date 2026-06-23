@@ -66,9 +66,11 @@ from app.services.execution_service import (
     FakeVenueSubmitter,
     KillSwitchCancelResult,
     OpenOrder,
+    PolymarketExecutionRequest,
     cancel_open_orders_for_kill_switch,
     execute_dry_run_order,
     execute_alpaca_order,
+    execute_polymarket_order,
     resolve_alpaca_account_mode,
 )
 from app.services.exit_service import (
@@ -228,6 +230,7 @@ __all__ = [
     "ObservabilitySnapshot",
     "OpenAIResponsesProvider",
     "OpenOrder",
+    "PolymarketExecutionRequest",
     "PerformanceRecord",
     "PolymarketRiskConfig",
     "PolymarketRiskInput",
@@ -265,6 +268,7 @@ __all__ = [
     "check_market_data_freshness",
     "execute_dry_run_order",
     "execute_alpaca_order",
+    "execute_polymarket_order",
     "execute_exit_order",
     "evaluate_live_order_gates",
     "evaluate_alpaca_risk_limits",
