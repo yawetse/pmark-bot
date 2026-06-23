@@ -27,7 +27,7 @@ def _clock() -> FakeClock:
     return FakeClock(datetime(2026, 4, 26, 12, 0, tzinfo=UTC))
 
 
-def _markets_payload(n: int = 2) -> list[dict]:
+def _markets_payload(n: int = 2) -> list[dict[str, str]]:
     end_iso = (datetime(2026, 4, 26, 12, 0, tzinfo=UTC) + timedelta(hours=24)).isoformat()
     return [
         {

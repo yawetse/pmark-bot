@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -84,25 +84,55 @@ async def retrying_db(
     base_delay_sec: float = 1.0,
     max_delay_sec: float = 8.0,
 ) -> AsyncIterator[None]:
-    """Wrap a DB operation in exponential-backoff retry.
+    """Wrap one DB attempt and pause before propagating transient errors.
 
     Loops use this to PAUSE on transient RDS errors (failover window) rather
-    than crashing the process on first failure. `IntegrityError` is NOT
-    retried — those indicate programmer/data bugs, not transient state.
+    than tight-looping after first failure. A context manager cannot re-run the
+    caller's block, so use `run_with_retry` when the whole operation should be
+    retried by this module. `IntegrityError` is NOT retried because it indicates
+    a programmer/data bug, not transient state.
 
-    Raises after exhausting attempts so the caller can decide to crash.
+    Raises so the caller can decide to retry, pause, or crash.
     """
+    del max_attempts, max_delay_sec
+    try:
+        yield
+    except (OperationalError, DBAPIError) as e:
+        if _is_transient_db_error(e):
+            logger.warning(
+                "db_op_retry",
+                extra={
+                    "op": op_name,
+                    "attempt": 1,
+                    "delay_sec": base_delay_sec,
+                    "error_type": type(e).__name__,
+                },
+            )
+            await asyncio.sleep(base_delay_sec)
+        else:
+            logger.error(
+                "db_op_failed",
+                extra={"op": op_name, "attempt": 1, "exhausted": True},
+            )
+        raise
+
+
+async def run_with_retry[T](
+    op_name: str,
+    operation: Callable[[], Awaitable[T]],
+    *,
+    max_attempts: int = 5,
+    base_delay_sec: float = 1.0,
+    max_delay_sec: float = 8.0,
+) -> T:
+    """Run an async DB operation with exponential-backoff retry."""
     attempt = 1
     delay = base_delay_sec
     while True:
         try:
-            yield
-            return
+            return await operation()
         except (OperationalError, DBAPIError) as e:
-            transient = isinstance(e, OperationalError) or getattr(
-                e, "connection_invalidated", False
-            )
-            if not transient or attempt >= max_attempts:
+            if not _is_transient_db_error(e) or attempt >= max_attempts:
                 logger.error(
                     "db_op_failed",
                     extra={
@@ -126,10 +156,17 @@ async def retrying_db(
             attempt += 1
 
 
+def _is_transient_db_error(error: OperationalError | DBAPIError) -> bool:
+    return isinstance(error, OperationalError) or bool(
+        getattr(error, "connection_invalidated", False)
+    )
+
+
 __all__ = [
     "DbSettings",
     "create_engine",
     "retrying_db",
+    "run_with_retry",
     "session_factory",
     "transaction",
 ]
