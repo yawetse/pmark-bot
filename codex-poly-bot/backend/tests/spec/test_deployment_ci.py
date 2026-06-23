@@ -370,6 +370,7 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "AlpacaAccountStatus=${alpaca_account_status}" in text
     assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-paper_ready}\"" in text
     assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-reviewing}\"" in text
+    assert "NOTIFICATION_RECIPIENT_EMAIL:-yaw.etse@gmail.com" in text
     assert "NotificationRecipients=${notification_recipients}" in text
     assert "EnableBackgroundWorker=${enable_background_worker}" in text
 

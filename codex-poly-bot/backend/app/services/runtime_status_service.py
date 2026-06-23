@@ -291,7 +291,8 @@ class RuntimeStatusService:
 
         notification_config = config_payload.get("notifications", {})
         recipients = notification_config.get("recipients", {})
-        recipient_count = len([value for value in recipients.values() if str(value).strip()])
+        valid_recipients = [value for value in recipients.values() if _valid_email(str(value))]
+        recipient_count = len(valid_recipients)
         ses_identity = notification_config.get("ses_identity") or self.settings.ses_identity_email
         configured = bool(recipient_count and ses_identity)
         return {
@@ -398,3 +399,11 @@ def _configured(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip() not in PLACEHOLDER_VALUES
+
+
+def _valid_email(value: str) -> bool:
+    stripped = value.strip()
+    if "@" not in stripped:
+        return False
+    local_part, domain = stripped.rsplit("@", 1)
+    return bool(local_part and "." in domain)

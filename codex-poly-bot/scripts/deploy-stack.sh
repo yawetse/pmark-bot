@@ -55,7 +55,13 @@ desired_count="${DESIRED_COUNT:-1}"
 database_username="${DATABASE_USERNAME:-codexbot}"
 dashboard_allowed_users="${DASHBOARD_ALLOWED_USERS:-yawetse}"
 ses_identity_email="${SES_IDENTITY_EMAIL:-yaw.etse@gmail.com}"
-notification_recipients="${NOTIFICATION_RECIPIENTS:-operator:${ses_identity_email}}"
+if [[ -n "${NOTIFICATION_RECIPIENTS:-}" ]]; then
+  notification_recipients="${NOTIFICATION_RECIPIENTS}"
+elif [[ "${ses_identity_email}" == *"@"* ]]; then
+  notification_recipients="operator:${ses_identity_email}"
+else
+  notification_recipients="operator:${NOTIFICATION_RECIPIENT_EMAIL:-yaw.etse@gmail.com}"
+fi
 manage_ses_identity="${MANAGE_SES_IDENTITY:-false}"
 application_domain_name="${APPLICATION_DOMAIN_NAME:-}"
 certificate_arn="${CERTIFICATE_ARN:-}"

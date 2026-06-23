@@ -167,6 +167,33 @@ def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch)
     assert "pm-wallet-key" not in str(payload)
 
 
+def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch) -> None:
+    """TST-REQ-NOT-006-01: Validates REQ-NOT-006
+
+    Given: SES is configured with a domain identity but no recipient email
+    When: notification status is rendered
+    Then: the dashboard keeps notification delivery blocked
+    """
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DASHBOARD_ALLOWED_USERS", "yaw")
+    monkeypatch.setenv("BACKEND_TOKEN_SIGNING_SECRET", "test-secret")
+    monkeypatch.setenv("SES_IDENTITY_EMAIL", "asyncdoc.net")
+    monkeypatch.setenv("NOTIFICATION_RECIPIENTS", "operator:asyncdoc.net")
+
+    app = create_app(AppSettings.from_env())
+    token = app.state.services.auth.create_session_token(username="yaw")
+    response = TestClient(app).get(
+        "/api/notifications/settings",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "production"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["status"] == "not_configured"
+    assert payload["recipientCount"] == 0
+
+
 def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:
     """TST-REQ-UI-006-03: Validates REQ-UI-006
 
