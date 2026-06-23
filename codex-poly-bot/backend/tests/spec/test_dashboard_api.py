@@ -116,6 +116,57 @@ def test_req_ui_004_03_authenticated_dashboard_api_returns_secret_safe_sections(
     assert "private" not in str(payload).lower()
 
 
+def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch) -> None:
+    """TST-REQ-UI-004-04: Validates REQ-UI-004, REQ-UI-009, and REQ-OBS-005
+
+    Given: deployed runtime flags and provider credentials
+    When: the dashboard summary is requested
+    Then: worker, notification, wallet, and account status are rendered from runtime state
+    """
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DASHBOARD_ALLOWED_USERS", "yaw")
+    monkeypatch.setenv("BACKEND_TOKEN_SIGNING_SECRET", "test-secret")
+    monkeypatch.setenv("LIVE_ENABLED", "true")
+    monkeypatch.setenv("TRADING_ACCOUNT_MODE", "live")
+    monkeypatch.setenv("DEFAULT_SELECTED_VENUE", "polymarket_us")
+    monkeypatch.setenv("POLYMARKET_US_ENABLED", "true")
+    monkeypatch.setenv("ALPACA_ENABLED", "true")
+    monkeypatch.setenv("ALPACA_ACCOUNT_STATUS", "reviewing")
+    monkeypatch.setenv("POLYMARKET_KEY_ID", "pm-key-id")
+    monkeypatch.setenv("POLYMARKET_SECRET_KEY", "pm-signing-key")
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "pm-wallet-key")
+    monkeypatch.setenv("ALPACA_KEY_ID", "alpaca-key-id")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "alpaca-signing-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+    monkeypatch.setenv("SES_IDENTITY_EMAIL", "alerts@example.com")
+    monkeypatch.setenv("NOTIFICATION_RECIPIENTS", "operator:alerts@example.com")
+
+    app = create_app(AppSettings.from_env())
+    token = app.state.services.auth.create_session_token(username="yaw")
+    response = TestClient(app).get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "production"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    status_by_label = {item["label"]: item for item in payload["status"]["items"]}
+    assert status_by_label["Venue"]["value"] == "polymarket_us enabled"
+    assert status_by_label["Wallet"]["value"] == "1 missing"
+    assert status_by_label["Ingestion"]["state"] == "ok"
+    assert status_by_label["Notification"]["state"] == "ok"
+    assert status_by_label["Trading loop"]["value"] == "Live gated"
+    credentials = {item["id"]: item for item in payload["wallet"]["credentials"]}
+    assert credentials["polymarket_us-openai-wallet"]["status"] == "present"
+    assert credentials["openai-api"]["status"] == "present"
+    assert credentials["anthropic-api"]["status"] == "present"
+    assert credentials["alpaca-claude-account"]["status"] == "reviewing"
+    assert payload["notifications"]["recipientCount"] == 1
+    assert "pm-wallet-key" not in str(payload)
+
+
 def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:
     """TST-REQ-UI-006-03: Validates REQ-UI-006
 

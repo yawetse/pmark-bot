@@ -138,6 +138,7 @@ from app.services.risk_engine import (
     evaluate_alpaca_risk_limits,
     evaluate_polymarket_risk_limits,
 )
+from app.services.runtime_status_service import RuntimeCredentialView, RuntimeStatusService
 from app.services.traceability_service import (
     ReleaseReadinessCheck,
     ReleaseReadinessSummary,
@@ -236,6 +237,8 @@ __all__ = [
     "ReleaseReadinessSummary",
     "RiskLimitResult",
     "RuntimeConfigSnapshot",
+    "RuntimeCredentialView",
+    "RuntimeStatusService",
     "ScoringFailure",
     "ScoringQueueResult",
     "ScoringRunResult",
