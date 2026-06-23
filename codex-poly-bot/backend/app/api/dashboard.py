@@ -23,7 +23,6 @@ from app.services import (
     ConfigPatchOperation,
     ConfigValidationError,
     DashboardAccessResult,
-    default_config_payload,
 )
 
 
@@ -126,6 +125,10 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         """
 
         config_snapshot = _current_config(context.environment)
+        settings_payload = config_snapshot["settings"]
+        credentials = services.runtime_status.credential_rows(context.environment)
+        operations = services.runtime_status.operations_summary(context.environment)
+        notifications = services.runtime_status.notification_summary(settings_payload)
         return {
             "data_source": "fastapi",
             "environment": context.environment.value,
@@ -133,10 +136,15 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "status": {
                 "health": "ok",
                 "kill_switch_active": services.kill_switch.state(context.environment).active,
+                "items": services.runtime_status.status_items(
+                    environment=context.environment,
+                    config_payload=settings_payload,
+                ),
+                "worker": services.runtime_status.worker_status(),
             },
             "config": config_snapshot,
-            "wallet": {"credentials": []},
-            "orders": {"items": []},
+            "wallet": {"credentials": credentials},
+            "orders": {"items": operations["orderEvents"]},
             "models": {
                 "providers": [
                     _model_summary(ModelProvider.CLAUDE),
@@ -144,10 +152,8 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 ]
             },
             "comparison": {"metrics": [], "degraded_sections": []},
-            "notifications": {
-                "settings": config_snapshot["settings"].get("notifications", {}),
-                "status": "not_configured",
-            },
+            "notifications": notifications,
+            "operations": operations,
             "audit": {"items": _audit_events()},
             "degraded_sections": [],
         }
@@ -275,7 +281,10 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-WAL-005, REQ-UI-009
         """
 
-        return {"environment": context.environment.value, "credentials": []}
+        return {
+            "environment": context.environment.value,
+            "credentials": services.runtime_status.credential_rows(context.environment),
+        }
 
     @router.get("/api/orders")
     def orders(
@@ -286,7 +295,11 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-EXE-016
         """
 
-        return {"environment": context.environment.value, "items": [], "next_cursor": None}
+        return {
+            "environment": context.environment.value,
+            "items": services.runtime_status.order_events(),
+            "next_cursor": None,
+        }
 
     @router.get("/api/models/{provider}/summary")
     def model_summary(
@@ -330,8 +343,21 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
         return {
             "environment": context.environment.value,
-            "settings": _current_config(context.environment)["settings"].get("notifications", {}),
+            **services.runtime_status.notification_summary(
+                _current_config(context.environment)["settings"],
+            ),
         }
+
+    @router.get("/api/operations/summary")
+    def operations_summary(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return operations dashboard state.
+
+        REQ: REQ-UI-008, REQ-EXE-016, REQ-OBS-005
+        """
+
+        return services.runtime_status.operations_summary(context.environment)
 
     @router.get("/api/audit-events")
     def audit_events(
@@ -346,7 +372,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
     def _current_config(environment: Environment) -> dict[str, Any]:
         reload_result = services.config.config_for_next_loop(environment)
-        settings_payload = reload_result.snapshot.payload or default_config_payload()
+        settings_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
         return {
             "environment": environment.value,
             "version": reload_result.snapshot.version,

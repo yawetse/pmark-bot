@@ -1,13 +1,18 @@
 // REQ: REQ-UI-009, REQ-WAL-005
 
 export type WalletCredentialView = {
+  id?: string;
+  label?: string;
   venue: string;
   provider: string;
   publicIdentifier: string;
   present: boolean;
+  status?: string;
+  reference?: string;
+  message?: string | null;
 };
 
-const WALLET_CREDENTIALS: WalletCredentialView[] = [
+export const DEFAULT_WALLET_CREDENTIALS: WalletCredentialView[] = [
   {
     venue: "polymarket_us",
     provider: "openai",
@@ -22,20 +27,24 @@ const WALLET_CREDENTIALS: WalletCredentialView[] = [
   },
 ];
 
-export function WalletStatus() {
+export function WalletStatus({
+  credentials = DEFAULT_WALLET_CREDENTIALS,
+}: {
+  credentials?: WalletCredentialView[];
+}) {
   return (
     <section className="panel">
       <h2>Wallets And Accounts</h2>
       <ul className="status-list">
-        {WALLET_CREDENTIALS.map((credential) => (
-          <li key={`${credential.venue}-${credential.provider}`}>
+        {credentials.map((credential) => (
+          <li key={credential.id ?? `${credential.venue}-${credential.provider}`}>
             <span>
-              {credential.venue} / {credential.provider}
+              {credential.label ?? `${credential.venue} / ${credential.provider}`}
             </span>
             <span>
               {credential.publicIdentifier}{" "}
               <span className={`status ${credential.present ? "ok" : "blocked"}`}>
-                {credential.present ? "present" : "missing"}
+                {credential.status ?? (credential.present ? "present" : "missing")}
               </span>
             </span>
           </li>

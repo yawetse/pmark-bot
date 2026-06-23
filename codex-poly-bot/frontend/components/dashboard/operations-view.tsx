@@ -9,33 +9,62 @@ type OrderEventView = {
   state: OrderState;
   venue: string;
   provider: string;
+  message?: string | null;
 };
 
-const ORDER_EVENTS: OrderEventView[] = ORDER_STATES.map((state) => ({
+const FALLBACK_ORDER_EVENTS: OrderEventView[] = ORDER_STATES.map((state) => ({
   id: `order-${state}`,
   provider: state === "submitted" || state === "filled" ? "openai" : "claude",
   state,
   venue: state === "unknown" ? "alpaca" : "polymarket_us",
 }));
 
-export function OperationsView() {
+export type OperationsSummaryView = {
+  killSwitch: string;
+  openOrders: number;
+  cancelProgress: string;
+  manualReview: string;
+  degradedVenueStatus: string;
+  manualReviewState: string;
+  orderEvents: OrderEventView[];
+};
+
+const FALLBACK_OPERATIONS: OperationsSummaryView = {
+  killSwitch: "inactive",
+  openOrders: 0,
+  cancelProgress: "0 / 0",
+  manualReview: "none",
+  degradedVenueStatus: "none",
+  manualReviewState: "clear",
+  orderEvents: FALLBACK_ORDER_EVENTS,
+};
+
+export function OperationsView({
+  summary = FALLBACK_OPERATIONS,
+}: {
+  summary?: OperationsSummaryView;
+}) {
   return (
     <section className="panel">
       <h1>Operations</h1>
       <div className="metric-grid">
-        <Metric label="Kill switch" value="inactive" />
-        <Metric label="Open orders" value="0" />
-        <Metric label="Cancel progress" value="0 / 0" />
-        <Metric label="Manual review" value="none" />
+        <Metric label="Kill switch" value={summary.killSwitch} />
+        <Metric label="Open orders" value={String(summary.openOrders)} />
+        <Metric label="Cancel progress" value={summary.cancelProgress} />
+        <Metric label="Manual review" value={summary.manualReview} />
       </div>
       <ul className="status-list">
         <li>
           <span>Degraded venue status</span>
-          <span className="status ok">none</span>
+          <span className={`status ${summary.degradedVenueStatus === "none" ? "ok" : "blocked"}`}>
+            {summary.degradedVenueStatus}
+          </span>
         </li>
         <li>
           <span>Manual-review state</span>
-          <span className="status ok">clear</span>
+          <span className={`status ${summary.manualReviewState === "clear" ? "ok" : "blocked"}`}>
+            {summary.manualReviewState}
+          </span>
         </li>
       </ul>
       <h2>Order Events</h2>
@@ -50,7 +79,7 @@ export function OperationsView() {
             </tr>
           </thead>
           <tbody>
-            {ORDER_EVENTS.map((event) => (
+            {summary.orderEvents.map((event) => (
               <tr key={event.id}>
                 <td>{event.id}</td>
                 <td>{event.state}</td>

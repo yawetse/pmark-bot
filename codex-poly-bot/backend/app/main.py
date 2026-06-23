@@ -7,7 +7,9 @@ REQ-UI-011, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from contextlib import suppress
+from dataclasses import dataclass, field
 import os
 
 from fastapi import FastAPI
@@ -15,8 +17,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import build_dashboard_router
 from app.db import RepositoryRegistry
-from app.domain import Environment
+from app.domain import Environment, Venue
 from app.services import AuthService, ConfigService, KillSwitchService
+from app.services.runtime_status_service import RuntimeStatusService
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,20 @@ class AppSettings:
     trusted_origins: tuple[str, ...] = ("http://localhost:3000",)
     csrf_token: str = "local-dev-csrf-token"
     environment: Environment = Environment.LOCAL
+    runtime_env: dict[str, str] = field(default_factory=dict)
+    live_enabled: bool = False
+    trading_account_mode: str = "local"
+    default_selected_venue: Venue = Venue.POLYMARKET_US
+    polymarket_us_enabled: bool = False
+    polymarket_international_enabled: bool = False
+    alpaca_enabled: bool = False
+    polymarket_slippage_threshold: str = "0.02"
+    alpaca_slippage_threshold: str = "0.005"
+    alpaca_account_status: str = "active"
+    ses_identity_email: str = ""
+    notification_recipients: dict[str, str] = field(default_factory=dict)
+    background_worker_enabled: bool = False
+    worker_heartbeat_interval_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -39,12 +56,27 @@ class AppSettings:
         REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006
         """
 
+        runtime_env = {key: value for key, value in os.environ.items()}
         return cls(
             allowed_usernames=_csv_env("DASHBOARD_ALLOWED_USERS", ("yaw",)),
             signing_secret=os.environ.get("BACKEND_TOKEN_SIGNING_SECRET", "local-dev-session-secret"),
             trusted_origins=_trusted_origins_from_env(),
             csrf_token=os.environ.get("DASHBOARD_CSRF_TOKEN", "local-dev-csrf-token"),
             environment=_environment_from_env(),
+            runtime_env=runtime_env,
+            live_enabled=_bool_env("LIVE_ENABLED", False),
+            trading_account_mode=os.environ.get("TRADING_ACCOUNT_MODE", "local"),
+            default_selected_venue=_venue_from_env(),
+            polymarket_us_enabled=_bool_env("POLYMARKET_US_ENABLED", False),
+            polymarket_international_enabled=_bool_env("POLYMARKET_INTERNATIONAL_ENABLED", False),
+            alpaca_enabled=_bool_env("ALPACA_ENABLED", False),
+            polymarket_slippage_threshold=os.environ.get("POLYMARKET_MARKET_ORDER_SLIPPAGE", "0.02"),
+            alpaca_slippage_threshold=os.environ.get("ALPACA_MARKET_ORDER_SLIPPAGE", "0.005"),
+            alpaca_account_status=os.environ.get("ALPACA_ACCOUNT_STATUS", "active").strip().lower() or "active",
+            ses_identity_email=os.environ.get("SES_IDENTITY_EMAIL", "").strip(),
+            notification_recipients=_notification_recipients_from_env(),
+            background_worker_enabled=_bool_env("ENABLE_BACKGROUND_WORKER", False),
+            worker_heartbeat_interval_seconds=_int_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 60),
         )
 
 
@@ -59,6 +91,7 @@ class DashboardApiServices:
     auth: AuthService
     config: ConfigService
     kill_switch: KillSwitchService
+    runtime_status: RuntimeStatusService
 
 
 def build_dashboard_api_services(
@@ -82,6 +115,7 @@ def build_dashboard_api_services(
         auth=auth,
         config=ConfigService(shared_registry),
         kill_switch=KillSwitchService(shared_registry),
+        runtime_status=RuntimeStatusService(settings=settings, registry=shared_registry),
     )
 
 
@@ -99,6 +133,28 @@ def create_app(
     app = FastAPI(title="codex-poly-bot backend")
     app.state.settings = resolved_settings
     app.state.services = resolved_services
+    app.state.worker_heartbeat_task = None
+    resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
+
+    if resolved_settings.background_worker_enabled:
+
+        @app.on_event("startup")
+        async def _start_worker_heartbeat() -> None:
+            app.state.worker_heartbeat_task = asyncio.create_task(
+                _worker_heartbeat_loop(
+                    services=resolved_services,
+                    interval_seconds=resolved_settings.worker_heartbeat_interval_seconds,
+                )
+            )
+
+        @app.on_event("shutdown")
+        async def _stop_worker_heartbeat() -> None:
+            task = app.state.worker_heartbeat_task
+            if task is None:
+                return
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     app.add_middleware(
         CORSMiddleware,
@@ -130,3 +186,57 @@ def _environment_from_env() -> Environment:
         return Environment(raw_value)
     except ValueError:
         return Environment.LOCAL
+
+
+def _venue_from_env() -> Venue:
+    raw_value = os.environ.get("DEFAULT_SELECTED_VENUE", Venue.POLYMARKET_US.value)
+    try:
+        return Venue(raw_value)
+    except ValueError:
+        return Venue.POLYMARKET_US
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return max(15, parsed)
+
+
+async def _worker_heartbeat_loop(
+    *,
+    services: DashboardApiServices,
+    interval_seconds: int,
+) -> None:
+    while True:
+        services.runtime_status.record_worker_heartbeat(message="scheduled ingestion heartbeat")
+        await asyncio.sleep(interval_seconds)
+
+
+def _notification_recipients_from_env() -> dict[str, str]:
+    raw = os.environ.get("NOTIFICATION_RECIPIENTS", "").strip()
+    recipients: dict[str, str] = {}
+    for item in raw.split(","):
+        if not item.strip():
+            continue
+        if ":" in item:
+            name, email = item.split(":", 1)
+        else:
+            name, email = "operator", item
+        if email.strip():
+            recipients[name.strip() or "operator"] = email.strip()
+    ses_identity = os.environ.get("SES_IDENTITY_EMAIL", "").strip()
+    if not recipients and ses_identity:
+        recipients["operator"] = ses_identity
+    return recipients

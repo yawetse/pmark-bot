@@ -63,8 +63,42 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
+  PolymarketMarketOrderSlippage:
+    Type: String
+    Default: "0.02"
+  AlpacaMarketOrderSlippage:
+    Type: String
+    Default: "0.005"
+  AlpacaBaseUrl:
+    Type: String
+    Default: "https://paper-api.alpaca.markets"
+  AlpacaDataFeed:
+    Type: String
+    Default: iex
+  AlpacaAccountStatus:
+    Type: String
+    Default: active
+    AllowedValues:
+      - active
+      - paper_ready
+      - reviewing
+      - pending
+      - disabled
   SesIdentityEmail:
     Type: String
+  NotificationRecipients:
+    Type: String
+    Default: ""
+  EnableBackgroundWorker:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+  WorkerHeartbeatIntervalSeconds:
+    Type: Number
+    Default: 60
+    MinValue: 15
   ManageSesIdentity:
     Type: String
     Default: "false"
@@ -104,6 +138,21 @@ Parameters:
     Type: String
     Default: ""
     NoEcho: true
+  PolymarketKeyIdSecretArn:
+    Type: String
+    Default: ""
+  PolymarketSecretKeySecretArn:
+    Type: String
+    Default: ""
+  PolymarketPrivateKeySecretArn:
+    Type: String
+    Default: ""
+  AlpacaKeyIdSecretArn:
+    Type: String
+    Default: ""
+  AlpacaSecretKeySecretArn:
+    Type: String
+    Default: ""
 
 Conditions:
   IsProduction: !Equals [!Ref EnvironmentName, production]
@@ -113,6 +162,11 @@ Conditions:
   UseCustomHttpsDomain: !And
     - !Condition UseCustomDomain
     - !Condition UseHttps
+  UsePolymarketKeyIdSecret: !Not [!Equals [!Ref PolymarketKeyIdSecretArn, ""]]
+  UsePolymarketSecretKeySecret: !Not [!Equals [!Ref PolymarketSecretKeySecretArn, ""]]
+  UsePolymarketPrivateKeySecret: !Not [!Equals [!Ref PolymarketPrivateKeySecretArn, ""]]
+  UseAlpacaKeyIdSecret: !Not [!Equals [!Ref AlpacaKeyIdSecretArn, ""]]
+  UseAlpacaSecretKeySecret: !Not [!Equals [!Ref AlpacaSecretKeySecretArn, ""]]
 
 Resources:
   BackendRepository:
@@ -471,6 +525,24 @@ Resources:
               Value: !Ref PolymarketInternationalEnabled
             - Name: ALPACA_ENABLED
               Value: !Ref AlpacaEnabled
+            - Name: POLYMARKET_MARKET_ORDER_SLIPPAGE
+              Value: !Ref PolymarketMarketOrderSlippage
+            - Name: ALPACA_MARKET_ORDER_SLIPPAGE
+              Value: !Ref AlpacaMarketOrderSlippage
+            - Name: ALPACA_BASE_URL
+              Value: !Ref AlpacaBaseUrl
+            - Name: ALPACA_DATA_FEED
+              Value: !Ref AlpacaDataFeed
+            - Name: ALPACA_ACCOUNT_STATUS
+              Value: !Ref AlpacaAccountStatus
+            - Name: SES_IDENTITY_EMAIL
+              Value: !Ref SesIdentityEmail
+            - Name: NOTIFICATION_RECIPIENTS
+              Value: !Ref NotificationRecipients
+            - Name: ENABLE_BACKGROUND_WORKER
+              Value: !Ref EnableBackgroundWorker
+            - Name: WORKER_HEARTBEAT_INTERVAL_SECONDS
+              Value: !Ref WorkerHeartbeatIntervalSeconds
             - Name: DASHBOARD_ALLOWED_USERS
               Value: !Ref DashboardAllowedUsers
             - Name: BACKEND_TOKEN_SIGNING_SECRET
@@ -492,6 +564,31 @@ Resources:
               ValueFrom: !Ref OpenAISecret
             - Name: ANTHROPIC_API_KEY
               ValueFrom: !Ref AnthropicSecret
+            - !If
+              - UsePolymarketKeyIdSecret
+              - Name: POLYMARKET_KEY_ID
+                ValueFrom: !Ref PolymarketKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketSecretKeySecret
+              - Name: POLYMARKET_SECRET_KEY
+                ValueFrom: !Ref PolymarketSecretKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketPrivateKeySecret
+              - Name: POLYMARKET_PRIVATE_KEY
+                ValueFrom: !Ref PolymarketPrivateKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaKeyIdSecret
+              - Name: ALPACA_KEY_ID
+                ValueFrom: !Ref AlpacaKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaSecretKeySecret
+              - Name: ALPACA_SECRET_KEY
+                ValueFrom: !Ref AlpacaSecretKeySecretArn
+              - !Ref AWS::NoValue
           LogConfiguration:
             LogDriver: awslogs
             Options:
