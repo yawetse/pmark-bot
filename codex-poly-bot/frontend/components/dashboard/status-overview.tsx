@@ -6,7 +6,7 @@ export type StatusItem = {
   state: "ok" | "blocked";
 };
 
-const STATUS_ITEMS: StatusItem[] = [
+export const DEFAULT_STATUS_ITEMS: StatusItem[] = [
   { label: "Venue", value: "Polymarket US disabled", state: "ok" },
   { label: "Wallet", value: "Public identifiers only", state: "ok" },
   { label: "Ingestion", value: "Awaiting worker heartbeat", state: "blocked" },
@@ -16,12 +16,12 @@ const STATUS_ITEMS: StatusItem[] = [
   { label: "Health", value: "API reachable", state: "ok" },
 ];
 
-export function StatusOverview() {
+export function StatusOverview({ items = DEFAULT_STATUS_ITEMS }: { items?: StatusItem[] }) {
   return (
     <section className="panel">
       <h2>Status</h2>
       <ul className="status-list">
-        {STATUS_ITEMS.map((item) => (
+        {items.map((item) => (
           <li key={item.label}>
             <span>{item.label}</span>
             <span>

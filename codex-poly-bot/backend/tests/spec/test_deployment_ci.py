@@ -336,7 +336,42 @@ def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injectio
     assert "/codex-poly-bot/${EnvironmentName}/openai/api-key" in text
     assert "ANTHROPIC_API_KEY" in text
     assert "/codex-poly-bot/${EnvironmentName}/anthropic/api-key" in text
+    assert "POLYMARKET_KEY_ID" in text
+    assert "PolymarketKeyIdSecretArn" in text
+    assert "POLYMARKET_SECRET_KEY" in text
+    assert "PolymarketSecretKeySecretArn" in text
+    assert "POLYMARKET_PRIVATE_KEY" in text
+    assert "PolymarketPrivateKeySecretArn" in text
+    assert "ALPACA_KEY_ID" in text
+    assert "AlpacaKeyIdSecretArn" in text
+    assert "ALPACA_SECRET_KEY" in text
+    assert "AlpacaSecretKeySecretArn" in text
+    assert "ALPACA_ACCOUNT_STATUS" in text
+    assert "NOTIFICATION_RECIPIENTS" in text
+    assert "ENABLE_BACKGROUND_WORKER" in text
     assert "TaskExecutionSecretAccessPolicy" in text
+
+def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
+    """TST-REQ-DEP-002-06: Validates REQ-DEP-002 and REQ-WAL-003
+
+    Given: per-environment runtime credentials in AWS Secrets Manager
+    When: the deployment script is inspected
+    Then: stack parameters receive only discovered environment-scoped secret ARNs
+    """
+
+    text = (PROJECT_ROOT / "scripts" / "deploy-stack.sh").read_text()
+
+    assert "secret_arn_or_empty" in text
+    assert "/codex-poly-bot/${environment}/polymarket/key-id" in text
+    assert "/codex-poly-bot/${environment}/polymarket/secret-key" in text
+    assert "/codex-poly-bot/${environment}/polymarket/private-key" in text
+    assert "/codex-poly-bot/${environment}/alpaca/key-id" in text
+    assert "/codex-poly-bot/${environment}/alpaca/secret-key" in text
+    assert "AlpacaAccountStatus=${alpaca_account_status}" in text
+    assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-paper_ready}\"" in text
+    assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-reviewing}\"" in text
+    assert "NotificationRecipients=${notification_recipients}" in text
+    assert "EnableBackgroundWorker=${enable_background_worker}" in text
 
 def test_req_dep_002_04_cloudformation_keeps_frontend_auth_routes_on_frontend() -> None:
     """TST-REQ-DEP-002-04: Validates REQ-DEP-002
