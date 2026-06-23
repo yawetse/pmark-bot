@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import { GettingStartedGuide } from "@/components/dashboard/getting-started-guide";
 import { StatusOverview } from "@/components/dashboard/status-overview";
 import type { StatusItem } from "@/components/dashboard/status-overview";
 import { WalletStatus } from "@/components/dashboard/wallet-status";
@@ -37,6 +38,7 @@ export default async function DashboardPage() {
               dashboard views and control requests.
             </p>
           </section>
+          <GettingStartedGuide credentials={credentials} statusItems={statusItems} />
           <StatusOverview items={statusItems} />
           <WalletStatus credentials={credentials} />
         </div>

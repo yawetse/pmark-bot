@@ -40,3 +40,18 @@ const walletStatus = read("components/dashboard/wallet-status.tsx");
 assert.match(walletStatus, /publicIdentifier/);
 assert.doesNotMatch(walletStatus, /private/i);
 assert.doesNotMatch(walletStatus, /secret/i);
+
+const dashboardPage = read("app/dashboard/page.tsx");
+assert.match(dashboardPage, /GettingStartedGuide/);
+
+const gettingStarted = read("components/dashboard/getting-started-guide.tsx");
+for (const token of [
+  "Why trading has not started",
+  "Polymarket wallet",
+  "Alpaca account",
+  "live-trading checklist",
+  "Review config",
+  "Open operations",
+]) {
+  assert.match(gettingStarted, new RegExp(token));
+}
