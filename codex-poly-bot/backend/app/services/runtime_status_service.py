@@ -18,6 +18,10 @@ from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
 from app.services.llm_service import SCORING_SYSTEM_PROMPT
+from app.services.market_data_provider import (
+    MarketDataProvider,
+    ProviderBackedMarketDataFetcher,
+)
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
@@ -70,7 +74,8 @@ class RuntimeStatusService:
     WORKER_JOB_NAME = "market-data-ingestion"
     MANUAL_RUN_JOB_NAME = "manual-trading-loop"
     USER_PREFERENCES_TABLE = f"{SHARED_SCHEMA}.user_preferences"
-    MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.market_data_pulls"
+    LEGACY_MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.market_data_pulls"
+    MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.dashboard_market_data_pulls"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
 
     def __init__(
@@ -79,11 +84,15 @@ class RuntimeStatusService:
         settings: Any,
         registry: RepositoryRegistry | None = None,
         billing_adapter: Any | None = None,
+        market_data_fetcher: MarketDataProvider | None = None,
     ) -> None:
         self.settings = settings
         self.registry = registry or RepositoryRegistry()
         self.billing_adapter = billing_adapter or billing_adapter_from_env(
             getattr(settings, "runtime_env", {})
+        )
+        self.market_data_fetcher = market_data_fetcher or ProviderBackedMarketDataFetcher(
+            environ=getattr(settings, "runtime_env", {})
         )
 
     def runtime_config_payload(self) -> dict[str, Any]:
@@ -257,17 +266,11 @@ class RuntimeStatusService:
         now = datetime.now(UTC)
         run_id = str(uuid4())
         market_data_pulls = [
-            self._record_market_data_pull(
+            self._fetch_and_record_market_data_pull(
                 environment=environment,
                 venue=venue,
                 trigger="manual",
-                status="accepted",
-                message=self._manual_market_data_message(venue, config_payload),
-                candidates=self._manual_market_data_candidates(
-                    venue=venue,
-                    config_payload=config_payload,
-                    pulled_at=now,
-                ),
+                config_payload=config_payload,
                 created_at=now,
                 run_id=run_id,
             )
@@ -334,6 +337,59 @@ class RuntimeStatusService:
             "auditEventId": audit_event["id"],
             "message": "Manual run accepted. Live order submission still depends on all configured gates.",
             "marketDataPull": market_data_pull,
+            "marketDataPulls": market_data_pulls,
+        }
+
+    def trigger_scheduled_run(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run scheduled provider market-data ingestion and record the heartbeat."""
+
+        now = datetime.now(UTC)
+        run_id = str(uuid4())
+        market_data_pulls = [
+            self._fetch_and_record_market_data_pull(
+                environment=environment,
+                venue=venue,
+                trigger="scheduled",
+                config_payload=config_payload,
+                created_at=now,
+                run_id=run_id,
+            )
+            for venue in self._market_data_venues(config_payload)
+        ]
+        status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
+        try:
+            self.registry.state.insert(
+                f"{SHARED_SCHEMA}.job_runs",
+                {
+                    "id": run_id,
+                    "job_name": self.WORKER_JOB_NAME,
+                    "status": status,
+                    "heartbeat_at": now,
+                    "metadata": {
+                        "message": "scheduled provider market data ingestion",
+                        "scheduled": True,
+                        "market_data_pull_ids": [pull["id"] for pull in market_data_pulls],
+                        "venues": [pull["venue"] for pull in market_data_pulls],
+                    },
+                    "created_at": now,
+                },
+            )
+        except PersistenceUnavailableError:
+            pass
+        return {
+            "environment": environment.value,
+            "runId": run_id,
+            "status": status,
+            "triggeredAt": now.isoformat(),
+            "marketDataPull": self.market_data_pull(
+                environment=environment,
+                config_payload=config_payload,
+            ),
             "marketDataPulls": market_data_pulls,
         }
 
@@ -528,11 +584,7 @@ class RuntimeStatusService:
 
         selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
         try:
-            rows = [
-                row
-                for row in self.registry.state.rows(self.MARKET_DATA_PULLS_TABLE)
-                if row["environment"] == environment.value
-            ]
+            rows = self._market_data_rows(environment)
         except PersistenceUnavailableError:
             rows = []
         return self._market_data_summary_payload(
@@ -1007,6 +1059,34 @@ class RuntimeStatusService:
         except PersistenceUnavailableError:
             return 0
 
+    def _fetch_and_record_market_data_pull(
+        self,
+        *,
+        environment: Environment,
+        venue: str,
+        trigger: str,
+        config_payload: dict[str, Any],
+        created_at: datetime,
+        run_id: str,
+    ) -> dict[str, Any]:
+        result = self.market_data_fetcher.fetch(
+            venue=venue,
+            config_payload=config_payload,
+            pulled_at=created_at,
+        )
+        return self._record_market_data_pull(
+            environment=environment,
+            venue=venue,
+            trigger=trigger,
+            status=result.status,
+            source=result.source,
+            message=result.message,
+            candidates=result.candidates,
+            error_code=result.error_code,
+            created_at=created_at,
+            run_id=run_id,
+        )
+
     def _record_market_data_pull(
         self,
         *,
@@ -1014,8 +1094,10 @@ class RuntimeStatusService:
         venue: str,
         trigger: str,
         status: str,
+        source: str,
         message: str,
         candidates: list[dict[str, Any]],
+        error_code: str | None,
         created_at: datetime,
         run_id: str,
     ) -> dict[str, Any]:
@@ -1027,14 +1109,29 @@ class RuntimeStatusService:
                 "venue": venue,
                 "status": status,
                 "trigger": trigger,
-                "source": "dashboard manual trigger",
+                "source": source,
                 "candidates": candidates,
                 "message": message,
+                "error_code": error_code,
                 "run_id": run_id,
                 "created_at": created_at,
             },
         )
         return self._market_data_payload(row)
+
+    def _market_data_rows(self, environment: Environment) -> list[dict[str, Any]]:
+        rows = [
+            row
+            for row in self.registry.state.rows(self.MARKET_DATA_PULLS_TABLE)
+            if row["environment"] == environment.value
+        ]
+        if rows:
+            return rows
+        return [
+            row
+            for row in self.registry.state.rows(self.LEGACY_MARKET_DATA_PULLS_TABLE)
+            if row["environment"] == environment.value
+        ]
 
     def _market_data_venues(self, config_payload: dict[str, Any]) -> list[str]:
         selected_venue = str(
@@ -1068,52 +1165,6 @@ class RuntimeStatusService:
         if venue == Venue.ALPACA.value:
             return bool(self.settings.alpaca_enabled)
         return False
-
-    def _manual_market_data_candidates(
-        self,
-        *,
-        venue: str,
-        config_payload: dict[str, Any],
-        pulled_at: datetime,
-    ) -> list[dict[str, Any]]:
-        if venue != Venue.ALPACA.value:
-            return []
-        alpaca_config = config_payload.get("alpaca", {})
-        raw_symbols = alpaca_config.get("symbol_universe") if isinstance(alpaca_config, dict) else []
-        symbols = [
-            str(symbol).strip().upper()
-            for symbol in (raw_symbols or [])
-            if str(symbol).strip()
-        ]
-        return [
-            {
-                "id": f"{venue}:{symbol}",
-                "venue": venue,
-                "symbol": symbol,
-                "state": "configured_symbol",
-                "pulledAt": pulled_at.isoformat(),
-            }
-            for symbol in symbols
-        ]
-
-    def _manual_market_data_message(
-        self,
-        venue: str,
-        config_payload: dict[str, Any],
-    ) -> str:
-        if venue == Venue.ALPACA.value and self._manual_market_data_candidates(
-            venue=venue,
-            config_payload=config_payload,
-            pulled_at=datetime.now(UTC),
-        ):
-            return (
-                "Manual run accepted. Alpaca symbol universe was captured; external quote "
-                "ingestion is not attached to this dashboard record yet."
-            )
-        return (
-            "Manual run accepted. No external market data adapter call is attached to this "
-            "dashboard record yet."
-        )
 
     def _market_data_summary_payload(
         self,
@@ -1158,6 +1209,9 @@ class RuntimeStatusService:
             for venue_payload in venue_payloads
             for candidate in venue_payload["candidates"]
         ]
+        summary["status"] = _aggregate_market_data_pull_status(
+            [venue_payload["status"] for venue_payload in venue_payloads]
+        )
         summary["candidateCount"] = len(all_candidates)
         summary["candidates"] = all_candidates
         summary["venues"] = venue_payloads
@@ -1176,6 +1230,7 @@ class RuntimeStatusService:
             "candidateCount": len(candidates),
             "candidates": candidates,
             "message": row.get("message") or "Market data pull recorded.",
+            "errorCode": row.get("error_code"),
         }
 
     def _empty_market_data_payload(
@@ -1509,6 +1564,24 @@ def _optional_text(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _aggregate_market_data_pull_status(statuses: list[str]) -> str:
+    if not statuses:
+        return "empty"
+    pulled = any(status == "pulled" for status in statuses)
+    partial = any(status == "partial" for status in statuses)
+    failed = any(status == "failed" for status in statuses)
+    rate_limited = any(status == "rate_limited" for status in statuses)
+    if partial or (pulled and (failed or rate_limited)):
+        return "partial"
+    if failed:
+        return "failed"
+    if rate_limited:
+        return "rate_limited"
+    if pulled:
+        return "pulled"
+    return "empty"
 
 
 def _as_money(value: Any) -> Decimal:

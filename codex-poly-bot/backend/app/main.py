@@ -143,6 +143,7 @@ def create_app(
             app.state.worker_heartbeat_task = asyncio.create_task(
                 _worker_heartbeat_loop(
                     services=resolved_services,
+                    environment=resolved_settings.environment,
                     interval_seconds=resolved_settings.worker_heartbeat_interval_seconds,
                 )
             )
@@ -217,10 +218,17 @@ def _int_env(name: str, default: int) -> int:
 async def _worker_heartbeat_loop(
     *,
     services: DashboardApiServices,
+    environment: Environment,
     interval_seconds: int,
 ) -> None:
     while True:
-        services.runtime_status.record_worker_heartbeat(message="scheduled ingestion heartbeat")
+        reload_result = services.config.config_for_next_loop(environment)
+        config_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
+        await asyncio.to_thread(
+            services.runtime_status.trigger_scheduled_run,
+            environment=environment,
+            config_payload=config_payload,
+        )
         await asyncio.sleep(interval_seconds)
 
 
