@@ -128,6 +128,9 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         settings_payload = config_snapshot["settings"]
         credentials = services.runtime_status.credential_rows(context.environment)
         operations = services.runtime_status.operations_summary(context.environment)
+        operations["killSwitch"] = (
+            "active" if services.kill_switch.state(context.environment).active else "inactive"
+        )
         notifications = services.runtime_status.notification_summary(settings_payload)
         return {
             "data_source": "fastapi",
@@ -357,7 +360,11 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-008, REQ-EXE-016, REQ-OBS-005
         """
 
-        return services.runtime_status.operations_summary(context.environment)
+        operations = services.runtime_status.operations_summary(context.environment)
+        operations["killSwitch"] = (
+            "active" if services.kill_switch.state(context.environment).active else "inactive"
+        )
+        return operations
 
     @router.get("/api/audit-events")
     def audit_events(

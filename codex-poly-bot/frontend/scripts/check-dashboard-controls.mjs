@@ -32,6 +32,13 @@ for (const path of [
 ]) {
   assert.match(configPaths, new RegExp(path.replaceAll(".", "\\.")));
 }
+for (const token of [
+  "CONFIG_PATH_DETAILS",
+  "Default venue",
+  "Live trading",
+]) {
+  assert.match(configPaths, new RegExp(token));
+}
 
 const configControls = read("components/dashboard/config-controls.tsx");
 assert.match(configControls, /isAllowedConfigPath/);
@@ -39,6 +46,11 @@ assert.match(configControls, /dashboardApi<ConfigUpdateResponse>\("config"/);
 assert.match(configControls, /JSON\.parse/);
 assert.match(configControls, /result\.status === 409/);
 assert.match(configControls, /Current server version is/);
+assert.match(configControls, /CONFIG_PATH_DETAILS/);
+assert.match(configControls, /selectedDetail\.description/);
+assert.match(configControls, /selectedDetail\.effect/);
+assert.match(configControls, /Expected value/);
+assert.match(configControls, /Current value/);
 assert.doesNotMatch(configControls, /unsupported\.path/);
 
 const configPage = read("app/dashboard/config/page.tsx");
@@ -51,16 +63,16 @@ assert.doesNotMatch(walletStatus, /private/i);
 assert.doesNotMatch(walletStatus, /secret/i);
 
 const dashboardPage = read("app/dashboard/page.tsx");
-assert.match(dashboardPage, /GettingStartedGuide/);
+assert.match(dashboardPage, /OperatorCommandCenter/);
 
-const gettingStarted = read("components/dashboard/getting-started-guide.tsx");
+const commandCenter = read("components/dashboard/operator-command-center.tsx");
 for (const token of [
-  "Why trading has not started",
-  "Polymarket wallet",
-  "Alpaca account",
-  "live-trading checklist",
-  "Review config",
-  "Open operations",
+  "What is running",
+  "What happens next",
+  "Pending activity",
+  "Performance",
+  "Available controls",
+  "No orders recorded",
 ]) {
-  assert.match(gettingStarted, new RegExp(token));
+  assert.match(commandCenter, new RegExp(token));
 }
