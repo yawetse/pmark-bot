@@ -19,8 +19,31 @@ export async function dashboardApi<T>(
     return {
       ok: false,
       status: response.status,
-      message: await response.text(),
+      message: await errorMessage(response),
     };
   }
   return { ok: true, data: (await response.json()) as T };
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return `Request failed with status ${response.status}.`;
+  }
+  try {
+    const parsed = JSON.parse(text) as {
+      detail?: { message?: string } | string;
+      message?: string;
+      error?: string;
+    };
+    if (typeof parsed.detail === "object" && parsed.detail?.message) {
+      return parsed.detail.message;
+    }
+    if (typeof parsed.detail === "string") {
+      return parsed.detail;
+    }
+    return parsed.message ?? parsed.error ?? text;
+  } catch {
+    return text;
+  }
 }

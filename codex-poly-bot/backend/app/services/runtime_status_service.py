@@ -256,17 +256,28 @@ class RuntimeStatusService:
 
         now = datetime.now(UTC)
         run_id = str(uuid4())
-        selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
-        market_data_pull = self._record_market_data_pull(
+        market_data_pulls = [
+            self._record_market_data_pull(
+                environment=environment,
+                venue=venue,
+                trigger="manual",
+                status="accepted",
+                message=self._manual_market_data_message(venue, config_payload),
+                candidates=self._manual_market_data_candidates(
+                    venue=venue,
+                    config_payload=config_payload,
+                    pulled_at=now,
+                ),
+                created_at=now,
+                run_id=run_id,
+            )
+            for venue in self._market_data_venues(config_payload)
+        ]
+        market_data_pull = self.market_data_pull(
             environment=environment,
-            venue=selected_venue,
-            trigger="manual",
-            status="accepted",
-            message="Manual run accepted. No external market data adapter call is attached to this dashboard record yet.",
-            candidates=[],
-            created_at=now,
-            run_id=run_id,
+            config_payload=config_payload,
         )
+        market_data_pull_ids = [pull["id"] for pull in market_data_pulls]
         self.registry.state.insert(
             f"{SHARED_SCHEMA}.job_runs",
             {
@@ -278,7 +289,8 @@ class RuntimeStatusService:
                     "message": "manual loop request accepted",
                     "scheduled": False,
                     "triggered_by": username,
-                    "market_data_pull_id": market_data_pull["id"],
+                    "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
+                    "market_data_pull_ids": market_data_pull_ids,
                 },
                 "created_at": now,
             },
@@ -308,8 +320,9 @@ class RuntimeStatusService:
             success=True,
             metadata={
                 "ip_address": ip_address,
-                "venue": selected_venue,
-                "market_data_pull_id": market_data_pull["id"],
+                "venues": [pull["venue"] for pull in market_data_pulls],
+                "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
+                "market_data_pull_ids": market_data_pull_ids,
             },
         )
         return {
@@ -321,6 +334,7 @@ class RuntimeStatusService:
             "auditEventId": audit_event["id"],
             "message": "Manual run accepted. Live order submission still depends on all configured gates.",
             "marketDataPull": market_data_pull,
+            "marketDataPulls": market_data_pulls,
         }
 
     def worker_status(self) -> dict[str, Any]:
@@ -521,21 +535,12 @@ class RuntimeStatusService:
             ]
         except PersistenceUnavailableError:
             rows = []
-        if not rows:
-            return {
-                "id": None,
-                "environment": environment.value,
-                "venue": selected_venue,
-                "status": "idle",
-                "trigger": "none",
-                "source": "dashboard store",
-                "lastPulledAt": None,
-                "candidateCount": 0,
-                "candidates": [],
-                "message": "No market data pull has been recorded in the dashboard store.",
-            }
-        latest = max(rows, key=lambda row: row["created_at"])
-        return self._market_data_payload(latest)
+        return self._market_data_summary_payload(
+            environment=environment,
+            config_payload=config_payload,
+            rows=rows,
+            selected_venue=selected_venue,
+        )
 
     def economics_summary(
         self,
@@ -1031,6 +1036,133 @@ class RuntimeStatusService:
         )
         return self._market_data_payload(row)
 
+    def _market_data_venues(self, config_payload: dict[str, Any]) -> list[str]:
+        selected_venue = str(
+            config_payload.get("default_selected_venue")
+            or self.settings.default_selected_venue.value
+        )
+        supported = [
+            Venue.POLYMARKET_US.value,
+            Venue.POLYMARKET_INTERNATIONAL.value,
+            Venue.ALPACA.value,
+        ]
+        enabled = [venue for venue in supported if self._venue_enabled(venue, config_payload)]
+        if not enabled:
+            return [selected_venue] if selected_venue else [Venue.POLYMARKET_US.value]
+        ordered = []
+        for venue in [selected_venue, *supported]:
+            if venue in enabled and venue not in ordered:
+                ordered.append(venue)
+        return ordered
+
+    def _venue_enabled(self, venue: str, config_payload: dict[str, Any]) -> bool:
+        venues = config_payload.get("venues", {})
+        if isinstance(venues, dict) and venue in venues:
+            venue_config = venues.get(venue)
+            if isinstance(venue_config, dict):
+                return bool(venue_config.get("enabled", False))
+        if venue == Venue.POLYMARKET_US.value:
+            return bool(self.settings.polymarket_us_enabled)
+        if venue == Venue.POLYMARKET_INTERNATIONAL.value:
+            return bool(self.settings.polymarket_international_enabled)
+        if venue == Venue.ALPACA.value:
+            return bool(self.settings.alpaca_enabled)
+        return False
+
+    def _manual_market_data_candidates(
+        self,
+        *,
+        venue: str,
+        config_payload: dict[str, Any],
+        pulled_at: datetime,
+    ) -> list[dict[str, Any]]:
+        if venue != Venue.ALPACA.value:
+            return []
+        alpaca_config = config_payload.get("alpaca", {})
+        raw_symbols = alpaca_config.get("symbol_universe") if isinstance(alpaca_config, dict) else []
+        symbols = [
+            str(symbol).strip().upper()
+            for symbol in (raw_symbols or [])
+            if str(symbol).strip()
+        ]
+        return [
+            {
+                "id": f"{venue}:{symbol}",
+                "venue": venue,
+                "symbol": symbol,
+                "state": "configured_symbol",
+                "pulledAt": pulled_at.isoformat(),
+            }
+            for symbol in symbols
+        ]
+
+    def _manual_market_data_message(
+        self,
+        venue: str,
+        config_payload: dict[str, Any],
+    ) -> str:
+        if venue == Venue.ALPACA.value and self._manual_market_data_candidates(
+            venue=venue,
+            config_payload=config_payload,
+            pulled_at=datetime.now(UTC),
+        ):
+            return (
+                "Manual run accepted. Alpaca symbol universe was captured; external quote "
+                "ingestion is not attached to this dashboard record yet."
+            )
+        return (
+            "Manual run accepted. No external market data adapter call is attached to this "
+            "dashboard record yet."
+        )
+
+    def _market_data_summary_payload(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+        rows: list[dict[str, Any]],
+        selected_venue: str,
+    ) -> dict[str, Any]:
+        venues = self._market_data_venues(config_payload)
+        venue_payloads = []
+        for venue in venues:
+            venue_rows = [row for row in rows if row["venue"] == venue]
+            if venue_rows:
+                venue_payloads.append(self._market_data_payload(max(venue_rows, key=lambda row: row["created_at"])))
+            else:
+                venue_payloads.append(
+                    self._empty_market_data_payload(
+                        environment=environment,
+                        venue=venue,
+                        message=f"No market data pull has been recorded for {venue}.",
+                    )
+                )
+
+        rows_for_enabled_venues = [row for row in rows if row["venue"] in venues]
+        latest = max(rows_for_enabled_venues, key=lambda row: row["created_at"]) if rows_for_enabled_venues else None
+        if latest is None:
+            summary = self._empty_market_data_payload(
+                environment=environment,
+                venue=selected_venue,
+                message="No market data pull has been recorded in the dashboard store.",
+            )
+        else:
+            summary = self._market_data_payload(latest)
+            summary["message"] = (
+                f"Latest market data pull records are shown for {len(venue_payloads)} enabled venue"
+                f"{'' if len(venue_payloads) == 1 else 's'}."
+            )
+
+        all_candidates = [
+            candidate
+            for venue_payload in venue_payloads
+            for candidate in venue_payload["candidates"]
+        ]
+        summary["candidateCount"] = len(all_candidates)
+        summary["candidates"] = all_candidates
+        summary["venues"] = venue_payloads
+        return summary
+
     def _market_data_payload(self, row: dict[str, Any]) -> dict[str, Any]:
         candidates = [_safe_candidate_payload(candidate) for candidate in row.get("candidates", [])]
         return {
@@ -1045,6 +1177,27 @@ class RuntimeStatusService:
             "candidates": candidates,
             "message": row.get("message") or "Market data pull recorded.",
         }
+
+    def _empty_market_data_payload(
+        self,
+        *,
+        environment: Environment,
+        venue: str,
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "id": None,
+            "environment": environment.value,
+            "venue": venue,
+            "status": "idle",
+            "trigger": "none",
+            "source": "dashboard store",
+            "lastPulledAt": None,
+            "candidateCount": 0,
+            "candidates": [],
+            "message": message,
+        }
+
 
     def _ai_usage_summary(
         self,

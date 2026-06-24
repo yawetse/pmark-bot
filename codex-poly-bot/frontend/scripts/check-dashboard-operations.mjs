@@ -44,6 +44,7 @@ for (const token of [
   "Cancel progress",
   "Degraded venue status",
   "Manual-review state",
+  "useResolvedTimeZone",
 ]) {
   assert.match(operationsView, new RegExp(token));
 }
@@ -59,6 +60,17 @@ for (const route of [
   "/dashboard/help",
 ]) {
   assert.match(nav, new RegExp(route.replaceAll("/", "\\/")));
+}
+
+const marketDataPanel = read("components/dashboard/market-data-panel.tsx");
+for (const token of [
+  "venues",
+  "venuePulls",
+  "market-venue-grid",
+  "market-venue-card",
+  "Latest pull",
+]) {
+  assert.match(marketDataPanel, new RegExp(token));
 }
 
 const helpPage = read("app/dashboard/help/page.tsx");
