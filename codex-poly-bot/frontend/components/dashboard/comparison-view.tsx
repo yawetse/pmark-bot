@@ -1,31 +1,47 @@
 // REQ: REQ-UI-011, REQ-CMP-002, REQ-CMP-003, REQ-CMP-004
 
-type ComparisonMetricView = {
+export type ComparisonMetricView = {
   group: string;
   metric: string;
   value: string | null;
   caveat: string | null;
 };
 
-const COMPARISON_METRICS: ComparisonMetricView[] = [
-  {
-    group: "Claude / Polymarket US",
-    metric: "realized_pnl",
-    value: null,
-    caveat: "No eligible data",
-  },
-  {
-    group: "OpenAI / Alpaca",
-    metric: "return_to_risk",
-    value: null,
-    caveat: "Drawdown is zero",
-  },
-];
+export type ComparisonSummaryView = {
+  metrics: ComparisonMetricView[];
+  degraded_sections?: string[];
+};
 
-export function ComparisonView() {
+export function ComparisonView({
+  summary = { metrics: [] },
+  loadError,
+}: {
+  summary?: ComparisonSummaryView;
+  loadError?: string;
+}) {
   return (
-    <section className="panel">
-      <h1>Comparison</h1>
+    <section className="panel wide-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Performance</p>
+          <h1>Comparison</h1>
+        </div>
+        {loadError ? <span className="status blocked">api unavailable</span> : null}
+      </div>
+      <p className="panel-note">
+        Compares Claude and OpenAI across venues once positions, fills, model cost,
+        and drawdown records exist.
+      </p>
+      {loadError ? <p className="status-message">{loadError}</p> : null}
+      {summary.metrics.length === 0 ? (
+        <div className="empty-state">
+          <strong>No comparison metrics yet</strong>
+          <p>
+            The app needs recorded decisions, orders, position changes, and model
+            costs before it can calculate P&L, win rate, drawdown, or return to risk.
+          </p>
+        </div>
+      ) : (
       <div className="table-wrap">
         <table>
           <thead>
@@ -37,7 +53,7 @@ export function ComparisonView() {
             </tr>
           </thead>
           <tbody>
-            {COMPARISON_METRICS.map((metric) => (
+              {summary.metrics.map((metric) => (
               <tr key={`${metric.group}-${metric.metric}`}>
                 <td>{metric.group}</td>
                 <td>{metric.metric}</td>
@@ -48,6 +64,7 @@ export function ComparisonView() {
           </tbody>
         </table>
       </div>
+      )}
     </section>
   );
 }

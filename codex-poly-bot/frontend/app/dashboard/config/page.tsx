@@ -31,8 +31,26 @@ export default async function ConfigPage() {
             loadError={currentConfig.ok ? undefined : currentConfig.message}
           />
           <section className="panel">
-            <h2>Versioning</h2>
-            <p>Config saves use an expected version and apply on the next trading loop.</p>
+            <p className="section-label">Change safety</p>
+            <h2>How changes apply</h2>
+            <ul className="status-list">
+              <li>
+                <span>Version check</span>
+                <span>Each save uses the current version to avoid overwriting another change.</span>
+              </li>
+              <li>
+                <span>Apply timing</span>
+                <span>Saved values apply on the next trading loop, not midway through a decision.</span>
+              </li>
+              <li>
+                <span>Live trading</span>
+                <span>Changing live mode still requires venue, credential, risk, and data gates to pass.</span>
+              </li>
+              <li>
+                <span>Risk settings</span>
+                <span>Position size, daily loss, open positions, and slippage can block orders.</span>
+              </li>
+            </ul>
           </section>
         </div>
       </main>

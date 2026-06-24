@@ -7,6 +7,7 @@ export type WalletCredentialView = {
   provider: string;
   publicIdentifier: string;
   present: boolean;
+  requiredForLive?: boolean;
   status?: string;
   reference?: string;
   message?: string | null;

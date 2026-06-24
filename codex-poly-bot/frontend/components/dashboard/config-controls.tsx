@@ -5,6 +5,7 @@ import { FormEvent, useState } from "react";
 import { dashboardApi } from "@/lib/api";
 import {
   ALLOWED_CONFIG_PATHS,
+  CONFIG_PATH_DETAILS,
   isAllowedConfigPath,
 } from "@/lib/config-paths";
 import type { AllowedConfigPath } from "@/lib/config-paths";
@@ -46,6 +47,8 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   );
   const [currentVersion, setCurrentVersion] = useState(initialSnapshot?.version ?? "");
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
+  const selectedDetail = CONFIG_PATH_DETAILS[path];
+  const currentValue = valueAtPath(settings, path);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -99,7 +102,13 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
 
   return (
     <section className="panel">
-      <h2>Config</h2>
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Controls</p>
+          <h2>Config</h2>
+        </div>
+        <span className="status ok">applies next loop</span>
+      </div>
       {initialSnapshot ? (
         <p>
           Current version: {currentVersion || initialSnapshot.version}. Environment:{" "}
@@ -116,15 +125,38 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           >
             {ALLOWED_CONFIG_PATHS.map((allowedPath) => (
               <option key={allowedPath} value={allowedPath}>
-                {allowedPath}
+                {CONFIG_PATH_DETAILS[allowedPath].label}
               </option>
             ))}
           </select>
         </label>
+        <div className="setting-help">
+          <strong>{selectedDetail.label}</strong>
+          <p>{selectedDetail.description}</p>
+          <dl>
+            <div>
+              <dt>Path</dt>
+              <dd>{path}</dd>
+            </div>
+            <div>
+              <dt>Current value</dt>
+              <dd>{formatValueForInput(currentValue) || "not set"}</dd>
+            </div>
+            <div>
+              <dt>Expected value</dt>
+              <dd>{selectedDetail.valueHint}</dd>
+            </div>
+            <div>
+              <dt>Effect</dt>
+              <dd>{selectedDetail.effect}</dd>
+            </div>
+          </dl>
+        </div>
         <label>
           Value
           <textarea
             rows={pathRequiresJson(path) ? 6 : 3}
+            placeholder={selectedDetail.valueHint}
             value={value}
             onChange={(event) => setValue(event.target.value)}
           />

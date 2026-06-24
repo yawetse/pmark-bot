@@ -12,6 +12,7 @@ export function DashboardNav() {
         <a href="/dashboard/comparison">Comparison</a>
         <a href="/dashboard/operations">Operations</a>
         <a href="/dashboard/system">System</a>
+        <a href="/dashboard/help">Help</a>
       </nav>
     </header>
   );
