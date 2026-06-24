@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from app.domain import Environment
@@ -235,6 +238,172 @@ def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypa
         "Risk",
     }
     assert "alpaca-signing-key" not in str(loop)
+
+
+def test_req_ui_004_05_dashboard_preferences_persist_theme_timezone_and_costs() -> None:
+    """TST-REQ-UI-004-05: Validates REQ-UI-004 and REQ-OBS-004
+
+    Given: an authorized dashboard user saves display preferences
+    When: preferences are saved and reloaded
+    Then: theme, time zone, and AWS monthly cost assumptions persist per user
+    """
+
+    client, token = _client()
+
+    saved = client.put(
+        "/api/preferences",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "settings": {
+                "theme": "dark",
+                "timeZone": "America/New_York",
+                "awsMonthlyInfraCostUsd": "74.25",
+            }
+        },
+    )
+    loaded = client.get(
+        "/api/preferences",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
+
+    assert saved.status_code == 200
+    assert loaded.status_code == 200
+    assert loaded.json()["settings"] == {
+        "theme": "dark",
+        "timeZone": "America/New_York",
+        "awsMonthlyInfraCostUsd": "74.25",
+    }
+    assert audit_rows[-1]["event_type"] == "dashboard_preferences_change"
+
+
+def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> None:
+    """TST-REQ-UI-008-04: Validates REQ-UI-008, REQ-DAT-008, and REQ-OBS-004
+
+    Given: an authorized dashboard user triggers a manual run
+    When: the manual-run endpoint is called
+    Then: the API accepts the request, records a heartbeat, and exposes the latest market-data pull
+    """
+
+    client, token = _client()
+
+    response = client.post(
+        "/api/operations/manual-run",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={"environment": "development"},
+    )
+    latest_pull = client.get(
+        "/api/market-data/latest",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    job_rows = client.app.state.services.registry.state.rows("shared.job_runs")
+    audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "accepted"
+    assert response.json()["marketDataPull"]["trigger"] == "manual"
+    assert latest_pull.status_code == 200
+    assert latest_pull.json()["id"] == response.json()["marketDataPull"]["id"]
+    assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
+    assert audit_rows[-1]["event_type"] == "manual_loop_trigger"
+
+
+def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() -> None:
+    """TST-REQ-UI-010-02: Validates REQ-UI-010, REQ-CMP-002, and REQ-OBS-005
+
+    Given: persisted AI usage, position P&L, AWS cost preferences, and market data
+    When: dashboard summary is requested
+    Then: token spend, AI cost, AWS cost, market pull, and net profitability are returned
+    """
+
+    client, token = _client()
+    state = client.app.state.services.registry.state
+    now = datetime.now(UTC)
+    state.insert(
+        "shared.ai_usage_events",
+        {
+            "id": "usage-1",
+            "environment": "development",
+            "provider": "openai",
+            "prompt_tokens": 1200,
+            "completion_tokens": 300,
+            "cost_usd": Decimal("0.45"),
+            "created_at": now,
+        },
+    )
+    state.insert(
+        "openai.positions",
+        {
+            "position_id": "pos-1",
+            "state": "closed",
+            "realized_pnl": Decimal("12.50"),
+            "unrealized_pnl": Decimal("1.25"),
+            "updated_at": now,
+        },
+    )
+    state.insert(
+        "shared.market_data_pulls",
+        {
+            "id": "pull-1",
+            "environment": "development",
+            "venue": "polymarket_us",
+            "status": "stored",
+            "trigger": "scheduled",
+            "source": "test snapshot",
+            "candidates": [
+                {
+                    "id": "will-fed-cut",
+                    "venue": "polymarket_us",
+                    "market": "Will the Fed cut rates?",
+                    "price": "0.42",
+                    "liquidity": "1000",
+                    "spread": "0.03",
+                    "state": "candidate",
+                    "pulledAt": now.isoformat(),
+                }
+            ],
+            "message": "One candidate captured.",
+            "run_id": "run-1",
+            "created_at": now,
+        },
+    )
+    client.put(
+        "/api/preferences",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "settings": {
+                "theme": "light",
+                "timeZone": "system",
+                "awsMonthlyInfraCostUsd": "30.00",
+            }
+        },
+    )
+
+    response = client.get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["marketData"]["candidateCount"] == 1
+    assert payload["economics"]["ai"]["totalTokens"] == 1500
+    assert payload["economics"]["ai"]["totalCostUsd"] == "0.45"
+    assert payload["economics"]["aws"]["dailyInfraCostEstimateUsd"] == "1.00"
+    assert payload["economics"]["trading"]["totalPnlUsd"] == "13.75"
+    assert payload["economics"]["profitability"]["netAfterRecordedCostsUsd"] == "12.30"
 
 
 def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch) -> None:

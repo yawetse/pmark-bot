@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
+import type { EconomicsSummaryView } from "@/components/dashboard/economics-panel";
+import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
 import { OperationsView } from "@/components/dashboard/operations-view";
 import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
@@ -20,6 +22,14 @@ export default async function OperationsPage() {
     "operations/summary",
     sessionCheck.session.username,
   );
+  const marketData = await serverDashboardApi<MarketDataPullView>(
+    "market-data/latest",
+    sessionCheck.session.username,
+  );
+  const economics = await serverDashboardApi<EconomicsSummaryView>(
+    "economics/summary",
+    sessionCheck.session.username,
+  );
 
   return (
     <>
@@ -27,6 +37,8 @@ export default async function OperationsPage() {
       <main className="page-shell">
         <OperationsView
           summary={operations.ok ? operations.data : undefined}
+          marketData={marketData.ok ? marketData.data : undefined}
+          economics={economics.ok ? economics.data : undefined}
           loadError={operations.ok ? undefined : operations.message}
         />
       </main>

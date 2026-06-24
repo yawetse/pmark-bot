@@ -34,6 +34,9 @@ for (const state of ["refused", "submitted", "filled", "canceled", "failed", "un
 for (const token of [
   "Pending Orders",
   "Trade and Order History",
+  "ManualRunControl",
+  "MarketDataPanel",
+  "EconomicsPanel",
   "No pending orders",
   "No trade or order history",
   "No simulated or live order events",

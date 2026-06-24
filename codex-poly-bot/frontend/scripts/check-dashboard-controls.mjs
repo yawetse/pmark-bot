@@ -69,9 +69,12 @@ const commandCenter = read("components/dashboard/operator-command-center.tsx");
 for (const token of [
   "What is running",
   "LoopMonitor",
+  "PreferencesPanel",
+  "ManualRunControl",
+  "MarketDataPanel",
+  "EconomicsPanel",
   "What happens next",
   "Pending activity",
-  "Performance",
   "Available controls",
   "No orders recorded",
 ]) {
