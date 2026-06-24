@@ -7,13 +7,14 @@ REQ-WAL-005, REQ-WAL-006, REQ-OBS-005
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
+from app.services.llm_service import SCORING_SYSTEM_PROMPT
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
@@ -327,6 +328,435 @@ class RuntimeStatusService:
             "orderEvents": order_items,
         }
 
+    def loop_observability(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+        config_degraded: bool = False,
+        kill_switch_active: bool = False,
+    ) -> dict[str, Any]:
+        """Return a dashboard-safe view of loop timing, inputs, gates, and logic.
+
+        REQ: REQ-UI-004, REQ-OBS-005
+        """
+
+        now = datetime.now(UTC)
+        worker = self.worker_status()
+        interval_seconds = _positive_int(
+            config_payload.get("trading_loop_interval_seconds"),
+            default=60,
+        )
+        last_heartbeat = _parse_datetime(worker.get("lastHeartbeatAt"))
+        next_run_at = (
+            last_heartbeat + timedelta(seconds=interval_seconds)
+            if last_heartbeat is not None
+            else now + timedelta(seconds=interval_seconds)
+        )
+        seconds_until_next_run = max(0, int((next_run_at - now).total_seconds()))
+        selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
+        venues = config_payload.get("venues", {})
+        selected_venue_enabled = bool(venues.get(selected_venue, {}).get("enabled", False))
+        live_enabled = bool(config_payload.get("live_enabled", False))
+        credentials = self.credential_rows(environment)
+        credential_blockers = self._loop_credential_blockers(credentials, selected_venue)
+        order_events = self.order_events()
+        open_orders = [
+            item
+            for item in order_events
+            if item["state"] not in {"filled", "canceled", "failed", "refused"}
+        ]
+        status = self._loop_status(
+            worker_state=str(worker["state"]),
+            live_enabled=live_enabled,
+            selected_venue_enabled=selected_venue_enabled,
+            credential_blockers=len(credential_blockers),
+            kill_switch_active=kill_switch_active,
+        )
+        alpaca_config = config_payload.get("alpaca", {})
+        alpaca_symbols = alpaca_config.get("symbol_universe") or []
+        risk_config = config_payload.get("risk", {})
+        llm_config = config_payload.get("llm", {})
+        enabled_strategies = [
+            name
+            for name, strategy_config in config_payload.get("strategies", {}).items()
+            if strategy_config.get("enabled", False)
+        ]
+
+        return {
+            "environment": environment.value,
+            "generatedAt": now.isoformat(),
+            "status": status,
+            "schedule": {
+                "intervalSeconds": interval_seconds,
+                "lastHeartbeatAt": worker.get("lastHeartbeatAt"),
+                "ageSeconds": worker.get("ageSeconds"),
+                "nextRunAt": next_run_at.isoformat(),
+                "secondsUntilNextRun": seconds_until_next_run,
+                "source": worker.get("value"),
+            },
+            "currentPhase": self._current_loop_phase(
+                worker_state=str(worker["state"]),
+                live_enabled=live_enabled,
+                selected_venue_enabled=selected_venue_enabled,
+                credential_blockers=len(credential_blockers),
+                kill_switch_active=kill_switch_active,
+            ),
+            "stages": self._loop_stages(
+                worker_state=str(worker["state"]),
+                config_degraded=config_degraded,
+                live_enabled=live_enabled,
+                selected_venue_enabled=selected_venue_enabled,
+                credential_blockers=len(credential_blockers),
+                kill_switch_active=kill_switch_active,
+                order_count=len(order_events),
+            ),
+            "dataInputs": [
+                {
+                    "label": "Selected venue",
+                    "value": selected_venue,
+                    "state": "ok" if selected_venue_enabled else "blocked",
+                    "detail": "Venue flag controls whether candidates can be evaluated there.",
+                },
+                {
+                    "label": "Alpaca symbols",
+                    "value": ", ".join(str(symbol) for symbol in alpaca_symbols) or "none",
+                    "state": "ok" if alpaca_symbols else "blocked",
+                    "detail": "Symbols are read from config before Alpaca candidate filtering.",
+                },
+                {
+                    "label": "Market candidates",
+                    "value": "none captured",
+                    "state": "idle",
+                    "detail": "The dashboard has no current candidate snapshot for this loop yet.",
+                },
+                {
+                    "label": "Recent order events",
+                    "value": str(len(order_events)),
+                    "state": "ok" if order_events else "idle",
+                    "detail": "Order events are read from provider-specific order event tables.",
+                },
+                {
+                    "label": "Open orders",
+                    "value": str(len(open_orders)),
+                    "state": "blocked" if open_orders else "ok",
+                    "detail": "Non-terminal order events stay visible for operator review.",
+                },
+            ],
+            "prompts": [
+                {
+                    "label": "Scoring system prompt",
+                    "value": SCORING_SYSTEM_PROMPT,
+                    "state": "ok",
+                    "detail": "Used by OpenAI Responses and Claude Messages scoring adapters.",
+                },
+                {
+                    "label": "Prompt version",
+                    "value": "pm-v1",
+                    "state": "ok",
+                    "detail": "Default request version attached to each LLM scoring request.",
+                },
+                {
+                    "label": "Latest prompt run",
+                    "value": "none captured",
+                    "state": "idle",
+                    "detail": "No prompt execution row is available in the dashboard store.",
+                },
+            ],
+            "logic": [
+                {
+                    "label": "Candidate filters",
+                    "value": "enabled venue, liquidity, spread, resolution window, symbol universe",
+                    "state": "ok",
+                    "detail": "Deterministic filters run before any LLM scoring request.",
+                },
+                {
+                    "label": "Enabled strategies",
+                    "value": ", ".join(enabled_strategies) or "none",
+                    "state": "ok" if enabled_strategies else "blocked",
+                    "detail": "Strategy consensus requires persisted directional signals.",
+                },
+                {
+                    "label": "LLM scoring budgets",
+                    "value": self._llm_budget_summary(llm_config),
+                    "state": "ok",
+                    "detail": "Provider budgets gate scoring requests before cost is recorded.",
+                },
+                {
+                    "label": "Live order gates",
+                    "value": "live flag, venue, credentials, market data, scoring, risk, kill switch",
+                    "state": status["state"],
+                    "detail": "Every gate must pass before live venue submission.",
+                },
+            ],
+            "calculations": [
+                {
+                    "label": "Loop cadence",
+                    "formula": "next_run_at = last_heartbeat_at + interval_seconds",
+                    "value": f"{interval_seconds}s interval",
+                    "state": "ok" if worker["state"] == "ok" else "blocked",
+                },
+                {
+                    "label": "Kelly capped notional",
+                    "formula": "min(bankroll * Kelly fraction, risk cap)",
+                    "value": "waiting for score and bankroll",
+                    "state": "idle",
+                },
+                {
+                    "label": "Alpaca allocation cap",
+                    "formula": "model_capital * max_portfolio_allocation_per_symbol",
+                    "value": self._risk_value(
+                        risk_config,
+                        "alpaca",
+                        "max_portfolio_allocation_per_symbol",
+                    ),
+                    "state": "ok",
+                },
+                {
+                    "label": "Max Alpaca position",
+                    "formula": "projected_symbol_exposure <= max_position_usd",
+                    "value": self._risk_value(risk_config, "alpaca", "max_position_usd"),
+                    "state": "ok",
+                },
+                {
+                    "label": "Max Polymarket position",
+                    "formula": "proposed_notional <= max_position_usd",
+                    "value": self._risk_value(risk_config, "polymarket", "max_position_usd"),
+                    "state": "ok",
+                },
+            ],
+            "gates": [
+                self._gate("Worker heartbeat", worker["state"] == "ok", str(worker["value"])),
+                self._gate("Live flag", live_enabled, "live enabled" if live_enabled else "dry run"),
+                self._gate(
+                    "Selected venue",
+                    selected_venue_enabled,
+                    f"{selected_venue} {'enabled' if selected_venue_enabled else 'disabled'}",
+                ),
+                self._gate(
+                    "Credentials",
+                    not credential_blockers,
+                    "ready" if not credential_blockers else f"{len(credential_blockers)} blocker",
+                ),
+                self._gate(
+                    "Kill switch",
+                    not kill_switch_active,
+                    "inactive" if not kill_switch_active else "active",
+                ),
+                {
+                    "label": "Market data",
+                    "state": "idle",
+                    "value": "no active candidate snapshot",
+                },
+                {
+                    "label": "Scoring",
+                    "state": "idle",
+                    "value": "no current prompt run",
+                },
+                {
+                    "label": "Risk",
+                    "state": "idle",
+                    "value": "waiting for candidate sizing inputs",
+                },
+            ],
+            "records": {
+                "orderEvents": len(order_events),
+                "openOrders": len(open_orders),
+                "auditEvents": self._audit_event_count(),
+            },
+        }
+
+    def _loop_status(
+        self,
+        *,
+        worker_state: str,
+        live_enabled: bool,
+        selected_venue_enabled: bool,
+        credential_blockers: int,
+        kill_switch_active: bool,
+    ) -> dict[str, str]:
+        if worker_state != "ok":
+            return {
+                "state": "blocked",
+                "label": "Worker blocked",
+                "detail": "The dashboard cannot confirm a current scheduler heartbeat.",
+            }
+        if kill_switch_active:
+            return {
+                "state": "blocked",
+                "label": "Stopped",
+                "detail": "The kill switch is active, so live order submission is blocked.",
+            }
+        if not live_enabled:
+            return {
+                "state": "idle",
+                "label": "Dry run",
+                "detail": "The scheduler heartbeat is current, but live order submission is disabled.",
+            }
+        if not selected_venue_enabled or credential_blockers:
+            return {
+                "state": "blocked",
+                "label": "Live gated",
+                "detail": "Live mode is on, but venue or credential gates still block orders.",
+            }
+        return {
+            "state": "waiting",
+            "label": "Watching next loop",
+            "detail": "Live gates are ready, but no candidate decision is currently in flight.",
+        }
+
+    def _current_loop_phase(
+        self,
+        *,
+        worker_state: str,
+        live_enabled: bool,
+        selected_venue_enabled: bool,
+        credential_blockers: int,
+        kill_switch_active: bool,
+    ) -> dict[str, str]:
+        if worker_state != "ok":
+            return {
+                "id": "scheduler",
+                "label": "Scheduler heartbeat blocked",
+                "state": "blocked",
+                "detail": "No current worker heartbeat is available.",
+            }
+        if kill_switch_active:
+            return {
+                "id": "execution",
+                "label": "Execution stopped",
+                "state": "blocked",
+                "detail": "The kill switch must be cleared before any live order path can run.",
+            }
+        if live_enabled and (not selected_venue_enabled or credential_blockers):
+            return {
+                "id": "gates",
+                "label": "Pre-trade gates blocked",
+                "state": "blocked",
+                "detail": "Resolve venue and credential blockers before live order submission.",
+            }
+        return {
+            "id": "scheduler",
+            "label": "Waiting for next scheduler tick",
+            "state": "waiting",
+            "detail": "The visible backend loop is currently a scheduler heartbeat.",
+        }
+
+    def _loop_stages(
+        self,
+        *,
+        worker_state: str,
+        config_degraded: bool,
+        live_enabled: bool,
+        selected_venue_enabled: bool,
+        credential_blockers: int,
+        kill_switch_active: bool,
+        order_count: int,
+    ) -> list[dict[str, str]]:
+        return [
+            {
+                "id": "scheduler",
+                "label": "Scheduler",
+                "state": "ok" if worker_state == "ok" else "blocked",
+                "detail": "Maintains the heartbeat and starts loop work when enabled.",
+            },
+            {
+                "id": "config",
+                "label": "Config snapshot",
+                "state": "blocked" if config_degraded else "ok",
+                "detail": "Loads venue, risk, model, symbol, and notification settings.",
+            },
+            {
+                "id": "market-data",
+                "label": "Market data",
+                "state": "idle",
+                "detail": "No current candidate snapshot is attached to the dashboard store.",
+            },
+            {
+                "id": "scoring",
+                "label": "LLM prompts",
+                "state": "idle",
+                "detail": "Scoring prompts are defined, but no prompt run is captured now.",
+            },
+            {
+                "id": "strategy",
+                "label": "Strategy logic",
+                "state": "idle",
+                "detail": "Strategies wait for filtered and scored candidates.",
+            },
+            {
+                "id": "risk",
+                "label": "Risk calculations",
+                "state": "idle",
+                "detail": "Kelly sizing and venue risk checks wait for a candidate.",
+            },
+            {
+                "id": "execution",
+                "label": "Execution",
+                "state": self._execution_stage_state(
+                    live_enabled=live_enabled,
+                    selected_venue_enabled=selected_venue_enabled,
+                    credential_blockers=credential_blockers,
+                    kill_switch_active=kill_switch_active,
+                ),
+                "detail": "Submits dry-run or live orders only after all gates pass.",
+            },
+            {
+                "id": "records",
+                "label": "Audit and orders",
+                "state": "ok" if order_count else "idle",
+                "detail": "Records decisions, order events, and operator changes.",
+            },
+        ]
+
+    def _execution_stage_state(
+        self,
+        *,
+        live_enabled: bool,
+        selected_venue_enabled: bool,
+        credential_blockers: int,
+        kill_switch_active: bool,
+    ) -> str:
+        if kill_switch_active or (live_enabled and (not selected_venue_enabled or credential_blockers)):
+            return "blocked"
+        if live_enabled:
+            return "waiting"
+        return "idle"
+
+    def _llm_budget_summary(self, llm_config: dict[str, Any]) -> str:
+        values = []
+        for provider in ModelProvider:
+            budget = llm_config.get(provider.value, {}).get("budget_usd", "0.00")
+            values.append(f"{provider.value} ${budget}")
+        return ", ".join(values)
+
+    def _loop_credential_blockers(
+        self,
+        credentials: list[dict[str, Any]],
+        selected_venue: str,
+    ) -> list[dict[str, Any]]:
+        required_venues = {selected_venue, "llm"}
+        return [
+            credential
+            for credential in credentials
+            if credential["requiredForLive"]
+            and credential["venue"] in required_venues
+            and not credential["present"]
+        ]
+
+    def _risk_value(self, risk_config: dict[str, Any], venue: str, field_name: str) -> str:
+        value = risk_config.get(venue, {}).get(field_name)
+        return str(value) if value is not None else "not configured"
+
+    def _gate(self, label: str, passed: bool, value: str) -> dict[str, str]:
+        return {"label": label, "state": "ok" if passed else "blocked", "value": value}
+
+    def _audit_event_count(self) -> int:
+        try:
+            return len(self.registry.state.rows(f"{SHARED_SCHEMA}.audit_events"))
+        except PersistenceUnavailableError:
+            return 0
+
     def order_events(self) -> list[dict[str, Any]]:
         """Return recent order events across provider schemas.
 
@@ -407,3 +837,26 @@ def _valid_email(value: str) -> bool:
         return False
     local_part, domain = stripped.rsplit("@", 1)
     return bool(local_part and "." in domain)
+
+
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

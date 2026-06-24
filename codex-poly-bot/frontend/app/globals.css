@@ -236,6 +236,16 @@ a {
   color: var(--danger);
 }
 
+.status.idle {
+  background: #edf2f7;
+  color: #4f5f73;
+}
+
+.status.waiting {
+  background: #e3eefc;
+  color: #24558f;
+}
+
 .mode-card {
   align-content: center;
   background: var(--surface-strong);
@@ -317,6 +327,188 @@ a {
 
 .status-dot.blocked {
   background: var(--danger);
+}
+
+.status-dot.idle {
+  background: #7d8897;
+}
+
+.status-dot.waiting {
+  background: #2f70b7;
+}
+
+.loop-monitor {
+  gap: 20px;
+}
+
+.loop-current {
+  align-items: flex-start;
+  background: var(--surface-strong);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+}
+
+.loop-current p,
+.loop-current small {
+  color: var(--muted);
+  display: block;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
+.loop-schedule-grid,
+.loop-record-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.loop-record-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.loop-metric {
+  background: var(--surface-strong);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  min-height: 72px;
+  padding: 12px;
+}
+
+.loop-metric span,
+.loop-gate span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.loop-metric strong,
+.loop-gate strong {
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.loop-stage-list {
+  counter-reset: loop-stage;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.loop-stage {
+  background: var(--surface-strong);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-height: 132px;
+  padding: 12px;
+}
+
+.loop-stage.ok {
+  border-color: #b8decd;
+}
+
+.loop-stage.blocked {
+  border-color: #efb0a9;
+}
+
+.loop-stage.waiting {
+  border-color: #b5cdeb;
+}
+
+.loop-stage > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.loop-stage strong,
+.loop-row strong {
+  display: block;
+  font-size: 14px;
+}
+
+.loop-stage p,
+.loop-row p,
+.loop-row small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.loop-detail-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loop-detail-section {
+  border-top: 1px solid var(--surface-strong);
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+.loop-detail-section h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.loop-item-list {
+  display: grid;
+  gap: 8px;
+}
+
+.loop-row {
+  align-items: flex-start;
+  background: var(--surface-strong);
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.loop-row > div {
+  min-width: 0;
+}
+
+.loop-gate-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loop-gate {
+  background: var(--surface-strong);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.loop-gate.ok {
+  border-color: #b8decd;
+}
+
+.loop-gate.blocked {
+  border-color: #efb0a9;
+}
+
+.loop-gate.waiting {
+  border-color: #b5cdeb;
 }
 
 .action-list {
@@ -719,6 +911,11 @@ th {
   .operator-grid,
   .status-card-grid,
   .metric-strip,
+  .loop-schedule-grid,
+  .loop-stage-list,
+  .loop-detail-grid,
+  .loop-record-grid,
+  .loop-gate-grid,
   .architecture-flow,
   .compact-timeline,
   .infra-grid {
