@@ -125,6 +125,7 @@ jobs:
       - name: Deploy CloudFormation stack
         env:
           APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
+          ALPACA_ACCOUNT_STATUS: ${{ vars.ALPACA_ACCOUNT_STATUS }}
           BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
           CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
           DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}

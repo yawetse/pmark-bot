@@ -63,6 +63,7 @@ The first production deployment depends on GitHub environment configuration:
 Set these GitHub environment variables for both `development` and `production`:
 
 - `APPLICATION_DOMAIN_NAME`
+- `ALPACA_ACCOUNT_STATUS`
 - `CERTIFICATE_ARN`
 - `DASHBOARD_ALLOWED_USERS`
 - `DASHBOARD_GITHUB_CLIENT_ID`
@@ -72,6 +73,8 @@ Set these GitHub environment variables for both `development` and `production`:
 - `PUBLIC_SUBNET_IDS`
 - `SES_IDENTITY_EMAIL`
 - `VPC_ID`
+
+Use `ALPACA_ACCOUNT_STATUS=active` only after the live account approval and live-trading checklist evidence are complete. Production deploys otherwise default Alpaca to `reviewing`.
 
 Set these GitHub environment secrets for both environments:
 

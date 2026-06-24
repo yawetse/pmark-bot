@@ -410,6 +410,7 @@ def test_req_dep_006_04_workflow_deploys_infrastructure_before_ecr_publish() -> 
         assert infra_index < build_index < deploy_index
         assert "Deploy CloudFormation stack" in text
         assert "./codex-poly-bot/scripts/deploy-stack.sh" in text
+        assert "ALPACA_ACCOUNT_STATUS: ${{ vars.ALPACA_ACCOUNT_STATUS }}" in text
         assert "environment: production" in text
         assert "environment: development" in text
         assert "aws ecs wait services-stable" in text
@@ -471,6 +472,24 @@ def test_req_dep_008_01_codex_web_setup_docs_scripts_developer_follows_setup() -
     assert "pip install -e" in script_text
     assert "pytest" in script_text
     assert codex_web_ready(PROJECT_ROOT)
+
+def test_req_dep_008_03_alpaca_paper_smoke_script_refuses_live_trading() -> None:
+    """TST-REQ-DEP-008-03: Validates REQ-DEP-008 and REQ-ALP-006
+
+    Given: the Alpaca paper smoke command
+    When: the script is inspected
+    Then: it requires development paper mode and refuses live endpoints
+    """
+    script = PROJECT_ROOT / "scripts" / "alpaca-paper-smoke.py"
+    text = script.read_text()
+
+    assert script.is_file()
+    assert "APP_ENV=development" in text
+    assert "ENVIRONMENT=development" in text
+    assert "TRADING_ACCOUNT_MODE=paper" in text
+    assert "paper-api.alpaca.markets" in text
+    assert "paper smoke refuses LIVE_ENABLED=true" in text
+    assert "25.00 or less" in text
 
 def test_req_dep_008_02_setup_runs_without_trading_secrets_dependency_install_tests() -> None:
     """TST-REQ-DEP-008-02: Validates REQ-DEP-008

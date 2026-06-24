@@ -2,6 +2,8 @@
 // REQ-STR-009, REQ-LLM-006, REQ-EXE-007
 
 export const ALLOWED_CONFIG_PATHS = [
+  "default_selected_venue",
+  "live_enabled",
   "venues.polymarket_us.enabled",
   "venues.polymarket_international.enabled",
   "venues.alpaca.enabled",
@@ -14,13 +16,18 @@ export const ALLOWED_CONFIG_PATHS = [
   "risk.polymarket.max_position_usd",
   "risk.polymarket.max_daily_loss_usd",
   "risk.polymarket.max_open_positions",
+  "risk.polymarket.market_order_slippage_threshold",
   "risk.alpaca.max_position_usd",
   "risk.alpaca.max_daily_loss_usd",
   "risk.alpaca.max_open_positions",
   "risk.alpaca.max_portfolio_allocation_per_symbol",
+  "risk.alpaca.market_order_slippage_threshold",
   "alpaca.account_mode",
   "alpaca.symbol_universe",
   "notifications.recipients",
+  "notifications.thresholds.daily_loss_usd",
+  "notifications.thresholds.model_spend_usd",
+  "notifications.thresholds.venue_degradation_minutes",
   "notifications.cooldown_seconds",
   "notifications.digest_schedule_utc",
 ] as const;

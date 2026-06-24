@@ -57,3 +57,19 @@ For local dashboard testing without GitHub OAuth secrets, start the frontend wit
 Local setup is safe for dependency installation, code inspection, and tests. The default runtime mode is dry-run, venue adapters are disabled, and missing live credentials must block live orders before a venue call.
 
 Production trading secrets are not required for dependency installation, tests, or code inspection.
+
+## Alpaca Paper Smoke Test
+
+After development Alpaca paper credentials are in `.env.development`, verify the paper account without placing an order:
+
+```bash
+backend/.venv/bin/python scripts/alpaca-paper-smoke.py
+```
+
+To place one small paper market order during market hours:
+
+```bash
+backend/.venv/bin/python scripts/alpaca-paper-smoke.py --submit --symbol SPY --notional 1.00
+```
+
+The command refuses production mode, `LIVE_ENABLED=true`, non-paper Alpaca URLs, and notionals over `25.00`.
