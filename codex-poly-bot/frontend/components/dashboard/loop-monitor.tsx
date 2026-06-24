@@ -1,3 +1,5 @@
+"use client";
+
 // REQ: REQ-UI-004, REQ-OBS-005
 
 type LoopState = "ok" | "blocked" | "idle" | "waiting";
@@ -63,7 +65,13 @@ export type LoopObservabilityView = {
   };
 };
 
-export function LoopMonitor({ loop }: { loop: LoopObservabilityView }) {
+export function LoopMonitor({
+  loop,
+  timeZone = "UTC",
+}: {
+  loop: LoopObservabilityView;
+  timeZone?: string;
+}) {
   return (
     <section className="operator-panel loop-monitor" aria-labelledby="loop-monitor-title">
       <div className="panel-heading">
@@ -79,15 +87,15 @@ export function LoopMonitor({ loop }: { loop: LoopObservabilityView }) {
         <div>
           <strong>{loop.currentPhase.label}</strong>
           <p>{loop.currentPhase.detail}</p>
-          <small>Snapshot generated {formatTime(loop.generatedAt)} for {loop.environment}</small>
+          <small>Snapshot generated {formatTime(loop.generatedAt, timeZone)} for {loop.environment}</small>
         </div>
       </div>
 
       <div className="loop-schedule-grid">
-        <LoopMetric label="Next run" value={formatTime(loop.schedule.nextRunAt)} />
+        <LoopMetric label="Next run" value={formatTime(loop.schedule.nextRunAt, timeZone)} />
         <LoopMetric label="Countdown" value={formatDuration(loop.schedule.secondsUntilNextRun)} />
         <LoopMetric label="Interval" value={`${loop.schedule.intervalSeconds}s`} />
-        <LoopMetric label="Last heartbeat" value={formatTime(loop.schedule.lastHeartbeatAt)} />
+        <LoopMetric label="Last heartbeat" value={formatTime(loop.schedule.lastHeartbeatAt, timeZone)} />
       </div>
 
       <ol className="loop-stage-list" aria-label="Loop stages">
@@ -190,7 +198,7 @@ function stateClass(state: LoopState): LoopState {
   return state;
 }
 
-function formatTime(value?: string | null): string {
+function formatTime(value: string | null | undefined, timeZone: string): string {
   if (!value) {
     return "not recorded";
   }
@@ -202,6 +210,7 @@ function formatTime(value?: string | null): string {
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit",
+    timeZone,
     timeZoneName: "short",
   }).format(date);
 }

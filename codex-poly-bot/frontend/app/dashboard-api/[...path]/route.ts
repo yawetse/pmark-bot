@@ -73,7 +73,7 @@ function backendHeaders(request: NextRequest, username: string): Headers {
   headers.set("Authorization", `Bearer ${mintBackendToken(username)}`);
   headers.set("X-Environment", process.env.NEXT_PUBLIC_APP_ENV ?? "local");
   if (request.method !== "GET") {
-    headers.set("Origin", process.env.NEXTAUTH_URL ?? "http://localhost:3000");
+    headers.set("Origin", request.nextUrl.origin);
     headers.set("X-CSRF-Token", process.env.DASHBOARD_CSRF_TOKEN ?? "");
   }
   return headers;

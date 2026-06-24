@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
@@ -65,6 +67,10 @@ class RuntimeStatusService:
     """
 
     WORKER_JOB_NAME = "market-data-ingestion"
+    MANUAL_RUN_JOB_NAME = "manual-trading-loop"
+    USER_PREFERENCES_TABLE = f"{SHARED_SCHEMA}.user_preferences"
+    MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.market_data_pulls"
+    AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
 
     def __init__(self, *, settings: Any, registry: RepositoryRegistry | None = None) -> None:
         self.settings = settings
@@ -149,6 +155,163 @@ class RuntimeStatusService:
             )
         except PersistenceUnavailableError:
             return
+
+    def user_preferences(self, *, username: str, environment: Environment) -> dict[str, Any]:
+        """Return saved dashboard preferences with fail-safe defaults.
+
+        REQ: REQ-UI-004, REQ-OBS-005
+        """
+
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows(self.USER_PREFERENCES_TABLE)
+                if row["username"] == username and row["environment"] == environment.value
+            ]
+        except PersistenceUnavailableError:
+            rows = []
+        if not rows:
+            return {
+                "environment": environment.value,
+                "username": username,
+                "settings": default_user_preferences(),
+                "updatedAt": None,
+            }
+        latest = max(rows, key=lambda row: row["updated_at"])
+        return {
+            "environment": environment.value,
+            "username": username,
+            "settings": _merge_preferences(latest["payload"]),
+            "updatedAt": latest["updated_at"].isoformat(),
+        }
+
+    def save_user_preferences(
+        self,
+        *,
+        username: str,
+        ip_address: str,
+        environment: Environment,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one user's dashboard display and cost assumptions.
+
+        REQ: REQ-UI-004, REQ-OBS-004, REQ-OBS-005
+        """
+
+        preferences = _validate_user_preferences(payload)
+        now = datetime.now(UTC)
+        row = self.registry.state.insert(
+            self.USER_PREFERENCES_TABLE,
+            {
+                "id": str(uuid4()),
+                "username": username,
+                "environment": environment.value,
+                "payload": preferences,
+                "updated_at": now,
+            },
+        )
+        audit_event = self.registry.shared().record_audit_event(
+            event_type="dashboard_preferences_change",
+            actor=username,
+            action="preferences.update",
+            environment=environment,
+            success=True,
+            metadata={
+                "ip_address": ip_address,
+                "theme": preferences["theme"],
+                "time_zone": preferences["timeZone"],
+                "aws_monthly_infra_cost_usd": preferences["awsMonthlyInfraCostUsd"],
+            },
+        )
+        return {
+            "environment": environment.value,
+            "username": username,
+            "settings": row["payload"],
+            "updatedAt": row["updated_at"].isoformat(),
+            "auditEventId": audit_event["id"],
+        }
+
+    def trigger_manual_run(
+        self,
+        *,
+        username: str,
+        ip_address: str,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Record an operator-triggered dry-run loop request for the dashboard.
+
+        REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-004, REQ-OBS-005
+        """
+
+        now = datetime.now(UTC)
+        run_id = str(uuid4())
+        selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
+        market_data_pull = self._record_market_data_pull(
+            environment=environment,
+            venue=selected_venue,
+            trigger="manual",
+            status="accepted",
+            message="Manual run accepted. No external market data adapter call is attached to this dashboard record yet.",
+            candidates=[],
+            created_at=now,
+            run_id=run_id,
+        )
+        self.registry.state.insert(
+            f"{SHARED_SCHEMA}.job_runs",
+            {
+                "id": run_id,
+                "job_name": self.MANUAL_RUN_JOB_NAME,
+                "status": "accepted",
+                "heartbeat_at": now,
+                "metadata": {
+                    "message": "manual loop request accepted",
+                    "scheduled": False,
+                    "triggered_by": username,
+                    "market_data_pull_id": market_data_pull["id"],
+                },
+                "created_at": now,
+            },
+        )
+        self.registry.state.insert(
+            f"{SHARED_SCHEMA}.job_runs",
+            {
+                "id": str(uuid4()),
+                "job_name": self.WORKER_JOB_NAME,
+                "status": "ok",
+                "heartbeat_at": now,
+                "metadata": {
+                    "message": "manual dashboard run heartbeat",
+                    "scheduled": False,
+                    "triggered_by": username,
+                    "manual_run_id": run_id,
+                },
+                "created_at": now,
+            },
+        )
+        audit_event = self.registry.shared().record_audit_event(
+            event_type="manual_loop_trigger",
+            actor=username,
+            action="loop.manual_run",
+            environment=environment,
+            entity_id=run_id,
+            success=True,
+            metadata={
+                "ip_address": ip_address,
+                "venue": selected_venue,
+                "market_data_pull_id": market_data_pull["id"],
+            },
+        )
+        return {
+            "environment": environment.value,
+            "runId": run_id,
+            "status": "accepted",
+            "triggeredBy": username,
+            "triggeredAt": now.isoformat(),
+            "auditEventId": audit_event["id"],
+            "message": "Manual run accepted. Live order submission still depends on all configured gates.",
+            "marketDataPull": market_data_pull,
+        }
 
     def worker_status(self) -> dict[str, Any]:
         """Return latest worker heartbeat status.
@@ -328,6 +491,78 @@ class RuntimeStatusService:
             "orderEvents": order_items,
         }
 
+    def market_data_pull(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return the latest dashboard-visible market-data pull.
+
+        REQ: REQ-DAT-001, REQ-DAT-008, REQ-OBS-005
+        """
+
+        selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows(self.MARKET_DATA_PULLS_TABLE)
+                if row["environment"] == environment.value
+            ]
+        except PersistenceUnavailableError:
+            rows = []
+        if not rows:
+            return {
+                "id": None,
+                "environment": environment.value,
+                "venue": selected_venue,
+                "status": "idle",
+                "trigger": "none",
+                "source": "dashboard store",
+                "lastPulledAt": None,
+                "candidateCount": 0,
+                "candidates": [],
+                "message": "No market data pull has been recorded in the dashboard store.",
+            }
+        latest = max(rows, key=lambda row: row["created_at"])
+        return self._market_data_payload(latest)
+
+    def economics_summary(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+        preferences: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return token, cost, and P&L totals for profitability review.
+
+        REQ: REQ-UI-004, REQ-UI-010, REQ-CMP-002, REQ-OBS-005
+        """
+
+        ai_usage = self._ai_usage_summary(environment, config_payload)
+        trading = self._trading_pnl_summary()
+        monthly_aws = _as_money(preferences.get("awsMonthlyInfraCostUsd", "0.00"))
+        daily_aws = monthly_aws / Decimal("30")
+        recorded_costs = _as_money(ai_usage["totalCostUsd"]) + daily_aws
+        trading_total = _as_money(trading["totalPnlUsd"])
+        net = trading_total - recorded_costs
+        return {
+            "environment": environment.value,
+            "generatedAt": datetime.now(UTC).isoformat(),
+            "trading": trading,
+            "ai": ai_usage,
+            "aws": {
+                "monthlyInfraCostUsd": _money(monthly_aws),
+                "dailyInfraCostEstimateUsd": _money(daily_aws),
+                "source": "user preference",
+            },
+            "profitability": {
+                "netAfterRecordedCostsUsd": _money(net),
+                "status": "profitable" if net > 0 else ("losing" if net < 0 else "flat"),
+                "costBasis": "trading P&L minus recorded AI cost and one day of AWS infrastructure cost",
+            },
+        }
+
     def loop_observability(
         self,
         *,
@@ -382,6 +617,10 @@ class RuntimeStatusService:
             for name, strategy_config in config_payload.get("strategies", {}).items()
             if strategy_config.get("enabled", False)
         ]
+        market_data = self.market_data_pull(
+            environment=environment,
+            config_payload=config_payload,
+        )
 
         return {
             "environment": environment.value,
@@ -426,9 +665,9 @@ class RuntimeStatusService:
                 },
                 {
                     "label": "Market candidates",
-                    "value": "none captured",
-                    "state": "idle",
-                    "detail": "The dashboard has no current candidate snapshot for this loop yet.",
+                    "value": f"{market_data['candidateCount']} captured",
+                    "state": "ok" if market_data["candidateCount"] else "idle",
+                    "detail": market_data["message"],
                 },
                 {
                     "label": "Recent order events",
@@ -545,8 +784,8 @@ class RuntimeStatusService:
                 ),
                 {
                     "label": "Market data",
-                    "state": "idle",
-                    "value": "no active candidate snapshot",
+                    "state": "ok" if market_data["candidateCount"] else "idle",
+                    "value": market_data["status"],
                 },
                 {
                     "label": "Scoring",
@@ -757,6 +996,127 @@ class RuntimeStatusService:
         except PersistenceUnavailableError:
             return 0
 
+    def _record_market_data_pull(
+        self,
+        *,
+        environment: Environment,
+        venue: str,
+        trigger: str,
+        status: str,
+        message: str,
+        candidates: list[dict[str, Any]],
+        created_at: datetime,
+        run_id: str,
+    ) -> dict[str, Any]:
+        row = self.registry.state.insert(
+            self.MARKET_DATA_PULLS_TABLE,
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "venue": venue,
+                "status": status,
+                "trigger": trigger,
+                "source": "dashboard manual trigger",
+                "candidates": candidates,
+                "message": message,
+                "run_id": run_id,
+                "created_at": created_at,
+            },
+        )
+        return self._market_data_payload(row)
+
+    def _market_data_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+        candidates = [_safe_candidate_payload(candidate) for candidate in row.get("candidates", [])]
+        return {
+            "id": row["id"],
+            "environment": row["environment"],
+            "venue": row["venue"],
+            "status": row["status"],
+            "trigger": row.get("trigger", "unknown"),
+            "source": row.get("source", "dashboard store"),
+            "lastPulledAt": row["created_at"].isoformat(),
+            "candidateCount": len(candidates),
+            "candidates": candidates,
+            "message": row.get("message") or "Market data pull recorded.",
+        }
+
+    def _ai_usage_summary(
+        self,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        providers: list[dict[str, Any]] = []
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_cost = Decimal("0")
+        for provider in ModelProvider:
+            rows = self._ai_usage_rows(environment, provider)
+            prompt_tokens = sum(_as_int(row.get("prompt_tokens")) for row in rows)
+            completion_tokens = sum(_as_int(row.get("completion_tokens")) for row in rows)
+            provider_cost = sum((_as_money(row.get("cost_usd", "0")) for row in rows), Decimal("0"))
+            total_prompt_tokens += prompt_tokens
+            total_completion_tokens += completion_tokens
+            total_cost += provider_cost
+            budget = config_payload.get("llm", {}).get(provider.value, {}).get("budget_usd", "0.00")
+            providers.append(
+                {
+                    "provider": provider.value,
+                    "promptTokens": prompt_tokens,
+                    "completionTokens": completion_tokens,
+                    "totalTokens": prompt_tokens + completion_tokens,
+                    "costUsd": _money(provider_cost),
+                    "budgetUsd": _money(_as_money(budget)),
+                    "events": len(rows),
+                }
+            )
+        return {
+            "providers": providers,
+            "promptTokens": total_prompt_tokens,
+            "completionTokens": total_completion_tokens,
+            "totalTokens": total_prompt_tokens + total_completion_tokens,
+            "totalCostUsd": _money(total_cost),
+            "source": self.AI_USAGE_EVENTS_TABLE,
+        }
+
+    def _ai_usage_rows(self, environment: Environment, provider: ModelProvider) -> list[dict[str, Any]]:
+        try:
+            rows = self.registry.state.rows(self.AI_USAGE_EVENTS_TABLE)
+        except PersistenceUnavailableError:
+            return []
+        return [
+            row
+            for row in rows
+            if row.get("environment", environment.value) == environment.value
+            and row.get("provider") == provider.value
+        ]
+
+    def _trading_pnl_summary(self) -> dict[str, Any]:
+        realized = Decimal("0")
+        unrealized = Decimal("0")
+        open_positions = 0
+        closed_positions = 0
+        for provider in ModelProvider:
+            try:
+                rows = self.registry.state.rows(f"{provider.value}.positions")
+            except PersistenceUnavailableError:
+                rows = []
+            for row in rows:
+                realized += _as_money(row.get("realized_pnl", "0"))
+                unrealized += _as_money(row.get("unrealized_pnl", "0"))
+                if row.get("state") == "closed":
+                    closed_positions += 1
+                else:
+                    open_positions += 1
+        total = realized + unrealized
+        return {
+            "realizedPnlUsd": _money(realized),
+            "unrealizedPnlUsd": _money(unrealized),
+            "totalPnlUsd": _money(total),
+            "openPositions": open_positions,
+            "closedPositions": closed_positions,
+            "orderEvents": len(self.order_events()),
+        }
+
     def order_events(self) -> list[dict[str, Any]]:
         """Return recent order events across provider schemas.
 
@@ -860,3 +1220,92 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def default_user_preferences() -> dict[str, str]:
+    """Return default dashboard preferences.
+
+    `system` lets the browser use its own color scheme and IANA time zone.
+    """
+
+    return {
+        "theme": "system",
+        "timeZone": "system",
+        "awsMonthlyInfraCostUsd": "0.00",
+    }
+
+
+def _merge_preferences(payload: dict[str, Any] | None) -> dict[str, str]:
+    merged = default_user_preferences()
+    if payload:
+        merged.update({key: str(value) for key, value in payload.items() if key in merged})
+    return _validate_user_preferences(merged)
+
+
+def _validate_user_preferences(payload: dict[str, Any]) -> dict[str, str]:
+    theme = str(payload.get("theme", "system")).strip().lower()
+    if theme not in {"system", "light", "dark"}:
+        raise ValueError("theme must be system, light, or dark")
+
+    time_zone = str(payload.get("timeZone", "system")).strip()
+    if not time_zone:
+        time_zone = "system"
+    if time_zone != "system":
+        try:
+            ZoneInfo(time_zone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timeZone must be system or a valid IANA time zone") from exc
+
+    aws_monthly = _as_money(payload.get("awsMonthlyInfraCostUsd", "0.00"))
+    if aws_monthly < 0:
+        raise ValueError("awsMonthlyInfraCostUsd cannot be negative")
+    return {
+        "theme": theme,
+        "timeZone": time_zone,
+        "awsMonthlyInfraCostUsd": _money(aws_monthly),
+    }
+
+
+def _safe_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    pulled_at = candidate.get("pulledAt") or candidate.get("pulled_at")
+    if isinstance(pulled_at, datetime):
+        pulled_at = pulled_at.isoformat()
+    return {
+        "id": str(candidate.get("id") or candidate.get("symbol") or candidate.get("market") or "candidate"),
+        "venue": str(candidate.get("venue", "")),
+        "symbol": _optional_text(candidate.get("symbol")),
+        "market": _optional_text(candidate.get("market")),
+        "price": _optional_text(candidate.get("price")),
+        "liquidity": _optional_text(candidate.get("liquidity")),
+        "spread": _optional_text(candidate.get("spread")),
+        "state": str(candidate.get("state", "unknown")),
+        "pulledAt": _optional_text(pulled_at),
+    }
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _as_money(value: Any) -> Decimal:
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+    if not parsed.is_finite():
+        return Decimal("0")
+    return parsed
+
+
+def _money(value: Decimal) -> str:
+    return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _as_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
