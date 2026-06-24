@@ -20,10 +20,14 @@ for (const section of [
 
 const configPaths = read("lib/config-paths.ts");
 for (const path of [
+  "live_enabled",
+  "default_selected_venue",
   "venues.polymarket_us.enabled",
   "trading_loop_interval_seconds",
   "llm.openai.budget_usd",
   "risk.alpaca.max_position_usd",
+  "risk.alpaca.market_order_slippage_threshold",
+  "notifications.recipients",
   "notifications.cooldown_seconds",
 ]) {
   assert.match(configPaths, new RegExp(path.replaceAll(".", "\\.")));
@@ -32,9 +36,14 @@ for (const path of [
 const configControls = read("components/dashboard/config-controls.tsx");
 assert.match(configControls, /isAllowedConfigPath/);
 assert.match(configControls, /dashboardApi<ConfigUpdateResponse>\("config"/);
+assert.match(configControls, /JSON\.parse/);
 assert.match(configControls, /result\.status === 409/);
 assert.match(configControls, /Current server version is/);
 assert.doesNotMatch(configControls, /unsupported\.path/);
+
+const configPage = read("app/dashboard/config/page.tsx");
+assert.match(configPage, /serverDashboardApi<ConfigSnapshot>/);
+assert.match(configPage, /"config\/current"/);
 
 const walletStatus = read("components/dashboard/wallet-status.tsx");
 assert.match(walletStatus, /publicIdentifier/);
