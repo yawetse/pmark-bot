@@ -65,6 +65,21 @@ assert.doesNotMatch(walletStatus, /secret/i);
 const dashboardPage = read("app/dashboard/page.tsx");
 assert.match(dashboardPage, /OperatorCommandCenter/);
 
+const dashboardNav = read("components/dashboard/dashboard-nav.tsx");
+assert.match(dashboardNav, /ThemePreferenceControl/);
+
+const themeControl = read("components/dashboard/theme-preference-control.tsx");
+for (const token of [
+  "System",
+  "Light",
+  "Dark",
+  "dashboardApi<UserPreferencesView>",
+  "applyDashboardTheme",
+  "aria-pressed",
+]) {
+  assert.match(themeControl, new RegExp(token));
+}
+
 const commandCenter = read("components/dashboard/operator-command-center.tsx");
 for (const token of [
   "What is running",

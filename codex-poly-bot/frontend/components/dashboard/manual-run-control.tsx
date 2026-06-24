@@ -16,6 +16,7 @@ export type ManualRunResult = {
   auditEventId: string;
   message: string;
   marketDataPull: MarketDataPullView;
+  marketDataPulls?: MarketDataPullView[];
 };
 
 type RunState =

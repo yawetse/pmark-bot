@@ -123,6 +123,14 @@ a {
   font-weight: 700;
 }
 
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
 .nav {
   display: flex;
   flex-wrap: wrap;
@@ -142,6 +150,60 @@ a {
   font-weight: 600;
   min-height: 38px;
   padding: 0 14px;
+}
+
+.theme-control {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.theme-control > span {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.theme-options {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.theme-option {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--border);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.theme-option:first-child {
+  border-left: 0;
+}
+
+.theme-option.active {
+  background: var(--accent);
+  color: var(--button-foreground);
+}
+
+.theme-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.theme-save-error {
+  color: var(--danger);
 }
 
 .button.primary {
@@ -605,7 +667,8 @@ a {
 
 .metric-strip,
 .control-list,
-.compact-list {
+.compact-list,
+.market-venue-grid {
   display: grid;
   gap: 10px;
 }
@@ -616,11 +679,53 @@ a {
 
 .compact-row,
 .control-link,
+.market-venue-card,
 .empty-state,
 .setting-help {
   background: var(--surface-strong);
   border-radius: 8px;
   padding: 14px;
+}
+
+.market-venue-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-venue-card {
+  display: grid;
+  gap: 12px;
+}
+
+.market-venue-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.market-venue-card dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.market-venue-card dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.market-venue-card dd {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.market-venue-card p {
+  margin: 0;
 }
 
 .compact-row {
@@ -997,6 +1102,12 @@ th {
     width: 100%;
   }
 
+  .topbar-actions,
+  .theme-control {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
   .content-grid {
     grid-template-columns: 1fr;
   }
@@ -1011,6 +1122,7 @@ th {
   .loop-record-grid,
   .loop-gate-grid,
   .economics-grid,
+  .market-venue-grid,
   .architecture-flow,
   .compact-timeline,
   .infra-grid {
