@@ -68,6 +68,7 @@ assert.match(dashboardPage, /OperatorCommandCenter/);
 const commandCenter = read("components/dashboard/operator-command-center.tsx");
 for (const token of [
   "What is running",
+  "LoopMonitor",
   "What happens next",
   "Pending activity",
   "Performance",
@@ -75,4 +76,18 @@ for (const token of [
   "No orders recorded",
 ]) {
   assert.match(commandCenter, new RegExp(token));
+}
+
+const loopMonitor = read("components/dashboard/loop-monitor.tsx");
+for (const token of [
+  "Loop monitor",
+  "Next run",
+  "Data in use",
+  "Prompts",
+  "Decision logic",
+  "Calculations",
+  "Pre-trade gates",
+  "loop.prompts",
+]) {
+  assert.match(loopMonitor, new RegExp(token));
 }

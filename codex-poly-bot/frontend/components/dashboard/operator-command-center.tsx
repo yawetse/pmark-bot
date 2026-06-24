@@ -1,3 +1,7 @@
+import {
+  LoopMonitor,
+  type LoopObservabilityView,
+} from "@/components/dashboard/loop-monitor";
 import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
 import type { StatusItem } from "@/components/dashboard/status-overview";
 import type { WalletCredentialView } from "@/components/dashboard/wallet-status";
@@ -51,6 +55,7 @@ export type DashboardSummaryView = {
     value?: string;
     recipientCount?: number;
   };
+  loop: LoopObservabilityView;
   audit?: {
     items?: unknown[];
   };
@@ -103,6 +108,8 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
           </small>
         </div>
       </div>
+
+      <LoopMonitor loop={summary.loop} />
 
       <div className="operator-grid">
         <section className="operator-panel span-2" aria-labelledby="running-title">
