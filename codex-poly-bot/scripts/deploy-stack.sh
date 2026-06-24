@@ -178,7 +178,12 @@ aws cloudformation deploy \
   --stack-name "${stack_name}" \
   --template-file "codex-poly-bot/infra/cloudformation.yml" \
   --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides "${parameter_overrides[@]}"
+  --parameter-overrides "${parameter_overrides[@]}" \
+  --tags \
+    "Project=${project_name}" \
+    "Environment=${environment}" \
+    "Application=codex-poly-bot" \
+    "ManagedBy=cloudformation"
 
 aws cloudformation describe-stacks \
   --stack-name "${stack_name}" \

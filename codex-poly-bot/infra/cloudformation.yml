@@ -471,6 +471,10 @@ Resources:
               - ses:SendEmail
               - ses:SendRawEmail
             Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesIdentityEmail}"
+          - Effect: Allow
+            Action:
+              - ce:GetCostAndUsage
+            Resource: "*"
 
   TaskExecutionSecretAccessPolicy:
     Type: AWS::IAM::Policy
@@ -511,6 +515,16 @@ Resources:
               Value: !Ref EnvironmentName
             - Name: SNAPSHOT_BUCKET
               Value: !Ref SnapshotBucket
+            - Name: AWS_COST_EXPLORER_ENABLED
+              Value: "true"
+            - Name: AWS_COST_EXPLORER_PROJECT_TAG
+              Value: Project
+            - Name: AWS_COST_EXPLORER_PROJECT_VALUE
+              Value: !Ref ProjectName
+            - Name: AWS_COST_EXPLORER_ENVIRONMENT_TAG
+              Value: Environment
+            - Name: AWS_COST_EXPLORER_ACCOUNT_FALLBACK
+              Value: "true"
             - Name: DATABASE_URL
               Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}:5432/codexbot"
             - Name: LIVE_ENABLED

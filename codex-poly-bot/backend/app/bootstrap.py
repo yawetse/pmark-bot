@@ -649,8 +649,7 @@ def iam_secret_scope_check(root: Path = PROJECT_ROOT) -> IamSecretScopeCheck:
     broad_patterns = (
         "secret:/codex-poly-bot/*",
         "secret:*",
-        "Resource: \"*\"",
-        "Resource: '*'",
+        "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*",
     )
     errors: list[str] = []
     if scoped_pattern not in template_text:

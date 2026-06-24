@@ -113,7 +113,7 @@ export function PreferencesPanel({
           </select>
         </label>
         <label>
-          AWS monthly infra cost
+          AWS monthly fallback cost
           <input
             inputMode="decimal"
             min="0"

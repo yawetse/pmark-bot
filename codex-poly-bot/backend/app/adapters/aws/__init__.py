@@ -5,6 +5,12 @@ REQ-DAT-008, REQ-WAL-003, REQ-WAL-007, REQ-NOT-001,
 REQ-NOT-003, REQ-NOT-004, REQ-NOT-007
 """
 
+from app.adapters.aws.billing import (
+    AwsBillingCost,
+    BillingUnavailableError,
+    CostExplorerBillingAdapter,
+    billing_adapter_from_env,
+)
 from app.adapters.aws.ses import EmailDeliveryResult, EmailMessage, InMemorySesEmailAdapter
 from app.adapters.aws.secrets import (
     InMemorySecretsAdapter,
@@ -23,6 +29,9 @@ from app.adapters.aws.s3 import (
 )
 
 __all__ = [
+    "AwsBillingCost",
+    "BillingUnavailableError",
+    "CostExplorerBillingAdapter",
     "EmailDeliveryResult",
     "EmailMessage",
     "InMemorySecretsAdapter",
@@ -35,6 +44,7 @@ __all__ = [
     "SnapshotBatchResult",
     "SnapshotObject",
     "SnapshotStorageError",
+    "billing_adapter_from_env",
     "build_snapshot_key",
     "store_snapshot_batch",
 ]
