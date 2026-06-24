@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+import json
 
+import httpx
 import pytest
 
 from app.adapters.aws import (
@@ -19,6 +21,7 @@ from app.services import (
     IngestionService,
     check_market_data_freshness,
 )
+from app.services.market_data_provider import ProviderBackedMarketDataFetcher
 from tests.spec.helpers import pending
 
 
@@ -274,3 +277,115 @@ def test_req_dat_008_01_ingestion_job_fails_after_prior_checkpoint_retry_policy(
     assert retry.fully_stored
     assert retry.metadata[0].idempotent
     assert retry.checkpoint_advanced
+
+
+def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates() -> None:
+    """TST-REQ-DAT-008-04: Validates REQ-DAT-008
+
+    Given: Alpaca latest quote and bar endpoints return market data
+    When: provider-backed ingestion runs for configured symbols
+    Then: priced dashboard candidates include price, spread, liquidity, and timestamp
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/quotes/latest"):
+            return httpx.Response(
+                200,
+                json={
+                    "symbol": "SPY",
+                    "quote": {
+                        "t": "2026-06-24T18:00:00Z",
+                        "bp": 500,
+                        "ap": 500.02,
+                        "bs": 1,
+                        "as": 2,
+                    },
+                },
+            )
+        if request.url.path.endswith("/bars/latest"):
+            return httpx.Response(
+                200,
+                json={"symbol": "SPY", "bar": {"t": "2026-06-24T17:59:00Z", "c": 499.9, "v": 1000}},
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "ALPACA_KEY_ID": "key",
+            "ALPACA_SECRET_KEY": "secret",
+            "ALPACA_DATA_BASE_URL": "https://data.alpaca.test/v2",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.ALPACA.value,
+        config_payload={"alpaca": {"symbol_universe": ["SPY"]}},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "pulled"
+    assert result.source == "alpaca market data api"
+    assert result.candidates[0]["symbol"] == "SPY"
+    assert result.candidates[0]["price"] == "500.01"
+    assert result.candidates[0]["spread"] == "0.02"
+    assert result.candidates[0]["liquidity"] == "3"
+    assert result.candidates[0]["pulledAt"] == "2026-06-24T18:00:00Z"
+
+
+def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() -> None:
+    """TST-REQ-DAT-008-05: Validates REQ-DAT-008
+
+    Given: Polymarket active markets and CLOB order books return data
+    When: provider-backed ingestion runs for Polymarket
+    Then: priced dashboard candidates include midpoint, spread, liquidity, and token metadata
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/markets":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "conditionId": "condition-1",
+                        "question": "Will rates fall?",
+                        "clobTokenIds": json.dumps(["yes-token"]),
+                        "outcomes": json.dumps(["Yes"]),
+                    }
+                ],
+            )
+        if request.url.path == "/book":
+            return httpx.Response(
+                200,
+                json={
+                    "market": "condition-1",
+                    "asset_id": "yes-token",
+                    "timestamp": "1782324000",
+                    "bids": [{"price": "0.44", "size": "100"}],
+                    "asks": [{"price": "0.46", "size": "150"}],
+                    "last_trade_price": "0.45",
+                },
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "POLYMARKET_GAMMA_BASE_URL": "https://gamma.polymarket.test",
+            "POLYMARKET_CLOB_BASE_URL": "https://clob.polymarket.test",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "pulled"
+    assert result.source == "polymarket gamma and clob api"
+    assert result.candidates[0]["market"] == "Will rates fall? - Yes"
+    assert result.candidates[0]["price"] == "0.45"
+    assert result.candidates[0]["spread"] == "0.02"
+    assert result.candidates[0]["liquidity"] == "250"
+    assert result.candidates[0]["tokenId"] == "yes-token"

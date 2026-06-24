@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app.adapters.aws import AwsBillingCost
 from app.domain import Environment
 from app.main import AppSettings, create_app
+from app.services.market_data_provider import MarketDataProviderResult
 
 
 def _client() -> tuple[TestClient, str]:
@@ -38,6 +39,28 @@ class FakeAwsBillingAdapter:
             scope="tagged",
             message="Cost Explorer returned test cost.",
         )
+
+
+class FakeMarketDataFetcher:
+    def __init__(self, results: dict[str, MarketDataProviderResult]) -> None:
+        self.results = results
+        self.calls: list[dict[str, str]] = []
+
+    def fetch(
+        self,
+        *,
+        venue: str,
+        config_payload: dict,
+        pulled_at: datetime,
+    ) -> MarketDataProviderResult:
+        self.calls.append(
+            {
+                "venue": venue,
+                "default_selected_venue": str(config_payload.get("default_selected_venue")),
+                "pulled_at": pulled_at.isoformat(),
+            }
+        )
+        return self.results[venue]
 
 
 def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
@@ -315,6 +338,46 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         alpaca_enabled=True,
     )
     app = create_app(settings)
+    app.state.services.runtime_status.market_data_fetcher = FakeMarketDataFetcher(
+        {
+            "polymarket_us": MarketDataProviderResult(
+                venue="polymarket_us",
+                status="pulled",
+                source="polymarket gamma and clob api",
+                message="Fetched 1 Polymarket priced candidate.",
+                candidates=[
+                    {
+                        "id": "polymarket_us:market-1:yes-token",
+                        "venue": "polymarket_us",
+                        "market": "Will rates fall? - Yes",
+                        "price": "0.45",
+                        "liquidity": "250",
+                        "spread": "0.02",
+                        "state": "priced",
+                        "pulledAt": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            ),
+            "alpaca": MarketDataProviderResult(
+                venue="alpaca",
+                status="pulled",
+                source="alpaca market data api",
+                message="Fetched 1 Alpaca priced candidate.",
+                candidates=[
+                    {
+                        "id": "alpaca:SPY",
+                        "venue": "alpaca",
+                        "symbol": "SPY",
+                        "price": "500.01",
+                        "liquidity": "3",
+                        "spread": "0.02",
+                        "state": "priced",
+                        "pulledAt": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            ),
+        }
+    )
     token = app.state.services.auth.create_session_token(username="yaw")
     client = TestClient(app)
 
@@ -333,29 +396,103 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     )
     job_rows = client.app.state.services.registry.state.rows("shared.job_runs")
     audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
+    pull_rows = client.app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
 
     assert response.status_code == 202
     payload = response.json()
     assert payload["status"] == "accepted"
     assert payload["marketDataPull"]["trigger"] == "manual"
+    assert payload["marketDataPull"]["status"] == "pulled"
     assert {pull["venue"] for pull in payload["marketDataPulls"]} == {
         "polymarket_us",
         "alpaca",
     }
+    assert {pull["status"] for pull in payload["marketDataPulls"]} == {"pulled"}
     assert {pull["venue"] for pull in payload["marketDataPull"]["venues"]} == {
         "polymarket_us",
         "alpaca",
     }
-    assert payload["marketDataPull"]["candidateCount"] == 1
+    assert payload["marketDataPull"]["candidateCount"] == 2
     assert latest_pull.status_code == 200
     assert latest_pull.json()["id"] == payload["marketDataPull"]["id"]
     assert {pull["venue"] for pull in latest_pull.json()["venues"]} == {
         "polymarket_us",
         "alpaca",
     }
+    assert {row["source"] for row in pull_rows} == {
+        "polymarket gamma and clob api",
+        "alpaca market data api",
+    }
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
     assert audit_rows[-1]["event_type"] == "manual_loop_trigger"
     assert set(audit_rows[-1]["metadata"]["venues"]) == {"polymarket_us", "alpaca"}
+
+
+def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> None:
+    """TST-REQ-DAT-008-03: Validates REQ-DAT-008 and REQ-OBS-005
+
+    Given: scheduled provider ingestion has one venue rate-limited and one venue pulled
+    When: the scheduled run records dashboard market data
+    Then: per-venue statuses are preserved and the summary is marked partial
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+        polymarket_us_enabled=True,
+        alpaca_enabled=True,
+    )
+    app = create_app(settings)
+    app.state.services.runtime_status.market_data_fetcher = FakeMarketDataFetcher(
+        {
+            "polymarket_us": MarketDataProviderResult(
+                venue="polymarket_us",
+                status="rate_limited",
+                source="polymarket gamma and clob api",
+                message="polymarket active markets was rate limited by the provider.",
+                candidates=[],
+                error_code="provider_rate_limited",
+            ),
+            "alpaca": MarketDataProviderResult(
+                venue="alpaca",
+                status="pulled",
+                source="alpaca market data api",
+                message="Fetched 1 Alpaca priced candidate.",
+                candidates=[
+                    {
+                        "id": "alpaca:SPY",
+                        "venue": "alpaca",
+                        "symbol": "SPY",
+                        "price": "500.01",
+                        "liquidity": "3",
+                        "spread": "0.02",
+                        "state": "priced",
+                        "pulledAt": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            ),
+        }
+    )
+
+    result = app.state.services.runtime_status.trigger_scheduled_run(
+        environment=Environment.DEVELOPMENT,
+        config_payload=app.state.services.runtime_status.runtime_config_payload(),
+    )
+    job_rows = app.state.services.registry.state.rows("shared.job_runs")
+    pull_rows = app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
+
+    assert result["status"] == "partial"
+    assert result["marketDataPull"]["status"] == "partial"
+    assert {pull["status"] for pull in result["marketDataPull"]["venues"]} == {
+        "rate_limited",
+        "pulled",
+    }
+    assert result["marketDataPull"]["candidateCount"] == 1
+    assert pull_rows[0]["error_code"] == "provider_rate_limited"
+    assert job_rows[-1]["job_name"] == "market-data-ingestion"
+    assert job_rows[-1]["status"] == "partial"
 
 
 def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() -> None:
@@ -392,12 +529,12 @@ def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() ->
         },
     )
     state.insert(
-        "shared.market_data_pulls",
+        "shared.dashboard_market_data_pulls",
         {
             "id": "pull-1",
             "environment": "development",
             "venue": "polymarket_us",
-            "status": "stored",
+            "status": "pulled",
             "trigger": "scheduled",
             "source": "test snapshot",
             "candidates": [
@@ -413,6 +550,7 @@ def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() ->
                 }
             ],
             "message": "One candidate captured.",
+            "error_code": None,
             "run_id": "run-1",
             "created_at": now,
         },

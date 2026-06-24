@@ -89,6 +89,10 @@ from app.services.ingestion_service import (
     IngestionService,
     check_market_data_freshness,
 )
+from app.services.market_data_provider import (
+    MarketDataProviderResult,
+    ProviderBackedMarketDataFetcher,
+)
 from app.services.llm_service import (
     ClaudeMessagesProvider,
     FakeLlmProvider,
@@ -227,6 +231,7 @@ __all__ = [
     "LlmScoreRequest",
     "LlmUsageEvent",
     "LlmUsageRecorder",
+    "MarketDataProviderResult",
     "MutationContextResult",
     "ModelProviderSummary",
     "NotificationAlertDecision",
@@ -242,6 +247,7 @@ __all__ = [
     "PolymarketRiskConfig",
     "PolymarketRiskInput",
     "PositionMovement",
+    "ProviderBackedMarketDataFetcher",
     "RenderedDigest",
     "ReleaseReadinessCheck",
     "ReleaseReadinessSummary",

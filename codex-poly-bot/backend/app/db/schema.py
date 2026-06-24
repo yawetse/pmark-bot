@@ -176,7 +176,7 @@ def _shared_tables() -> list[Table]:
             schema=SHARED_SCHEMA,
         ),
         Table(
-            "market_data_pulls",
+            "dashboard_market_data_pulls",
             metadata,
             Column("id", String, primary_key=True),
             Column("environment", String, nullable=False),
@@ -186,6 +186,7 @@ def _shared_tables() -> list[Table]:
             Column("source", String, nullable=False),
             Column("candidates", JSONB, nullable=False),
             Column("message", String, nullable=False),
+            Column("error_code", String, nullable=True),
             Column("run_id", String, nullable=True),
             Column("created_at", DateTime(timezone=True), nullable=False),
             schema=SHARED_SCHEMA,
