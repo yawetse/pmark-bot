@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+from app.adapters.aws import AwsBillingCost
 from app.domain import Environment
 from app.main import AppSettings, create_app
 
@@ -21,6 +22,22 @@ def _client() -> tuple[TestClient, str]:
     app = create_app(settings)
     token = app.state.services.auth.create_session_token(username="yaw")
     return TestClient(app), token
+
+
+class FakeAwsBillingAdapter:
+    def dashboard_costs(self, *, environment: Environment) -> AwsBillingCost:
+        return AwsBillingCost(
+            daily_cost_usd=Decimal("2.50"),
+            month_to_date_cost_usd=Decimal("42.00"),
+            daily_start=date(2026, 6, 24),
+            daily_end=date(2026, 6, 25),
+            month_start=date(2026, 6, 1),
+            month_end=date(2026, 6, 25),
+            estimated=True,
+            source="aws cost explorer",
+            scope="tagged",
+            message="Cost Explorer returned test cost.",
+        )
 
 
 def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
@@ -319,9 +336,9 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
 def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() -> None:
     """TST-REQ-UI-010-02: Validates REQ-UI-010, REQ-CMP-002, and REQ-OBS-005
 
-    Given: persisted AI usage, position P&L, AWS cost preferences, and market data
+    Given: persisted AI usage, position P&L, AWS fallback preferences, and market data
     When: dashboard summary is requested
-    Then: token spend, AI cost, AWS cost, market pull, and net profitability are returned
+    Then: token spend, AI cost, fallback AWS cost, market pull, and net profitability are returned
     """
 
     client, token = _client()
@@ -402,8 +419,75 @@ def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() ->
     assert payload["economics"]["ai"]["totalTokens"] == 1500
     assert payload["economics"]["ai"]["totalCostUsd"] == "0.45"
     assert payload["economics"]["aws"]["dailyInfraCostEstimateUsd"] == "1.00"
+    assert payload["economics"]["aws"]["source"] == "user preference fallback"
+    assert payload["economics"]["aws"]["scope"] == "fallback"
     assert payload["economics"]["trading"]["totalPnlUsd"] == "13.75"
     assert payload["economics"]["profitability"]["netAfterRecordedCostsUsd"] == "12.30"
+
+
+def test_req_ui_010_03_dashboard_summary_uses_real_aws_billing_when_available() -> None:
+    """TST-REQ-UI-010-03: Validates REQ-UI-010 and REQ-OBS-005
+
+    Given: Cost Explorer billing is attached and a saved fallback exists
+    When: dashboard economics are requested
+    Then: real AWS billing cost replaces the saved fallback in profitability math
+    """
+
+    client, token = _client()
+    client.app.state.services.runtime_status.billing_adapter = FakeAwsBillingAdapter()
+    state = client.app.state.services.registry.state
+    now = datetime.now(UTC)
+    state.insert(
+        "shared.ai_usage_events",
+        {
+            "id": "usage-real-aws",
+            "environment": "development",
+            "provider": "openai",
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+            "cost_usd": Decimal("0.45"),
+            "created_at": now,
+        },
+    )
+    state.insert(
+        "openai.positions",
+        {
+            "position_id": "pos-real-aws",
+            "state": "closed",
+            "realized_pnl": Decimal("12.50"),
+            "unrealized_pnl": Decimal("1.25"),
+            "updated_at": now,
+        },
+    )
+    client.put(
+        "/api/preferences",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "settings": {
+                "theme": "light",
+                "timeZone": "system",
+                "awsMonthlyInfraCostUsd": "30.00",
+            }
+        },
+    )
+
+    response = client.get(
+        "/api/economics/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["aws"]["source"] == "aws cost explorer"
+    assert payload["aws"]["scope"] == "tagged"
+    assert payload["aws"]["dailyInfraCostEstimateUsd"] == "2.50"
+    assert payload["aws"]["monthToDateCostUsd"] == "42.00"
+    assert payload["aws"]["fallbackDailyCostUsd"] == "1.00"
+    assert payload["profitability"]["netAfterRecordedCostsUsd"] == "10.80"
 
 
 def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch) -> None:

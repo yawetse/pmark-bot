@@ -829,6 +829,7 @@ a {
 
 .metric strong {
   font-size: 20px;
+  overflow-wrap: anywhere;
 }
 
 .economics-grid {

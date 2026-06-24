@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.adapters.aws import BillingUnavailableError, billing_adapter_from_env
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
@@ -72,9 +73,18 @@ class RuntimeStatusService:
     MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.market_data_pulls"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
 
-    def __init__(self, *, settings: Any, registry: RepositoryRegistry | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Any,
+        registry: RepositoryRegistry | None = None,
+        billing_adapter: Any | None = None,
+    ) -> None:
         self.settings = settings
         self.registry = registry or RepositoryRegistry()
+        self.billing_adapter = billing_adapter or billing_adapter_from_env(
+            getattr(settings, "runtime_env", {})
+        )
 
     def runtime_config_payload(self) -> dict[str, Any]:
         """Return config defaults aligned to deployed runtime flags.
@@ -541,8 +551,8 @@ class RuntimeStatusService:
 
         ai_usage = self._ai_usage_summary(environment, config_payload)
         trading = self._trading_pnl_summary()
-        monthly_aws = _as_money(preferences.get("awsMonthlyInfraCostUsd", "0.00"))
-        daily_aws = monthly_aws / Decimal("30")
+        aws_cost = self._aws_cost_summary(environment=environment, preferences=preferences)
+        daily_aws = _as_money(aws_cost["dailyInfraCostEstimateUsd"])
         recorded_costs = _as_money(ai_usage["totalCostUsd"]) + daily_aws
         trading_total = _as_money(trading["totalPnlUsd"])
         net = trading_total - recorded_costs
@@ -551,11 +561,7 @@ class RuntimeStatusService:
             "generatedAt": datetime.now(UTC).isoformat(),
             "trading": trading,
             "ai": ai_usage,
-            "aws": {
-                "monthlyInfraCostUsd": _money(monthly_aws),
-                "dailyInfraCostEstimateUsd": _money(daily_aws),
-                "source": "user preference",
-            },
+            "aws": aws_cost,
             "profitability": {
                 "netAfterRecordedCostsUsd": _money(net),
                 "status": "profitable" if net > 0 else ("losing" if net < 0 else "flat"),
@@ -1090,6 +1096,45 @@ class RuntimeStatusService:
             and row.get("provider") == provider.value
         ]
 
+    def _aws_cost_summary(
+        self,
+        *,
+        environment: Environment,
+        preferences: dict[str, Any],
+    ) -> dict[str, Any]:
+        monthly_fallback = _as_money(preferences.get("awsMonthlyInfraCostUsd", "0.00"))
+        daily_fallback = monthly_fallback / Decimal("30")
+        if self.billing_adapter is not None:
+            try:
+                billing = self.billing_adapter.dashboard_costs(environment=environment)
+            except BillingUnavailableError as exc:
+                return _aws_fallback_payload(
+                    monthly_fallback=monthly_fallback,
+                    daily_fallback=daily_fallback,
+                    message=f"AWS Cost Explorer unavailable; using saved fallback. {exc}",
+                )
+            return {
+                "monthlyInfraCostUsd": _money(billing.month_to_date_cost_usd),
+                "monthToDateCostUsd": _money(billing.month_to_date_cost_usd),
+                "dailyInfraCostEstimateUsd": _money(billing.daily_cost_usd),
+                "dailyInfraCostUsd": _money(billing.daily_cost_usd),
+                "fallbackMonthlyCostUsd": _money(monthly_fallback),
+                "fallbackDailyCostUsd": _money(daily_fallback),
+                "source": billing.source,
+                "scope": billing.scope,
+                "periodStart": billing.daily_start.isoformat(),
+                "periodEnd": billing.daily_end.isoformat(),
+                "monthPeriodStart": billing.month_start.isoformat(),
+                "monthPeriodEnd": billing.month_end.isoformat(),
+                "estimated": billing.estimated,
+                "message": billing.message,
+            }
+        return _aws_fallback_payload(
+            monthly_fallback=monthly_fallback,
+            daily_fallback=daily_fallback,
+            message="AWS Cost Explorer is not enabled for this runtime; using saved fallback.",
+        )
+
     def _trading_pnl_summary(self) -> dict[str, Any]:
         realized = Decimal("0")
         unrealized = Decimal("0")
@@ -1263,6 +1308,30 @@ def _validate_user_preferences(payload: dict[str, Any]) -> dict[str, str]:
         "theme": theme,
         "timeZone": time_zone,
         "awsMonthlyInfraCostUsd": _money(aws_monthly),
+    }
+
+
+def _aws_fallback_payload(
+    *,
+    monthly_fallback: Decimal,
+    daily_fallback: Decimal,
+    message: str,
+) -> dict[str, Any]:
+    return {
+        "monthlyInfraCostUsd": _money(monthly_fallback),
+        "monthToDateCostUsd": _money(monthly_fallback),
+        "dailyInfraCostEstimateUsd": _money(daily_fallback),
+        "dailyInfraCostUsd": _money(daily_fallback),
+        "fallbackMonthlyCostUsd": _money(monthly_fallback),
+        "fallbackDailyCostUsd": _money(daily_fallback),
+        "source": "user preference fallback",
+        "scope": "fallback",
+        "periodStart": None,
+        "periodEnd": None,
+        "monthPeriodStart": None,
+        "monthPeriodEnd": None,
+        "estimated": True,
+        "message": message,
     }
 
 

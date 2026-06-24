@@ -31,8 +31,19 @@ export type EconomicsSummaryView = {
   };
   aws: {
     monthlyInfraCostUsd: string;
+    monthToDateCostUsd: string;
     dailyInfraCostEstimateUsd: string;
+    dailyInfraCostUsd: string;
+    fallbackMonthlyCostUsd: string;
+    fallbackDailyCostUsd: string;
     source: string;
+    scope: string;
+    periodStart: string | null;
+    periodEnd: string | null;
+    monthPeriodStart: string | null;
+    monthPeriodEnd: string | null;
+    estimated: boolean;
+    message: string;
   };
   profitability: {
     netAfterRecordedCostsUsd: string;
@@ -56,7 +67,7 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
       <div className="metric-grid compact">
         <Metric label="Trading P&L" value={formatUsd(economics.trading.totalPnlUsd)} />
         <Metric label="AI cost" value={formatUsd(economics.ai.totalCostUsd)} />
-        <Metric label="AWS daily estimate" value={formatUsd(economics.aws.dailyInfraCostEstimateUsd)} />
+        <Metric label="AWS daily cost" value={formatUsd(economics.aws.dailyInfraCostEstimateUsd)} />
         <Metric label="Net after costs" value={formatUsd(economics.profitability.netAfterRecordedCostsUsd)} />
       </div>
       <div className="economics-grid">
@@ -68,6 +79,17 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
             <Metric label="Total tokens" value={formatNumber(economics.ai.totalTokens)} />
           </div>
         </div>
+        <div className="economics-block">
+          <h3>AWS billing</h3>
+          <div className="metric-strip">
+            <Metric label="MTD cost" value={formatUsd(economics.aws.monthToDateCostUsd)} />
+            <Metric label="Scope" value={economics.aws.scope} />
+            <Metric label="Period" value={formatPeriod(economics.aws.periodStart, economics.aws.periodEnd)} />
+          </div>
+          <p className="panel-note">{economics.aws.message}</p>
+        </div>
+      </div>
+      <div className="economics-grid">
         <div className="economics-block">
           <h3>Trading</h3>
           <div className="metric-strip">
@@ -101,9 +123,6 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
           </tbody>
         </table>
       </div>
-      <p className="panel-note">
-        AWS cost uses the saved monthly preference prorated over 30 days until billing import is attached.
-      </p>
     </section>
   );
 }
@@ -130,4 +149,11 @@ function formatUsd(value: string): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatPeriod(start: string | null, end: string | null): string {
+  if (!start || !end) {
+    return "fallback";
+  }
+  return `${start} to ${end}`;
 }
