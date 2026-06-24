@@ -25,9 +25,10 @@ export default async function OperationsPage() {
     <>
       <DashboardNav />
       <main className="page-shell">
-        <div className="content-grid">
-          <OperationsView summary={operations.ok ? operations.data : undefined} />
-        </div>
+        <OperationsView
+          summary={operations.ok ? operations.data : undefined}
+          loadError={operations.ok ? undefined : operations.message}
+        />
       </main>
     </>
   );

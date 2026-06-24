@@ -1,7 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 
 import { DashboardNav } from "@/components/dashboard/dashboard-nav";
-import { ModelProviderName, ModelSummaryPanel } from "@/components/dashboard/model-summary";
+import {
+  ModelProviderName,
+  ModelSummaryPanel,
+  type ModelSummary,
+} from "@/components/dashboard/model-summary";
+import { serverDashboardApi } from "@/lib/server/dashboard-api";
 import { getDashboardSession } from "@/lib/server/session";
 
 // REQ: REQ-UI-010
@@ -23,14 +28,20 @@ export default async function ModelPage({ params }: ModelPageProps) {
   if (!isModelProvider(provider)) {
     notFound();
   }
+  const summary = await serverDashboardApi<ModelSummary>(
+    `models/${provider}/summary`,
+    sessionCheck.session.username,
+  );
 
   return (
     <>
       <DashboardNav />
       <main className="page-shell">
-        <div className="content-grid">
-          <ModelSummaryPanel provider={provider} />
-        </div>
+        <ModelSummaryPanel
+          provider={provider}
+          summary={summary.ok ? summary.data : undefined}
+          loadError={summary.ok ? undefined : summary.message}
+        />
       </main>
     </>
   );
