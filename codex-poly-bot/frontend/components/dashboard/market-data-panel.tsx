@@ -23,6 +23,7 @@ export type MarketDataPullView = {
   candidateCount: number;
   candidates: MarketDataCandidateView[];
   message: string;
+  venues?: MarketDataPullView[];
 };
 
 export function MarketDataPanel({
@@ -32,6 +33,9 @@ export function MarketDataPanel({
   marketData: MarketDataPullView;
   timeZone: string;
 }) {
+  const venuePulls = marketData.venues?.length ? marketData.venues : [marketData];
+  const candidates = venuePulls.flatMap((venue) => venue.candidates);
+  const latestPulledAt = latestTimestamp(venuePulls);
   return (
     <section className="operator-panel span-2" aria-labelledby="market-data-title">
       <div className="panel-heading">
@@ -39,18 +43,43 @@ export function MarketDataPanel({
           <p className="section-label">Market data</p>
           <h2 id="market-data-title">Latest pull</h2>
         </div>
-        <span className={`status ${marketData.candidateCount > 0 ? "ok" : "idle"}`}>
+        <span className={`status ${statusClass(marketData)}`}>
           {marketData.status}
         </span>
       </div>
       <div className="metric-grid compact">
-        <Metric label="Venue" value={marketData.venue} />
-        <Metric label="Candidates" value={String(marketData.candidateCount)} />
+        <Metric label="Venues" value={venuePulls.map((venue) => venue.venue).join(", ")} />
+        <Metric label="Candidates" value={String(candidates.length)} />
         <Metric label="Trigger" value={marketData.trigger} />
-        <Metric label="Pulled" value={formatDateTime(marketData.lastPulledAt, timeZone)} />
+        <Metric label="Pulled" value={formatDateTime(latestPulledAt, timeZone)} />
       </div>
       <p className="panel-note">{marketData.message}</p>
-      {marketData.candidates.length > 0 ? (
+      <div className="market-venue-grid">
+        {venuePulls.map((venuePull) => (
+          <article className="market-venue-card" key={venuePull.venue}>
+            <div className="market-venue-heading">
+              <strong>{venuePull.venue}</strong>
+              <span className={`status ${statusClass(venuePull)}`}>{venuePull.status}</span>
+            </div>
+            <dl>
+              <div>
+                <dt>Candidates</dt>
+                <dd>{venuePull.candidateCount}</dd>
+              </div>
+              <div>
+                <dt>Trigger</dt>
+                <dd>{venuePull.trigger}</dd>
+              </div>
+              <div>
+                <dt>Pulled</dt>
+                <dd>{formatDateTime(venuePull.lastPulledAt, timeZone)}</dd>
+              </div>
+            </dl>
+            <p>{venuePull.message}</p>
+          </article>
+        ))}
+      </div>
+      {candidates.length > 0 ? (
         <div className="table-wrap">
           <table>
             <thead>
@@ -64,7 +93,7 @@ export function MarketDataPanel({
               </tr>
             </thead>
             <tbody>
-              {marketData.candidates.map((candidate) => (
+              {candidates.map((candidate) => (
                 <tr key={candidate.id}>
                   <td>{candidate.market ?? candidate.symbol ?? candidate.id}</td>
                   <td>{candidate.venue}</td>
@@ -80,7 +109,7 @@ export function MarketDataPanel({
       ) : (
         <div className="empty-state">
           <strong>No candidates recorded</strong>
-          <p>The dashboard has not received a candidate snapshot for the selected environment.</p>
+          <p>The dashboard has not received priced candidate rows for the selected environment.</p>
         </div>
       )}
     </section>
@@ -109,4 +138,24 @@ function formatDateTime(value: string | null | undefined, timeZone: string): str
     timeStyle: "medium",
     timeZone,
   }).format(date);
+}
+
+function latestTimestamp(venuePulls: MarketDataPullView[]): string | null {
+  const timestamps = venuePulls
+    .map((venuePull) => venuePull.lastPulledAt)
+    .filter((value): value is string => Boolean(value));
+  if (timestamps.length === 0) {
+    return null;
+  }
+  return timestamps.sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
+}
+
+function statusClass(marketData: MarketDataPullView): "ok" | "idle" | "blocked" {
+  if (marketData.status === "failed" || marketData.status === "blocked") {
+    return "blocked";
+  }
+  if (marketData.status === "idle") {
+    return "idle";
+  }
+  return marketData.id || marketData.candidateCount > 0 ? "ok" : "idle";
 }

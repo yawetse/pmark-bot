@@ -306,7 +306,17 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     Then: the API accepts the request, records a heartbeat, and exposes the latest market-data pull
     """
 
-    client, token = _client()
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+        polymarket_us_enabled=True,
+        alpaca_enabled=True,
+    )
+    app = create_app(settings)
+    token = app.state.services.auth.create_session_token(username="yaw")
+    client = TestClient(app)
 
     response = client.post(
         "/api/operations/manual-run",
@@ -325,12 +335,27 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
 
     assert response.status_code == 202
-    assert response.json()["status"] == "accepted"
-    assert response.json()["marketDataPull"]["trigger"] == "manual"
+    payload = response.json()
+    assert payload["status"] == "accepted"
+    assert payload["marketDataPull"]["trigger"] == "manual"
+    assert {pull["venue"] for pull in payload["marketDataPulls"]} == {
+        "polymarket_us",
+        "alpaca",
+    }
+    assert {pull["venue"] for pull in payload["marketDataPull"]["venues"]} == {
+        "polymarket_us",
+        "alpaca",
+    }
+    assert payload["marketDataPull"]["candidateCount"] == 1
     assert latest_pull.status_code == 200
-    assert latest_pull.json()["id"] == response.json()["marketDataPull"]["id"]
+    assert latest_pull.json()["id"] == payload["marketDataPull"]["id"]
+    assert {pull["venue"] for pull in latest_pull.json()["venues"]} == {
+        "polymarket_us",
+        "alpaca",
+    }
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
     assert audit_rows[-1]["event_type"] == "manual_loop_trigger"
+    assert set(audit_rows[-1]["metadata"]["venues"]) == {"polymarket_us", "alpaca"}
 
 
 def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() -> None:

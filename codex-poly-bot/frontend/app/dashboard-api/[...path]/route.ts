@@ -73,10 +73,14 @@ function backendHeaders(request: NextRequest, username: string): Headers {
   headers.set("Authorization", `Bearer ${mintBackendToken(username)}`);
   headers.set("X-Environment", process.env.NEXT_PUBLIC_APP_ENV ?? "local");
   if (request.method !== "GET") {
-    headers.set("Origin", request.nextUrl.origin);
+    headers.set("Origin", mutationOrigin(request));
     headers.set("X-CSRF-Token", process.env.DASHBOARD_CSRF_TOKEN ?? "");
   }
   return headers;
+}
+
+function mutationOrigin(request: NextRequest): string {
+  return request.headers.get("origin") ?? process.env.NEXTAUTH_URL ?? request.nextUrl.origin;
 }
 
 function responseHeaders(source: Headers): Headers {

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import {
   EconomicsPanel,
@@ -52,13 +52,16 @@ export function OperationsView({
   marketData,
   economics,
   loadError,
+  timeZone = "system",
 }: {
   summary?: OperationsSummaryView;
   marketData?: MarketDataPullView;
   economics?: EconomicsSummaryView;
   loadError?: string;
+  timeZone?: string;
 }) {
   const [latestMarketData, setLatestMarketData] = useState(marketData);
+  const displayTimeZone = useResolvedTimeZone(timeZone);
   const pendingEvents = summary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
   );
@@ -107,7 +110,7 @@ export function OperationsView({
 
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
 
-      {latestMarketData ? <MarketDataPanel marketData={latestMarketData} timeZone="UTC" /> : null}
+      {latestMarketData ? <MarketDataPanel marketData={latestMarketData} timeZone={displayTimeZone} /> : null}
 
       {economics ? <EconomicsPanel economics={economics} /> : null}
 
@@ -138,6 +141,19 @@ export function OperationsView({
   function onManualRunAccepted(result: ManualRunResult) {
     setLatestMarketData(result.marketDataPull);
   }
+}
+
+function useResolvedTimeZone(preference: string): string {
+  const [systemTimeZone, setSystemTimeZone] = useState("UTC");
+
+  useEffect(() => {
+    const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (resolved) {
+      setSystemTimeZone(resolved);
+    }
+  }, []);
+
+  return preference === "system" ? systemTimeZone : preference;
 }
 
 function OrderTable({

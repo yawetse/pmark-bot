@@ -30,6 +30,9 @@ const proxy = read(files.proxy);
 assert.match(proxy, /mintBackendToken/);
 assert.match(proxy, /Authorization", `Bearer/);
 assert.match(proxy, /X-CSRF-Token/);
+assert.match(proxy, /mutationOrigin/);
+assert.match(proxy, /request\.headers\.get\("origin"\)/);
+assert.match(proxy, /NEXTAUTH_URL/);
 assert.doesNotMatch(proxy, /GITHUB_CLIENT_SECRET/);
 
 const apiClient = read(files.apiClient);
