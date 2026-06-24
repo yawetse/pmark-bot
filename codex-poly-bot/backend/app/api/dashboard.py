@@ -128,9 +128,8 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         settings_payload = config_snapshot["settings"]
         credentials = services.runtime_status.credential_rows(context.environment)
         operations = services.runtime_status.operations_summary(context.environment)
-        operations["killSwitch"] = (
-            "active" if services.kill_switch.state(context.environment).active else "inactive"
-        )
+        kill_switch_active = services.kill_switch.state(context.environment).active
+        operations["killSwitch"] = "active" if kill_switch_active else "inactive"
         notifications = services.runtime_status.notification_summary(settings_payload)
         return {
             "data_source": "fastapi",
@@ -157,6 +156,12 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "comparison": {"metrics": [], "degraded_sections": []},
             "notifications": notifications,
             "operations": operations,
+            "loop": services.runtime_status.loop_observability(
+                environment=context.environment,
+                config_payload=settings_payload,
+                config_degraded=config_snapshot["degraded"],
+                kill_switch_active=kill_switch_active,
+            ),
             "audit": {"items": _audit_events()},
             "degraded_sections": [],
         }

@@ -91,7 +91,7 @@ def test_req_ui_004_03_authenticated_dashboard_api_returns_secret_safe_sections(
 
     Given: an authenticated allowlisted user
     When: dashboard summary data is requested
-    Then: status, config, wallet, order, model, comparison, notification, and audit sections are returned without secrets
+    Then: status, config, wallet, order, model, comparison, loop, notification, and audit sections are returned without secrets
     """
     client, token = _client()
 
@@ -109,6 +109,7 @@ def test_req_ui_004_03_authenticated_dashboard_api_returns_secret_safe_sections(
         "orders",
         "models",
         "comparison",
+        "loop",
         "notifications",
         "audit",
     }.issubset(payload)
@@ -165,6 +166,75 @@ def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch)
     assert credentials["alpaca-claude-account"]["status"] == "reviewing"
     assert payload["notifications"]["recipientCount"] == 1
     assert "pm-wallet-key" not in str(payload)
+
+
+def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypatch) -> None:
+    """TST-REQ-OBS-005-03: Validates REQ-OBS-005 and REQ-UI-004
+
+    Given: an authenticated operator asks for dashboard state
+    When: the summary endpoint returns loop observability
+    Then: schedule, data, prompts, logic, calculations, and gates are visible without secrets
+    """
+
+    monkeypatch.setenv("DASHBOARD_ALLOWED_USERS", "yaw")
+    monkeypatch.setenv("BACKEND_TOKEN_SIGNING_SECRET", "test-secret")
+    monkeypatch.setenv("LIVE_ENABLED", "true")
+    monkeypatch.setenv("DEFAULT_SELECTED_VENUE", "alpaca")
+    monkeypatch.setenv("ALPACA_ENABLED", "true")
+    monkeypatch.setenv("ALPACA_KEY_ID", "alpaca-key-id")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "alpaca-signing-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+
+    app = create_app(AppSettings.from_env())
+    token = app.state.services.auth.create_session_token(username="yaw")
+    response = TestClient(app).get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+    loop = payload["loop"]
+
+    assert response.status_code == 200
+    assert loop["schedule"]["intervalSeconds"] == 60
+    assert loop["schedule"]["nextRunAt"]
+    assert loop["currentPhase"]["label"] == "Waiting for next scheduler tick"
+    assert {stage["id"] for stage in loop["stages"]} >= {
+        "scheduler",
+        "market-data",
+        "scoring",
+        "risk",
+        "execution",
+    }
+    assert {item["label"] for item in loop["dataInputs"]} >= {
+        "Selected venue",
+        "Alpaca symbols",
+        "Market candidates",
+    }
+    assert {prompt["label"] for prompt in loop["prompts"]} >= {
+        "Scoring system prompt",
+        "Prompt version",
+        "Latest prompt run",
+    }
+    assert {logic["label"] for logic in loop["logic"]} >= {
+        "Candidate filters",
+        "Enabled strategies",
+        "Live order gates",
+    }
+    assert {calculation["label"] for calculation in loop["calculations"]} >= {
+        "Loop cadence",
+        "Kelly capped notional",
+        "Alpaca allocation cap",
+    }
+    assert {gate["label"] for gate in loop["gates"]} >= {
+        "Worker heartbeat",
+        "Live flag",
+        "Credentials",
+        "Market data",
+        "Scoring",
+        "Risk",
+    }
+    assert "alpaca-signing-key" not in str(loop)
 
 
 def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch) -> None:
