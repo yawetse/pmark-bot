@@ -23,6 +23,7 @@ export type MarketDataPullView = {
   candidateCount: number;
   candidates: MarketDataCandidateView[];
   message: string;
+  errorCode?: string | null;
   venues?: MarketDataPullView[];
 };
 
@@ -151,10 +152,14 @@ function latestTimestamp(venuePulls: MarketDataPullView[]): string | null {
 }
 
 function statusClass(marketData: MarketDataPullView): "ok" | "idle" | "blocked" {
-  if (marketData.status === "failed" || marketData.status === "blocked") {
+  if (
+    marketData.status === "failed" ||
+    marketData.status === "blocked" ||
+    marketData.status === "rate_limited"
+  ) {
     return "blocked";
   }
-  if (marketData.status === "idle") {
+  if (marketData.status === "idle" || marketData.status === "empty") {
     return "idle";
   }
   return marketData.id || marketData.candidateCount > 0 ? "ok" : "idle";
