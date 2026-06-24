@@ -1,8 +1,29 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import {
+  EconomicsPanel,
+  type EconomicsSummaryView,
+} from "@/components/dashboard/economics-panel";
 import {
   LoopMonitor,
   type LoopObservabilityView,
 } from "@/components/dashboard/loop-monitor";
+import {
+  ManualRunControl,
+  type ManualRunResult,
+} from "@/components/dashboard/manual-run-control";
+import {
+  MarketDataPanel,
+  type MarketDataPullView,
+} from "@/components/dashboard/market-data-panel";
 import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
+import {
+  applyDashboardTheme,
+  PreferencesPanel,
+  type UserPreferencesView,
+} from "@/components/dashboard/preferences-panel";
 import type { StatusItem } from "@/components/dashboard/status-overview";
 import type { WalletCredentialView } from "@/components/dashboard/wallet-status";
 
@@ -55,6 +76,9 @@ export type DashboardSummaryView = {
     value?: string;
     recipientCount?: number;
   };
+  preferences: UserPreferencesView;
+  marketData: MarketDataPullView;
+  economics: EconomicsSummaryView;
   loop: LoopObservabilityView;
   audit?: {
     items?: unknown[];
@@ -63,6 +87,9 @@ export type DashboardSummaryView = {
 
 export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryView }) {
   const settings = summary.config.settings;
+  const [preferences, setPreferences] = useState(summary.preferences.settings);
+  const [marketData, setMarketData] = useState(summary.marketData);
+  const displayTimeZone = useResolvedTimeZone(preferences.timeZone);
   const statusItems = summary.status.items;
   const selectedVenue = settings.default_selected_venue ?? "unknown";
   const selectedVenueEnabled = Boolean(settings.venues?.[selectedVenue]?.enabled);
@@ -90,7 +117,14 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
     notificationState: summary.notifications?.state,
     openOrders: openOrders.length,
   });
-  const totals = modelTotals(summary.models.providers);
+
+  useEffect(() => {
+    applyDashboardTheme(preferences.theme);
+  }, [preferences.theme]);
+
+  function onManualRunAccepted(result: ManualRunResult) {
+    setMarketData(result.marketDataPull);
+  }
 
   return (
     <section className="operator-board" aria-labelledby="operator-title">
@@ -109,9 +143,13 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
         </div>
       </div>
 
-      <LoopMonitor loop={summary.loop} />
+      <LoopMonitor loop={summary.loop} timeZone={displayTimeZone} />
 
       <div className="operator-grid">
+        <PreferencesPanel preferences={preferences} onSaved={setPreferences} />
+
+        <ManualRunControl environment={summary.environment} onAccepted={onManualRunAccepted} />
+
         <section className="operator-panel span-2" aria-labelledby="running-title">
           <div className="panel-heading">
             <div>
@@ -153,6 +191,8 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
           </ol>
         </section>
 
+        <MarketDataPanel marketData={marketData} timeZone={displayTimeZone} />
+
         <section className="operator-panel" aria-labelledby="pending-title">
           <p className="section-label">Trades and orders</p>
           <h2 id="pending-title">Pending activity</h2>
@@ -178,27 +218,7 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
           )}
         </section>
 
-        <section className="operator-panel span-2" aria-labelledby="performance-title">
-          <div className="panel-heading">
-            <div>
-              <p className="section-label">Performance</p>
-              <h2 id="performance-title">Model and trade results</h2>
-            </div>
-            <a className="button" href="/dashboard/comparison">
-              Compare models
-            </a>
-          </div>
-          <div className="metric-grid compact">
-            <Metric label="Realized P&L" value={formatUsd(totals.pnl)} />
-            <Metric label="Open positions" value={String(totals.positions)} />
-            <Metric label="Orders" value={String(totals.orders)} />
-            <Metric label="Model spend" value={`${formatUsd(totals.budgetUsed)} / ${formatUsd(totals.budgetLimit)}`} />
-          </div>
-          <p className="panel-note">
-            Performance stays empty until the bot records decisions, simulated orders,
-            fills, or position updates through the backend.
-          </p>
-        </section>
+        <EconomicsPanel economics={summary.economics} />
 
         <section className="operator-panel" aria-labelledby="controls-title">
           <p className="section-label">Available controls</p>
@@ -397,24 +417,15 @@ function buildNextActions({
   return actions.slice(0, 4);
 }
 
-function modelTotals(providers: ModelProviderSummary[]) {
-  return providers.reduce(
-    (totals, provider) => ({
-      pnl: totals.pnl + numberFromString(provider.pnl),
-      positions: totals.positions + (provider.positions?.length ?? 0),
-      orders: totals.orders + (provider.orders?.length ?? 0),
-      budgetUsed: totals.budgetUsed + numberFromString(provider.budget?.used_usd),
-      budgetLimit: totals.budgetLimit + numberFromString(provider.budget?.limit_usd),
-    }),
-    { pnl: 0, positions: 0, orders: 0, budgetUsed: 0, budgetLimit: 0 },
-  );
-}
+function useResolvedTimeZone(preference: string): string {
+  const [systemTimeZone, setSystemTimeZone] = useState("UTC");
 
-function numberFromString(value?: string): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
+  useEffect(() => {
+    const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (resolved) {
+      setSystemTimeZone(resolved);
+    }
+  }, []);
 
-function formatUsd(value: number): string {
-  return `$${value.toFixed(2)}`;
+  return preference === "system" ? systemTimeZone : preference;
 }

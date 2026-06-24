@@ -126,6 +126,19 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
         config_snapshot = _current_config(context.environment)
         settings_payload = config_snapshot["settings"]
+        preferences = services.runtime_status.user_preferences(
+            username=context.access.username or context.actor.username,
+            environment=context.environment,
+        )
+        market_data = services.runtime_status.market_data_pull(
+            environment=context.environment,
+            config_payload=settings_payload,
+        )
+        economics = services.runtime_status.economics_summary(
+            environment=context.environment,
+            config_payload=settings_payload,
+            preferences=preferences["settings"],
+        )
         credentials = services.runtime_status.credential_rows(context.environment)
         operations = services.runtime_status.operations_summary(context.environment)
         kill_switch_active = services.kill_switch.state(context.environment).active
@@ -155,6 +168,9 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             },
             "comparison": {"metrics": [], "degraded_sections": []},
             "notifications": notifications,
+            "preferences": preferences,
+            "marketData": market_data,
+            "economics": economics,
             "operations": operations,
             "loop": services.runtime_status.loop_observability(
                 environment=context.environment,
@@ -165,6 +181,44 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "audit": {"items": _audit_events()},
             "degraded_sections": [],
         }
+
+    @router.get("/api/preferences")
+    def preferences_current(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return saved dashboard display preferences for the current user.
+
+        REQ: REQ-UI-004, REQ-OBS-005
+        """
+
+        return services.runtime_status.user_preferences(
+            username=context.actor.username,
+            environment=context.environment,
+        )
+
+    @router.put("/api/preferences")
+    async def update_preferences(
+        request: Request,
+        response: Response,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+        _: None = Depends(require_mutation_context),
+    ) -> dict[str, Any]:
+        """Save dashboard display preferences for the current user.
+
+        REQ: REQ-UI-004, REQ-OBS-004, REQ-OBS-005
+        """
+
+        payload = await request.json()
+        try:
+            return services.runtime_status.save_user_preferences(
+                username=context.actor.username,
+                ip_address=context.actor.ip_address,
+                environment=context.environment,
+                payload=payload.get("settings", payload),
+            )
+        except ValueError as exc:
+            response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+            return {"error_code": "preferences_validation_error", "message": str(exc)}
 
     @router.get("/api/config/current")
     def config_current(
@@ -370,6 +424,63 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "active" if services.kill_switch.state(context.environment).active else "inactive"
         )
         return operations
+
+    @router.post("/api/operations/manual-run")
+    async def manual_run(
+        request: Request,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+        _: None = Depends(require_mutation_context),
+    ) -> JSONResponse:
+        """Accept an operator-triggered manual loop request.
+
+        REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-004, REQ-OBS-005
+        """
+
+        payload = await request.json()
+        environment = _parse_environment(payload.get("environment"), context.environment)
+        config_snapshot = _current_config(environment)
+        result = services.runtime_status.trigger_manual_run(
+            username=context.actor.username,
+            ip_address=context.actor.ip_address,
+            environment=environment,
+            config_payload=config_snapshot["settings"],
+        )
+        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=result)
+
+    @router.get("/api/market-data/latest")
+    def market_data_latest(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return the latest dashboard-visible market-data pull.
+
+        REQ: REQ-DAT-001, REQ-DAT-008, REQ-OBS-005
+        """
+
+        config_snapshot = _current_config(context.environment)
+        return services.runtime_status.market_data_pull(
+            environment=context.environment,
+            config_payload=config_snapshot["settings"],
+        )
+
+    @router.get("/api/economics/summary")
+    def economics_summary(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return profitability, token spend, and infrastructure cost view.
+
+        REQ: REQ-UI-004, REQ-UI-010, REQ-CMP-002, REQ-OBS-005
+        """
+
+        config_snapshot = _current_config(context.environment)
+        preferences = services.runtime_status.user_preferences(
+            username=context.actor.username,
+            environment=context.environment,
+        )
+        return services.runtime_status.economics_summary(
+            environment=context.environment,
+            config_payload=config_snapshot["settings"],
+            preferences=preferences["settings"],
+        )
 
     @router.get("/api/audit-events")
     def audit_events(

@@ -2,6 +2,15 @@
 
 import { FormEvent, useState } from "react";
 
+import {
+  EconomicsPanel,
+  type EconomicsSummaryView,
+} from "@/components/dashboard/economics-panel";
+import { ManualRunControl, type ManualRunResult } from "@/components/dashboard/manual-run-control";
+import {
+  MarketDataPanel,
+  type MarketDataPullView,
+} from "@/components/dashboard/market-data-panel";
 import { dashboardApi } from "@/lib/api";
 
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
@@ -40,11 +49,16 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
 
 export function OperationsView({
   summary = FALLBACK_OPERATIONS,
+  marketData,
+  economics,
   loadError,
 }: {
   summary?: OperationsSummaryView;
+  marketData?: MarketDataPullView;
+  economics?: EconomicsSummaryView;
   loadError?: string;
 }) {
+  const [latestMarketData, setLatestMarketData] = useState(marketData);
   const pendingEvents = summary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
   );
@@ -91,6 +105,12 @@ export function OperationsView({
         </ul>
       </section>
 
+      <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
+
+      {latestMarketData ? <MarketDataPanel marketData={latestMarketData} timeZone="UTC" /> : null}
+
+      {economics ? <EconomicsPanel economics={economics} /> : null}
+
       <section className="panel wide-panel">
         <h2>Pending Orders</h2>
         <OrderTable
@@ -114,6 +134,10 @@ export function OperationsView({
       </section>
     </div>
   );
+
+  function onManualRunAccepted(result: ManualRunResult) {
+    setLatestMarketData(result.marketDataPull);
+  }
 }
 
 function OrderTable({
