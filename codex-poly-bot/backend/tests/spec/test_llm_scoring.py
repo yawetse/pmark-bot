@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from app.db import RepositoryRegistry
 from app.domain import (
     Environment,
     Instrument,
@@ -27,11 +28,14 @@ from app.services import (
     LlmProviderCredential,
     ScoringFailure,
     OpenAIResponsesProvider,
+    RepositoryLlmUsageRecorder,
     build_scoring_queue,
     check_scoring_failure_gate,
     reconcile_scoring_cost,
     record_provider_cost,
     run_llm_scoring,
+    TokenPricing,
+    token_pricing_from_env,
 )
 
 
@@ -254,6 +258,114 @@ def test_req_llm_002_03_provider_cost_returned_or_estimated_reconciles_budget_st
     assert estimated.ok
     assert estimated.payload["cost_source"] == "estimated"
     assert estimated.payload["budget_status"]["remaining"] == "0.988"
+
+
+def test_req_llm_002_04_provider_response_usage_imports_dashboard_token_spend() -> None:
+    """TST-REQ-LLM-002-04: Validates REQ-LLM-002 and REQ-OBS-005
+
+    Given: OpenAI and Claude provider responses include usage blocks
+    When: scoring runs with an attached usage recorder
+    Then: provider-side token usage is persisted for dashboard AI spend
+    """
+
+    registry = RepositoryRegistry()
+    recorder = RepositoryLlmUsageRecorder(
+        registry=registry,
+        environment=Environment.DEVELOPMENT,
+    )
+    openai_transport = RecordingProviderTransport(
+        (
+            {
+                "id": "resp-openai-1",
+                "output_text": scoring_response_text(
+                    thesis="OpenAI sees positive expected value",
+                    cost="0.099",
+                ),
+                "usage": {
+                    "input_tokens": 1000,
+                    "output_tokens": 250,
+                    "total_tokens": 1250,
+                },
+            },
+        )
+    )
+    claude_transport = RecordingProviderTransport(
+        (
+            {
+                "id": "msg-claude-1",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": scoring_response_text(
+                            thesis="Claude sees positive expected value",
+                            cost="0.012",
+                        ),
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 700,
+                    "cache_read_input_tokens": 100,
+                    "output_tokens": 150,
+                },
+            },
+        )
+    )
+    providers = (
+        OpenAIResponsesProvider(
+            credential=LlmProviderCredential(api_key="openai-test-key"),
+            transport=openai_transport,
+            remaining_budget=Decimal("1.00"),
+            usage_recorder=recorder,
+            token_pricing=TokenPricing(
+                input_cost_per_million_tokens=Decimal("5"),
+                output_cost_per_million_tokens=Decimal("15"),
+            ),
+        ),
+        ClaudeMessagesProvider(
+            credential=LlmProviderCredential(api_key="claude-test-key"),
+            transport=claude_transport,
+            remaining_budget=Decimal("1.00"),
+            usage_recorder=recorder,
+        ),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), providers)
+    rows = registry.state.rows("shared.ai_usage_events")
+    audit_rows = registry.state.rows("shared.audit_events")
+
+    assert result.ok
+    assert rows[0]["provider"] == "openai"
+    assert rows[0]["prompt_tokens"] == 1000
+    assert rows[0]["completion_tokens"] == 250
+    assert rows[0]["cost_usd"] == Decimal("0.00875")
+    assert rows[1]["provider"] == "claude"
+    assert rows[1]["prompt_tokens"] == 800
+    assert rows[1]["completion_tokens"] == 150
+    assert rows[1]["cost_usd"] == Decimal("0.012")
+    assert audit_rows[0]["event_type"] == "ai_usage_import"
+    assert audit_rows[0]["metadata"]["cost_source"] == "provider tokens x configured rate"
+    assert audit_rows[1]["metadata"]["cost_source"] == "model cost_estimate fallback"
+    assert audit_rows[1]["metadata"]["response_id"] == "msg-claude-1"
+
+
+def test_req_llm_002_05_token_pricing_loads_from_provider_environment() -> None:
+    """TST-REQ-LLM-002-05: Validates REQ-LLM-002
+
+    Given: provider token rates are configured in the runtime environment
+    When: pricing is resolved
+    Then: the model cost calculation uses those configured rates
+    """
+
+    pricing = token_pricing_from_env(
+        ModelProvider.OPENAI,
+        {
+            "OPENAI_INPUT_COST_PER_MILLION_TOKENS": "2.50",
+            "OPENAI_OUTPUT_COST_PER_MILLION_TOKENS": "10.00",
+        },
+    )
+
+    assert pricing is not None
+    assert pricing.cost_for(prompt_tokens=1000, completion_tokens=2000) == Decimal("0.022500")
 
 
 def test_req_llm_002_02_scoring_event_attempts_consume_wrong_provider_budget_budget() -> None:

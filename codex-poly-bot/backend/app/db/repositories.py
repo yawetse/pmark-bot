@@ -265,6 +265,30 @@ class SharedRepositories:
             },
         )
 
+    def record_ai_usage_event(
+        self,
+        *,
+        environment: Environment,
+        provider: ModelProvider,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost_usd: Decimal,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.ai_usage_events",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "provider": provider.value,
+                "prompt_tokens": max(0, int(prompt_tokens)),
+                "completion_tokens": max(0, int(completion_tokens)),
+                "cost_usd": Decimal(str(cost_usd)),
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
     def record_audit_event(
         self,
         *,

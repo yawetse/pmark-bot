@@ -6,14 +6,16 @@ REQ-LLM-005, REQ-OBS-001
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 import httpx
 
-from app.domain import Instrument, ModelProvider, ScoringOutput
+from app.db import RepositoryRegistry
+from app.domain import Environment, Instrument, ModelProvider, ScoringOutput
 from app.venues.polymarket import VenueCallResult
 
 
@@ -113,6 +115,94 @@ class LlmProviderCredential:
     @property
     def present(self) -> bool:
         return bool((self.api_key or "").strip())
+
+
+@dataclass(frozen=True)
+class TokenPricing:
+    """Configurable token pricing used when provider responses include usage.
+
+    REQ: REQ-LLM-002, REQ-OBS-005
+    """
+
+    input_cost_per_million_tokens: Decimal = Decimal("0")
+    output_cost_per_million_tokens: Decimal = Decimal("0")
+
+    def cost_for(self, *, prompt_tokens: int, completion_tokens: int) -> Decimal:
+        prompt_cost = (Decimal(prompt_tokens) / Decimal("1000000")) * self.input_cost_per_million_tokens
+        completion_cost = (
+            Decimal(completion_tokens) / Decimal("1000000")
+        ) * self.output_cost_per_million_tokens
+        return prompt_cost + completion_cost
+
+
+@dataclass(frozen=True)
+class LlmUsageEvent:
+    """Provider response usage normalized for dashboard economics.
+
+    REQ: REQ-LLM-002, REQ-OBS-005
+    """
+
+    provider: ModelProvider
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: Decimal
+    cost_source: str
+    response_id: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+class LlmUsageRecorder(Protocol):
+    """Persistence boundary for provider-side token usage events.
+
+    REQ: REQ-LLM-002, REQ-OBS-005
+    """
+
+    def record_usage(self, event: LlmUsageEvent) -> None:
+        """Persist one normalized provider usage event."""
+
+
+@dataclass(frozen=True)
+class RepositoryLlmUsageRecorder:
+    """Record provider token usage in the shared AI usage table.
+
+    REQ: REQ-LLM-002, REQ-OBS-005
+    """
+
+    registry: RepositoryRegistry
+    environment: Environment
+
+    def record_usage(self, event: LlmUsageEvent) -> None:
+        shared = self.registry.shared()
+        row = shared.record_ai_usage_event(
+            environment=self.environment,
+            provider=event.provider,
+            prompt_tokens=event.prompt_tokens,
+            completion_tokens=event.completion_tokens,
+            cost_usd=event.cost_usd,
+            created_at=event.created_at,
+        )
+        shared.record_audit_event(
+            event_type="ai_usage_import",
+            actor="system",
+            action="llm.provider_usage.record",
+            environment=self.environment,
+            entity_id=row["id"],
+            metadata={
+                "provider": event.provider.value,
+                "model": event.model,
+                "prompt_tokens": event.prompt_tokens,
+                "completion_tokens": event.completion_tokens,
+                "total_tokens": event.total_tokens,
+                "cost_usd": str(event.cost_usd),
+                "cost_source": event.cost_source,
+                "response_id": event.response_id,
+            },
+        )
 
 
 class LlmProvider(Protocol):
@@ -224,6 +314,8 @@ class OpenAIResponsesProvider:
         model: str = "gpt-5",
         base_url: str = "https://api.openai.com",
         max_output_tokens: int = 800,
+        usage_recorder: LlmUsageRecorder | None = None,
+        token_pricing: TokenPricing | None = None,
     ) -> None:
         self.credential = credential
         self.transport = transport or HttpxProviderTransport()
@@ -232,6 +324,8 @@ class OpenAIResponsesProvider:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
+        self.usage_recorder = usage_recorder
+        self.token_pricing = token_pricing
 
     def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
         """Send a scoring request through OpenAI's Responses API.
@@ -262,11 +356,30 @@ class OpenAIResponsesProvider:
                 },
             },
         )
-        return _score_from_provider_text(
+        score = _score_from_provider_text(
             text=_openai_response_text(body),
             request=request,
             model_provider=self.model_provider,
         )
+        self._record_usage(body=body, fallback_cost=score.cost_estimate)
+        return score
+
+    def _record_usage(self, *, body: dict[str, Any], fallback_cost: Decimal) -> None:
+        if self.usage_recorder is None:
+            return
+        event = _usage_event_from_provider_response(
+            body=body,
+            model_provider=self.model_provider,
+            model=self.model,
+            fallback_cost=fallback_cost,
+            token_pricing=self.token_pricing,
+        )
+        if event is None:
+            return
+        try:
+            self.usage_recorder.record_usage(event)
+        except Exception:
+            return
 
 
 class ClaudeMessagesProvider:
@@ -287,6 +400,8 @@ class ClaudeMessagesProvider:
         model: str = "claude-opus-4-1-20250805",
         base_url: str = "https://api.anthropic.com",
         max_tokens: int = 800,
+        usage_recorder: LlmUsageRecorder | None = None,
+        token_pricing: TokenPricing | None = None,
     ) -> None:
         self.credential = credential
         self.transport = transport or HttpxProviderTransport()
@@ -295,6 +410,8 @@ class ClaudeMessagesProvider:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_tokens = max_tokens
+        self.usage_recorder = usage_recorder
+        self.token_pricing = token_pricing
 
     def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
         """Send a scoring request through Anthropic's Messages API.
@@ -321,11 +438,30 @@ class ClaudeMessagesProvider:
                 ],
             },
         )
-        return _score_from_provider_text(
+        score = _score_from_provider_text(
             text=_claude_response_text(body),
             request=request,
             model_provider=self.model_provider,
         )
+        self._record_usage(body=body, fallback_cost=score.cost_estimate)
+        return score
+
+    def _record_usage(self, *, body: dict[str, Any], fallback_cost: Decimal) -> None:
+        if self.usage_recorder is None:
+            return
+        event = _usage_event_from_provider_response(
+            body=body,
+            model_provider=self.model_provider,
+            model=self.model,
+            fallback_cost=fallback_cost,
+            token_pricing=self.token_pricing,
+        )
+        if event is None:
+            return
+        try:
+            self.usage_recorder.record_usage(event)
+        except Exception:
+            return
 
 
 def build_scoring_queue(
@@ -556,6 +692,90 @@ def _score_from_provider_text(
         cost_estimate=payload["cost_estimate"],
         instrument=request.instrument,
     )
+
+
+def _usage_event_from_provider_response(
+    *,
+    body: dict[str, Any],
+    model_provider: ModelProvider,
+    model: str,
+    fallback_cost: Decimal,
+    token_pricing: TokenPricing | None,
+) -> LlmUsageEvent | None:
+    usage = body.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    if model_provider == ModelProvider.OPENAI:
+        prompt_tokens = _usage_int(usage, "input_tokens", "prompt_tokens")
+        completion_tokens = _usage_int(usage, "output_tokens", "completion_tokens")
+    else:
+        prompt_tokens = (
+            _usage_int(usage, "input_tokens")
+            + _usage_int(usage, "cache_creation_input_tokens")
+            + _usage_int(usage, "cache_read_input_tokens")
+        )
+        completion_tokens = _usage_int(usage, "output_tokens")
+    if prompt_tokens == 0 and completion_tokens == 0:
+        return None
+
+    if token_pricing is None:
+        cost = fallback_cost
+        cost_source = "model cost_estimate fallback"
+    else:
+        cost = token_pricing.cost_for(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        cost_source = "provider tokens x configured rate"
+
+    return LlmUsageEvent(
+        provider=model_provider,
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=cost,
+        cost_source=cost_source,
+        response_id=body.get("id") if isinstance(body.get("id"), str) else None,
+    )
+
+
+def token_pricing_from_env(
+    model_provider: ModelProvider,
+    environ: Mapping[str, str],
+) -> TokenPricing | None:
+    """Return optional provider token rates from environment variables.
+
+    REQ: REQ-LLM-002, REQ-OBS-005
+    """
+
+    prefix = "OPENAI" if model_provider == ModelProvider.OPENAI else "ANTHROPIC"
+    input_rate = _optional_decimal(environ.get(f"{prefix}_INPUT_COST_PER_MILLION_TOKENS"))
+    output_rate = _optional_decimal(environ.get(f"{prefix}_OUTPUT_COST_PER_MILLION_TOKENS"))
+    if input_rate is None and output_rate is None:
+        return None
+    return TokenPricing(
+        input_cost_per_million_tokens=input_rate or Decimal("0"),
+        output_cost_per_million_tokens=output_rate or Decimal("0"),
+    )
+
+
+def _usage_int(usage: Mapping[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if value is None:
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        return max(0, parsed)
+    return 0
+
+
+def _optional_decimal(value: str | None) -> Decimal | None:
+    if value is None or not value.strip():
+        return None
+    return _as_decimal(value)
 
 
 def _as_decimal(value: Decimal | str) -> Decimal:
