@@ -72,22 +72,22 @@ Stocks:
 
 Polymarket:
 
-- [ ] Persist scanner runs separate from raw market data pulls.
-- [ ] Filter active markets by order-book depth, spread, liquidity, resolution window, category, and minimum volume.
-- [ ] Add configurable thresholds for minimum depth, minimum liquidity, max spread, minimum hours to resolution, and maximum hours to resolution.
-- [ ] Calculate market midpoint, bid depth, ask depth, spread, and hours to resolution for each candidate.
-- [ ] Attach target wallet overlap when target wallets hold or recently traded the market.
-- [ ] Persist rejected scanner candidates with refusal reason.
-- [ ] Surface scanner candidates and rejections in a paginated, sortable, filterable table.
+- [x] Persist scanner runs separate from raw market data pulls.
+- [x] Filter active markets by order-book depth, spread, liquidity, resolution window, category, and minimum volume.
+- [x] Add configurable thresholds for minimum depth, minimum liquidity, max spread, minimum hours to resolution, and maximum hours to resolution.
+- [x] Calculate market midpoint, bid depth, ask depth, spread, and hours to resolution for each candidate.
+- [x] Attach target wallet overlap when target wallets hold or recently traded the market.
+- [x] Persist rejected scanner candidates with refusal reason.
+- [x] Surface scanner candidates and rejections in a paginated, sortable, filterable table.
 
 Stocks:
 
-- [ ] Persist stock scanner runs separate from raw Alpaca pulls.
-- [ ] Define initial stock scanner strategies: momentum, mean reversion, gap, liquidity, volatility, and unusual volume.
-- [ ] Add configurable thresholds per stock scanner strategy.
-- [ ] Run scanner over the configured symbol universe, including S&P 500, Nasdaq 100, custom presets, and individual symbols.
-- [ ] Persist accepted and rejected stock candidates with refusal reason.
-- [ ] Surface stock scanner output in the same dynamic table pattern.
+- [x] Persist stock scanner runs separate from raw Alpaca pulls.
+- [x] Define initial stock scanner strategies: momentum, mean reversion, gap, liquidity, volatility, and unusual volume.
+- [x] Add configurable thresholds per stock scanner strategy.
+- [x] Run scanner over the configured symbol universe, including S&P 500, Nasdaq 100, custom presets, and individual symbols.
+- [x] Persist accepted and rejected stock candidates with refusal reason.
+- [x] Surface stock scanner output in the same dynamic table pattern.
 
 ## Phase 3: Reasoning / Brain
 

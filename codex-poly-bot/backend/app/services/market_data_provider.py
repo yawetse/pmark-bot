@@ -559,6 +559,9 @@ def _alpaca_candidate_from_snapshot(
     liquidity = _sum_decimal([bid_size, ask_size]) or bar_volume
     history_start = _timestamp(history_bars[0].get("t"), pulled_at) if history_bars else None
     history_end = _timestamp(history_bars[-1].get("t"), pulled_at) if history_bars else None
+    average_volume = _average_decimal(
+        [_decimal_or_none(bar.get("v")) for bar in history_bars[:-1]]
+    )
     return {
         "id": f"{Venue.ALPACA.value}:{symbol}",
         "venue": Venue.ALPACA.value,
@@ -571,6 +574,12 @@ def _alpaca_candidate_from_snapshot(
         "dataSource": _alpaca_data_source(bool(snapshot), bool(history_bars)),
         "historyBarCount": len(history_bars),
         "previousClose": _display_decimal(previous_close),
+        "latestOpen": _display_decimal(_decimal_or_none(latest_bar.get("o"))),
+        "latestHigh": _display_decimal(_decimal_or_none(latest_bar.get("h"))),
+        "latestLow": _display_decimal(_decimal_or_none(latest_bar.get("l"))),
+        "latestClose": _display_decimal(_decimal_or_none(latest_bar.get("c"))),
+        "latestVolume": _display_decimal(bar_volume),
+        "averageVolume": _display_decimal(average_volume),
         "historyStart": history_start,
         "historyEnd": history_end,
     }
@@ -644,21 +653,52 @@ def _polymarket_candidate(
     if price is None:
         return None
     spread = best_ask - best_bid if best_ask is not None and best_bid is not None else None
-    liquidity = _sum_order_sizes(bids) + _sum_order_sizes(asks)
-    market_id = _first_string(market.get("conditionId"), market.get("condition_id"), book.get("market")) or token_id
+    bid_depth = _sum_order_sizes(bids)
+    ask_depth = _sum_order_sizes(asks)
+    liquidity = bid_depth + ask_depth
+    market_id = _first_string(
+        market.get("conditionId"),
+        market.get("condition_id"),
+        market.get("id"),
+        book.get("market"),
+    ) or token_id
     title = _first_string(market.get("question"), market.get("title"), market.get("slug")) or market_id
     display_title = f"{title} - {outcome}" if outcome else title
+    end_date = _first_string(
+        market.get("endDate"),
+        market.get("end_date"),
+        market.get("endDateIso"),
+        market.get("end_date_iso"),
+    )
+    volume = _first_decimal(
+        market.get("volume"),
+        market.get("volumeNum"),
+        market.get("volume_num"),
+        market.get("volume24hr"),
+        market.get("volume_24hr"),
+    )
     return {
         "id": f"{venue}:{market_id}:{token_id}",
         "venue": venue,
         "market": display_title,
+        "marketId": market_id,
         "price": _display_decimal(price),
+        "midpoint": _display_decimal(price),
+        "bestBid": _display_decimal(best_bid),
+        "bestAsk": _display_decimal(best_ask),
+        "bidDepth": _display_decimal(bid_depth),
+        "askDepth": _display_decimal(ask_depth),
         "liquidity": _display_decimal(liquidity),
         "spread": _display_decimal(spread),
         "state": "priced",
         "pulledAt": _timestamp(book.get("timestamp"), pulled_at),
         "tokenId": token_id,
         "outcome": outcome,
+        "category": _first_string(market.get("category"), market.get("categoryName")),
+        "endDate": end_date,
+        "volume": _display_decimal(volume),
+        "active": _boolish(market.get("active"), default=True),
+        "closed": _boolish(market.get("closed"), default=False),
     }
 
 
@@ -713,6 +753,13 @@ def _sum_decimal(values: Sequence[Decimal | None]) -> Decimal | None:
             total += value
             found = True
     return total if found else None
+
+
+def _average_decimal(values: Sequence[Decimal | None]) -> Decimal | None:
+    present = [value for value in values if value is not None]
+    if not present:
+        return None
+    return sum(present, Decimal("0")) / Decimal(len(present))
 
 
 def _midpoint(left: Decimal | None, right: Decimal | None) -> Decimal | None:
@@ -779,6 +826,28 @@ def _first_string(*values: Any) -> str | None:
         if text:
             return text
     return None
+
+
+def _first_decimal(*values: Any) -> Decimal | None:
+    for value in values:
+        parsed = _decimal_or_none(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _boolish(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return bool(value)
 
 
 def _first_mapping(*values: Any) -> dict[str, Any]:

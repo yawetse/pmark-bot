@@ -1056,6 +1056,120 @@ class SharedRepositories:
             rows = [row for row in rows if row["account_id"] == account_id]
         return rows
 
+    def record_scanner_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        trigger: str,
+        status: str,
+        config: dict,
+        source_pull_ids: list | tuple,
+        accepted_count: int,
+        rejected_count: int,
+        started_at: datetime,
+        completed_at: datetime,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.scanner_runs",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "pipeline_run_id": pipeline_run_id,
+                "trigger": trigger,
+                "status": status,
+                "config": _json_ready(config),
+                "source_pull_ids": list(source_pull_ids),
+                "accepted_count": max(0, int(accepted_count)),
+                "rejected_count": max(0, int(rejected_count)),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "created_at": created_at or completed_at,
+            },
+        )
+
+    def record_scanner_candidate(
+        self,
+        *,
+        environment: Environment,
+        scanner_run_id: str,
+        venue: str,
+        instrument_id: str,
+        display_name: str,
+        status: str,
+        strategy_names: list | tuple,
+        metrics: dict,
+        source_payload: dict,
+        symbol: str | None = None,
+        market_id: str | None = None,
+        outcome_id: str | None = None,
+        refusal_reason: str | None = None,
+        price: Decimal | None = None,
+        liquidity: Decimal | None = None,
+        spread: Decimal | None = None,
+        hours_to_resolution: Decimal | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.scanner_candidates",
+            {
+                "id": str(uuid4()),
+                "scanner_run_id": scanner_run_id,
+                "environment": environment.value,
+                "venue": venue,
+                "instrument_id": instrument_id,
+                "display_name": display_name,
+                "symbol": symbol.upper() if symbol else None,
+                "market_id": market_id,
+                "outcome_id": outcome_id,
+                "status": status,
+                "refusal_reason": refusal_reason,
+                "strategy_names": list(strategy_names),
+                "price": None if price is None else Decimal(str(price)),
+                "liquidity": None if liquidity is None else Decimal(str(liquidity)),
+                "spread": None if spread is None else Decimal(str(spread)),
+                "hours_to_resolution": (
+                    None if hours_to_resolution is None else Decimal(str(hours_to_resolution))
+                ),
+                "metrics": _json_ready(metrics),
+                "source_payload": _json_ready(source_payload),
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def scanner_runs(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.scanner_runs")
+            if row["environment"] == environment.value
+        ]
+
+    def scanner_candidates(
+        self,
+        *,
+        environment: Environment,
+        scanner_run_id: str | None = None,
+        venue: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.scanner_candidates")
+            if row["environment"] == environment.value
+        ]
+        if scanner_run_id is not None:
+            rows = [row for row in rows if row["scanner_run_id"] == scanner_run_id]
+        if venue is not None:
+            rows = [row for row in rows if row["venue"] == venue]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
     def record_audit_event(
         self,
         *,
