@@ -25,6 +25,24 @@ export type ManualRunResult = {
     candidateCount?: number;
     candidates?: unknown[];
   };
+  reasoningRun?: {
+    id?: string | null;
+    status?: string;
+    promptCount?: number;
+    scoredCount?: number;
+    skippedCount?: number;
+    failedCount?: number;
+    outputs?: unknown[];
+  };
+  strategyRun?: {
+    id?: string | null;
+    status?: string;
+    voteCount?: number;
+    approvedCount?: number;
+    refusedCount?: number;
+    votes?: unknown[];
+    outputs?: unknown[];
+  };
   pipelineRun?: PipelineRunView;
 };
 

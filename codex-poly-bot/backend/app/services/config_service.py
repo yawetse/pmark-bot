@@ -22,6 +22,8 @@ from app.services.stock_universe import (
     resolve_alpaca_symbol_universe,
 )
 from app.services.scanner_service import DEFAULT_SCANNER_CONFIG
+from app.services.brain_service import DEFAULT_REASONING_CONFIG
+from app.services.strategy_consensus_service import DEFAULT_STRATEGY_CONSENSUS_CONFIG
 
 
 class ConfigConflictError(ValueError):
@@ -277,6 +279,10 @@ class ConfigService:
                 return value
         if parts[:1] == ["scanner"] and len(parts) >= 3:
             return self._validated_scanner_patch_value(parts, value, patch.path)
+        if patch.path == "reasoning.max_prompts_per_provider_per_run":
+            return self._positive_int(value, patch.path)
+        if parts[:1] == ["reasoning"] and len(parts) >= 3:
+            return self._validated_reasoning_patch_value(parts, value, patch.path)
         if parts[:1] == ["llm"] and len(parts) >= 3:
             self._require_model_provider(parts[1])
             if len(parts) == 3 and parts[2] == "budget_usd":
@@ -380,6 +386,36 @@ class ConfigService:
             "min_quote_liquidity",
         }:
             return str(self._positive_decimal(value, path))
+        raise ConfigValidationError(f"unsupported config path: {path}")
+
+    def _validated_reasoning_patch_value(self, parts: list[str], value: Any, path: str) -> Any:
+        if parts[1] not in {"polymarket", "alpaca"}:
+            raise ConfigValidationError("unsupported reasoning venue")
+        if len(parts) == 3 and parts[2] == "prompt_version":
+            if not isinstance(value, str) or not value.strip():
+                raise ConfigValidationError(f"{path} must be a non-empty string")
+            return value.strip()
+        if len(parts) == 3 and parts[2] in {"min_confidence", "min_edge"}:
+            return str(self._ratio(value, path))
+        if parts[1] == "polymarket" and len(parts) == 3 and parts[2] == "checks":
+            allowed = {"base_rate", "news", "whale_check", "disposition"}
+            if not isinstance(value, list) or not set(value) <= allowed:
+                raise ConfigValidationError("unsupported Polymarket reasoning check")
+            return list(dict.fromkeys(value))
+        if parts[1] == "alpaca" and len(parts) == 3 and parts[2] == "inputs":
+            allowed = {
+                "price_action",
+                "historical_bars",
+                "volume",
+                "sector",
+                "index_membership",
+                "event_news",
+                "risk",
+                "liquidity",
+            }
+            if not isinstance(value, list) or not set(value) <= allowed:
+                raise ConfigValidationError("unsupported Alpaca reasoning input")
+            return list(dict.fromkeys(value))
         raise ConfigValidationError(f"unsupported config path: {path}")
 
     def _apply_patch(self, payload: dict[str, Any], patch: ConfigPatchOperation, value: Any) -> None:
@@ -515,6 +551,8 @@ def default_config_payload() -> dict[str, Any]:
             },
         },
         "scanner": DEFAULT_SCANNER_CONFIG,
+        "reasoning": DEFAULT_REASONING_CONFIG,
+        "strategy_consensus": DEFAULT_STRATEGY_CONSENSUS_CONFIG,
         "alpaca": {
             "account_mode": "paper",
             "symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS),

@@ -101,6 +101,20 @@ from app.services.scanner_service import (
     scanner_config_from_payload,
     scanner_run_payload,
 )
+from app.services.brain_service import (
+    DEFAULT_REASONING_CONFIG,
+    BrainService,
+    ReasoningRunResult,
+    reasoning_config_from_payload,
+    reasoning_run_payload,
+)
+from app.services.strategy_consensus_service import (
+    DEFAULT_STRATEGY_CONSENSUS_CONFIG,
+    StrategyConsensusRunResult,
+    StrategyConsensusService,
+    strategy_consensus_config_from_payload,
+    strategy_consensus_run_payload,
+)
 from app.services.stock_universe import (
     BUILT_IN_ALPACA_PRESETS,
     DEFAULT_ALPACA_SYMBOL_PRESETS,
@@ -231,6 +245,7 @@ __all__ = [
     "AlertCooldownResult",
     "AuditService",
     "AuthService",
+    "BrainService",
     "ClaudeMessagesProvider",
     "CloudWatchLogSink",
     "ConfigAuthorizationError",
@@ -244,6 +259,7 @@ __all__ = [
     "ConfigValidationError",
     "DEFAULT_ALPACA_SYMBOL_UNIVERSE",
     "DEFAULT_ALPACA_SYMBOL_PRESETS",
+    "DEFAULT_REASONING_CONFIG",
     "DEFAULT_SCANNER_CONFIG",
     "ComparisonGroup",
     "ComparisonDashboardView",
@@ -316,6 +332,7 @@ __all__ = [
     "ReleaseReadinessCheck",
     "ReleaseReadinessSummary",
     "RepositoryLlmUsageRecorder",
+    "ReasoningRunResult",
     "RiskLimitResult",
     "RuntimeConfigSnapshot",
     "RuntimeCredentialView",
@@ -373,6 +390,8 @@ __all__ = [
     "resolve_alpaca_account_mode",
     "run_llm_scoring",
     "scan_traceability",
+    "reasoning_config_from_payload",
+    "reasoning_run_payload",
     "scanner_config_from_payload",
     "scanner_run_payload",
     "send_large_movement_alert",
