@@ -11,6 +11,10 @@ from app.adapters.aws import AwsBillingCost
 from app.domain import Environment, ModelProvider
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
+from app.services.stock_universe_refresh_service import (
+    StaticStockUniverseSource,
+    StockUniverseRefreshService,
+)
 
 
 def _client() -> tuple[TestClient, str]:
@@ -801,6 +805,10 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
             ),
         }
     )
+    app.state.services.runtime_status.stock_universe_refresher = StockUniverseRefreshService(
+        app.state.services.registry,
+        source=StaticStockUniverseSource({"sp500": ["AAPL"], "nasdaq100": ["MSFT"]}),
+    )
 
     result = app.state.services.runtime_status.trigger_scheduled_run(
         environment=Environment.DEVELOPMENT,
@@ -812,6 +820,7 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
     pipeline_step_rows = app.state.services.registry.state.rows("shared.pipeline_steps")
 
     assert result["status"] == "partial"
+    assert result["stockUniverseRefresh"]["status"] == "refreshed"
     assert result["pipelineRun"]["status"] == "partial"
     assert result["pipelineRun"]["steps"][0]["status"] == "partial"
     assert result["pipelineRun"]["steps"][0]["recordIds"] == [

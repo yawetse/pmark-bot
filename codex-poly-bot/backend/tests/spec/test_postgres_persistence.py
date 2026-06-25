@@ -145,6 +145,10 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.strategy_consensus_runs" in plan.table_names
     assert "shared.strategy_votes" in plan.table_names
     assert "shared.strategy_consensus_outputs" in plan.table_names
+    assert "shared.execution_runs" in plan.table_names
+    assert "shared.order_intents" in plan.table_names
+    assert "shared.exit_runs" in plan.table_names
+    assert "shared.exit_intents" in plan.table_names
     assert "shared.polymarket_gamma_markets" in plan.table_names
     assert "shared.polymarket_chain_fill_events" in plan.table_names
     assert "shared.polymarket_trades" in plan.table_names
@@ -152,6 +156,7 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.polymarket_wallet_performance_stats" in plan.table_names
     assert "shared.polymarket_target_wallet_snapshots" in plan.table_names
     assert "shared.historical_import_checkpoints" in plan.table_names
+    assert "shared.alpaca_symbol_preset_snapshots" in plan.table_names
     assert "shared.alpaca_historical_orders" in plan.table_names
     assert "shared.alpaca_historical_fills" in plan.table_names
     assert "shared.alpaca_historical_positions" in plan.table_names
@@ -467,12 +472,24 @@ def test_req_db_003_05_shared_alpaca_history_records_persist_for_step_zero() -> 
         cursor_value=observed.isoformat(),
         status="stored",
     )
+    preset = shared.record_alpaca_symbol_preset_snapshot(
+        environment=Environment.DEVELOPMENT,
+        preset_name="sp500",
+        status="refreshed",
+        source="html_table",
+        source_url="https://example.test/sp500",
+        symbols=["AAPL", "MSFT"],
+        effective_at=observed,
+        refreshed_at=observed,
+        message="refreshed fixture",
+    )
 
     assert len(shared.alpaca_historical_orders(environment=Environment.DEVELOPMENT)) == 1
     assert len(shared.alpaca_historical_fills(environment=Environment.DEVELOPMENT)) == 1
     assert len(shared.alpaca_historical_positions(environment=Environment.DEVELOPMENT)) == 1
     assert len(shared.alpaca_broker_account_snapshots(environment=Environment.DEVELOPMENT)) == 1
     assert len(shared.stock_bars(environment=Environment.DEVELOPMENT)) == 1
+    assert shared.alpaca_symbol_preset_snapshots(environment=Environment.DEVELOPMENT)[0]["id"] == preset["id"]
     assert shared.alpaca_symbol_pnl_snapshots(environment=Environment.DEVELOPMENT)[0]["id"] == pnl["id"]
 
 def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
@@ -676,6 +693,113 @@ def test_req_db_003_08_shared_strategy_consensus_records_persist_for_phase_four(
         status="approved",
     )[0]["id"] == output["id"]
     assert registry.state.rows("openai.strategy_signals")[0]["strategy_name"] == "convergence"
+
+
+def test_req_db_003_09_shared_execution_and_exit_records_persist_for_phase_five_six() -> None:
+    """TST-REQ-DB-003-09: Validates REQ-DB-003, REQ-EXE-016, and REQ-EXT-005
+
+    Given: execution and exit lifecycle records
+    When: the shared repositories persist order and exit intents
+    Then: idempotency keys keep retries on the same durable record
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    observed = datetime(2026, 6, 25, 18, 0, tzinfo=UTC)
+    execution_run = shared.record_execution_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-1",
+        strategy_consensus_run_id="consensus-1",
+        trigger="manual",
+        status="completed",
+        config={"order_type": "market"},
+        intent_count=1,
+        submitted_count=0,
+        simulated_count=1,
+        refused_count=0,
+        reconciliation_count=0,
+        started_at=observed,
+        completed_at=observed,
+    )
+    order_intent = shared.record_order_intent(
+        environment=Environment.DEVELOPMENT,
+        execution_run_id=execution_run["id"],
+        pipeline_run_id="pipeline-1",
+        strategy_consensus_output_id="consensus-output-1",
+        venue=Venue.ALPACA.value,
+        instrument_id="alpaca:SPY",
+        model_provider=ModelProvider.CLAUDE,
+        side=OrderSide.BUY.value,
+        order_type=OrderType.MARKET.value,
+        status="pending",
+        notional_usd=Decimal("50"),
+        size_multiplier=Decimal("0.5"),
+        idempotency_key="entry-key",
+        risk_payload={"approved": True},
+        source_payload={"symbol": "SPY"},
+        created_at=observed,
+        updated_at=observed,
+    )
+    updated_order_intent = shared.record_order_intent(
+        environment=Environment.DEVELOPMENT,
+        execution_run_id=execution_run["id"],
+        pipeline_run_id="pipeline-1",
+        strategy_consensus_output_id="consensus-output-1",
+        venue=Venue.ALPACA.value,
+        instrument_id="alpaca:SPY",
+        model_provider=ModelProvider.CLAUDE,
+        side=OrderSide.BUY.value,
+        order_type=OrderType.MARKET.value,
+        status="simulated",
+        notional_usd=Decimal("50"),
+        size_multiplier=Decimal("0.5"),
+        idempotency_key="entry-key",
+        risk_payload={"approved": True},
+        source_payload={"symbol": "SPY"},
+        created_at=observed,
+        updated_at=observed,
+    )
+    exit_run = shared.record_exit_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-1",
+        trigger="manual",
+        status="completed",
+        config={"alpaca": {"profit_target_pct": "0.08"}},
+        open_position_count=1,
+        triggered_count=1,
+        simulated_count=1,
+        submitted_count=0,
+        refused_count=0,
+        started_at=observed,
+        completed_at=observed,
+    )
+    exit_intent = shared.record_exit_intent(
+        environment=Environment.DEVELOPMENT,
+        exit_run_id=exit_run["id"],
+        pipeline_run_id="pipeline-1",
+        venue=Venue.ALPACA.value,
+        instrument_id="alpaca:SPY",
+        position_id="position-1",
+        model_provider=ModelProvider.CLAUDE,
+        trigger_type="profit_target",
+        status="simulated",
+        side=OrderSide.SELL.value,
+        quantity=Decimal("1"),
+        notional_usd=Decimal("110"),
+        threshold=Decimal("0.08"),
+        observed_value=Decimal("0.10"),
+        idempotency_key="exit-key",
+        source_payload={"symbol": "SPY"},
+        created_at=observed,
+        updated_at=observed,
+    )
+
+    assert order_intent["id"] == updated_order_intent["id"]
+    assert updated_order_intent["status"] == "simulated"
+    assert shared.execution_runs(environment=Environment.DEVELOPMENT)[0]["id"] == execution_run["id"]
+    assert shared.order_intents(environment=Environment.DEVELOPMENT)[0]["id"] == order_intent["id"]
+    assert shared.exit_runs(environment=Environment.DEVELOPMENT)[0]["id"] == exit_run["id"]
+    assert shared.exit_intents(environment=Environment.DEVELOPMENT)[0]["id"] == exit_intent["id"]
+
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003

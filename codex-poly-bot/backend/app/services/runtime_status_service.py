@@ -6,6 +6,7 @@ REQ-WAL-005, REQ-WAL-006, REQ-OBS-005
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -38,7 +39,24 @@ from app.services.strategy_consensus_service import (
     StrategyConsensusService,
     strategy_consensus_run_payload,
 )
-from app.services.stock_universe import DEFAULT_ALPACA_SYMBOL_PRESETS
+from app.services.lifecycle_service import (
+    DEFAULT_EXECUTION_CONFIG,
+    DEFAULT_EXIT_CONFIG,
+    PipelineLifecycleService,
+    execution_run_payload,
+    exit_run_payload,
+)
+from app.services.stock_universe import (
+    DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
+    DEFAULT_ALPACA_SYMBOL_PRESETS,
+    resolve_alpaca_symbol_universe,
+    seed_alpaca_preset_snapshots,
+    stock_universe_metadata,
+)
+from app.services.stock_universe_refresh_service import (
+    StockUniverseRefreshService,
+    latest_preset_snapshot_payloads,
+)
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
@@ -102,6 +120,10 @@ class RuntimeStatusService:
     STRATEGY_CONSENSUS_RUNS_TABLE = f"{SHARED_SCHEMA}.strategy_consensus_runs"
     STRATEGY_VOTES_TABLE = f"{SHARED_SCHEMA}.strategy_votes"
     STRATEGY_CONSENSUS_OUTPUTS_TABLE = f"{SHARED_SCHEMA}.strategy_consensus_outputs"
+    EXECUTION_RUNS_TABLE = f"{SHARED_SCHEMA}.execution_runs"
+    ORDER_INTENTS_TABLE = f"{SHARED_SCHEMA}.order_intents"
+    EXIT_RUNS_TABLE = f"{SHARED_SCHEMA}.exit_runs"
+    EXIT_INTENTS_TABLE = f"{SHARED_SCHEMA}.exit_intents"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
     ECONOMICS_SNAPSHOTS_TABLE = f"{SHARED_SCHEMA}.economics_snapshots"
     PIPELINE_STAGES = (
@@ -119,6 +141,7 @@ class RuntimeStatusService:
         registry: RepositoryRegistry | None = None,
         billing_adapter: Any | None = None,
         market_data_fetcher: MarketDataProvider | None = None,
+        stock_universe_refresher: StockUniverseRefreshService | None = None,
     ) -> None:
         self.settings = settings
         self.registry = registry or RepositoryRegistry()
@@ -134,6 +157,10 @@ class RuntimeStatusService:
             environ=getattr(settings, "runtime_env", {}),
         )
         self.strategy_consensus = StrategyConsensusService(self.registry)
+        self.lifecycle = PipelineLifecycleService(self.registry)
+        self.stock_universe_refresher = stock_universe_refresher or StockUniverseRefreshService(
+            self.registry
+        )
 
     def runtime_config_payload(self) -> dict[str, Any]:
         """Return config defaults aligned to deployed runtime flags.
@@ -151,6 +178,8 @@ class RuntimeStatusService:
             "symbol_universe": list(
                 getattr(self.settings, "alpaca_symbol_universe", DEFAULT_ALPACA_SYMBOL_UNIVERSE)
             ),
+            "preset_refresh": DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
+            "preset_snapshots": self._latest_preset_snapshot_payloads(self.settings.environment),
         }
         if alpaca_symbol_presets or alpaca_custom_symbols:
             alpaca_payload.update(
@@ -161,7 +190,7 @@ class RuntimeStatusService:
                 }
             )
 
-        return {
+        payload = {
             "default_selected_venue": self.settings.default_selected_venue.value,
             "live_enabled": self.settings.live_enabled,
             "venues": {
@@ -199,6 +228,8 @@ class RuntimeStatusService:
             "scanner": DEFAULT_SCANNER_CONFIG,
             "reasoning": DEFAULT_REASONING_CONFIG,
             "strategy_consensus": DEFAULT_STRATEGY_CONSENSUS_CONFIG,
+            "execution": DEFAULT_EXECUTION_CONFIG,
+            "exit": DEFAULT_EXIT_CONFIG,
             "alpaca": alpaca_payload,
             "notifications": {
                 "recipients": self.settings.notification_recipients,
@@ -208,6 +239,46 @@ class RuntimeStatusService:
                 "ses_identity": self.settings.ses_identity_email,
             },
         }
+        if "symbol_presets" in alpaca_payload or "custom_symbols" in alpaca_payload:
+            alpaca_payload["symbol_universe"] = resolve_alpaca_symbol_universe(payload)
+        alpaca_payload["preset_metadata"] = stock_universe_metadata(payload)
+        return payload
+
+    def _with_latest_stock_universe(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = deepcopy(config_payload)
+        alpaca_payload = payload.setdefault("alpaca", {})
+        if not isinstance(alpaca_payload, dict):
+            return payload
+        refresh_config = alpaca_payload.get("preset_refresh")
+        sources = {}
+        if isinstance(refresh_config, dict) and isinstance(refresh_config.get("sources"), dict):
+            sources = refresh_config["sources"]
+        alpaca_payload["preset_refresh"] = {
+            **DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
+            **(refresh_config if isinstance(refresh_config, dict) else {}),
+            "sources": {
+                **DEFAULT_ALPACA_PRESET_REFRESH_CONFIG["sources"],
+                **sources,
+            },
+        }
+        alpaca_payload["preset_snapshots"] = self._latest_preset_snapshot_payloads(environment)
+        if "symbol_presets" in alpaca_payload or "custom_symbols" in alpaca_payload:
+            alpaca_payload["symbol_universe"] = resolve_alpaca_symbol_universe(payload)
+        alpaca_payload["preset_metadata"] = stock_universe_metadata(payload)
+        return payload
+
+    def _latest_preset_snapshot_payloads(self, environment: Environment) -> dict[str, dict[str, Any]]:
+        try:
+            rows = self.registry.shared().alpaca_symbol_preset_snapshots(environment=environment)
+        except PersistenceUnavailableError:
+            return seed_alpaca_preset_snapshots()
+        snapshots = latest_preset_snapshot_payloads(rows)
+        return snapshots or seed_alpaca_preset_snapshots()
 
     def record_worker_heartbeat(self, *, status: str = "ok", message: str | None = None) -> None:
         """Persist an ingestion scheduler heartbeat for dashboard reads.
@@ -324,6 +395,10 @@ class RuntimeStatusService:
 
         now = datetime.now(UTC)
         run_id = str(uuid4())
+        config_payload = self._with_latest_stock_universe(
+            environment=environment,
+            config_payload=config_payload,
+        )
         market_data_pulls = [
             self._fetch_and_record_market_data_pull(
                 environment=environment,
@@ -368,6 +443,26 @@ class RuntimeStatusService:
             started_at=now,
             completed_at=now,
         )
+        execution_run = self.lifecycle.run_execution(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="manual",
+            strategy_run=strategy_run.payload,
+            market_data_pulls=market_data_pulls,
+            config_payload=config_payload,
+            credential_status=self._venue_credential_status(environment),
+            started_at=now,
+            completed_at=now,
+        )
+        exit_run = self.lifecycle.run_exit(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="manual",
+            market_data_pulls=market_data_pulls,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
         self.registry.state.insert(
             f"{SHARED_SCHEMA}.job_runs",
             {
@@ -392,6 +487,15 @@ class RuntimeStatusService:
                     "strategy_votes": strategy_run.payload["voteCount"],
                     "strategy_approved": strategy_run.payload["approvedCount"],
                     "strategy_refused": strategy_run.payload["refusedCount"],
+                    "execution_run_id": execution_run.payload.get("id"),
+                    "order_intents": execution_run.payload["intentCount"],
+                    "order_simulated": execution_run.payload["simulatedCount"],
+                    "order_submitted": execution_run.payload["submittedCount"],
+                    "order_refused": execution_run.payload["refusedCount"],
+                    "exit_run_id": exit_run.payload.get("id"),
+                    "exit_open_positions": exit_run.payload["openPositionCount"],
+                    "exit_triggered": exit_run.payload["triggeredCount"],
+                    "exit_refused": exit_run.payload["refusedCount"],
                 },
                 "created_at": now,
             },
@@ -435,6 +539,15 @@ class RuntimeStatusService:
                 "strategy_votes": strategy_run.payload["voteCount"],
                 "strategy_approved": strategy_run.payload["approvedCount"],
                 "strategy_refused": strategy_run.payload["refusedCount"],
+                "execution_run_id": execution_run.payload.get("id"),
+                "order_intents": execution_run.payload["intentCount"],
+                "order_simulated": execution_run.payload["simulatedCount"],
+                "order_submitted": execution_run.payload["submittedCount"],
+                "order_refused": execution_run.payload["refusedCount"],
+                "exit_run_id": exit_run.payload.get("id"),
+                "exit_open_positions": exit_run.payload["openPositionCount"],
+                "exit_triggered": exit_run.payload["triggeredCount"],
+                "exit_refused": exit_run.payload["refusedCount"],
             },
         )
         pipeline_run = self._record_pipeline_run(
@@ -447,6 +560,8 @@ class RuntimeStatusService:
             scanner_run=scanner_run.payload,
             reasoning_run=reasoning_run.payload,
             strategy_run=strategy_run.payload,
+            execution_run=execution_run.payload,
+            exit_run=exit_run.payload,
             actor=username,
         )
         return {
@@ -462,6 +577,8 @@ class RuntimeStatusService:
             "scannerRun": scanner_run.payload,
             "reasoningRun": reasoning_run.payload,
             "strategyRun": strategy_run.payload,
+            "executionRun": execution_run.payload,
+            "exitRun": exit_run.payload,
             "pipelineRun": pipeline_run,
         }
 
@@ -475,6 +592,16 @@ class RuntimeStatusService:
 
         now = datetime.now(UTC)
         run_id = str(uuid4())
+        stock_universe_refresh = self.stock_universe_refresher.refresh(
+            environment=environment,
+            config_payload=config_payload,
+            trigger="scheduled",
+            now=now,
+        )
+        config_payload = self._with_latest_stock_universe(
+            environment=environment,
+            config_payload=config_payload,
+        )
         market_data_pulls = [
             self._fetch_and_record_market_data_pull(
                 environment=environment,
@@ -514,6 +641,26 @@ class RuntimeStatusService:
             started_at=now,
             completed_at=now,
         )
+        execution_run = self.lifecycle.run_execution(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="scheduled",
+            strategy_run=strategy_run.payload,
+            market_data_pulls=market_data_pulls,
+            config_payload=config_payload,
+            credential_status=self._venue_credential_status(environment),
+            started_at=now,
+            completed_at=now,
+        )
+        exit_run = self.lifecycle.run_exit(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="scheduled",
+            market_data_pulls=market_data_pulls,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
         status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
         try:
             self.registry.state.insert(
@@ -526,6 +673,7 @@ class RuntimeStatusService:
                     "metadata": {
                         "message": "scheduled provider market data ingestion",
                         "scheduled": True,
+                        "stock_universe_refresh": stock_universe_refresh.payload,
                         "market_data_pull_ids": [pull["id"] for pull in market_data_pulls],
                         "venues": [pull["venue"] for pull in market_data_pulls],
                         "scanner_run_id": scanner_run.payload.get("id"),
@@ -539,6 +687,15 @@ class RuntimeStatusService:
                         "strategy_votes": strategy_run.payload["voteCount"],
                         "strategy_approved": strategy_run.payload["approvedCount"],
                         "strategy_refused": strategy_run.payload["refusedCount"],
+                        "execution_run_id": execution_run.payload.get("id"),
+                        "order_intents": execution_run.payload["intentCount"],
+                        "order_simulated": execution_run.payload["simulatedCount"],
+                        "order_submitted": execution_run.payload["submittedCount"],
+                        "order_refused": execution_run.payload["refusedCount"],
+                        "exit_run_id": exit_run.payload.get("id"),
+                        "exit_open_positions": exit_run.payload["openPositionCount"],
+                        "exit_triggered": exit_run.payload["triggeredCount"],
+                        "exit_refused": exit_run.payload["refusedCount"],
                     },
                     "created_at": now,
                 },
@@ -555,6 +712,8 @@ class RuntimeStatusService:
             scanner_run=scanner_run.payload,
             reasoning_run=reasoning_run.payload,
             strategy_run=strategy_run.payload,
+            execution_run=execution_run.payload,
+            exit_run=exit_run.payload,
             actor="scheduler",
         )
         return {
@@ -562,6 +721,7 @@ class RuntimeStatusService:
             "runId": run_id,
             "status": status,
             "triggeredAt": now.isoformat(),
+            "stockUniverseRefresh": stock_universe_refresh.payload,
             "marketDataPull": self.market_data_pull(
                 environment=environment,
                 config_payload=config_payload,
@@ -570,6 +730,8 @@ class RuntimeStatusService:
             "scannerRun": scanner_run.payload,
             "reasoningRun": reasoning_run.payload,
             "strategyRun": strategy_run.payload,
+            "executionRun": execution_run.payload,
+            "exitRun": exit_run.payload,
             "pipelineRun": pipeline_run,
         }
 
@@ -753,6 +915,8 @@ class RuntimeStatusService:
             "scanner": self.scanner_summary(environment),
             "reasoning": self.reasoning_summary(environment),
             "strategyConsensus": self.strategy_consensus_summary(environment),
+            "execution": self.execution_summary(environment),
+            "exit": self.exit_summary(environment),
             "historicalImport": self.historical_import_summary(environment),
             "brokerHistory": self.broker_history_summary(environment),
         }
@@ -900,6 +1064,97 @@ class RuntimeStatusService:
             "refusedCount": payload["refusedCount"],
             "votes": payload["votes"],
             "outputs": payload["outputs"],
+        }
+
+    def execution_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return latest order-intent execution status for operations UI."""
+
+        try:
+            runs = self.registry.shared().execution_runs(environment=environment)
+            intents = self.registry.shared().order_intents(environment=environment)
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Execution status is unavailable because persistence is offline.",
+                "latestRun": None,
+                "intentCount": 0,
+                "submittedCount": 0,
+                "simulatedCount": 0,
+                "refusedCount": 0,
+                "intents": [],
+            }
+        if not runs:
+            return {
+                "status": "idle",
+                "message": "No execution run has been recorded yet.",
+                "latestRun": None,
+                "intentCount": 0,
+                "submittedCount": 0,
+                "simulatedCount": 0,
+                "refusedCount": 0,
+                "intents": [],
+            }
+        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
+        latest = runs[0]
+        latest_intents = [intent for intent in intents if intent["execution_run_id"] == latest["id"]]
+        latest_intents.sort(key=lambda row: row.get("created_at"), reverse=True)
+        payload = execution_run_payload(latest, latest_intents[:100])
+        return {
+            "status": payload["status"],
+            "message": _execution_summary_message(payload),
+            "latestRun": payload,
+            "intentCount": payload["intentCount"],
+            "submittedCount": payload["submittedCount"],
+            "simulatedCount": payload["simulatedCount"],
+            "refusedCount": payload["refusedCount"],
+            "intents": payload["intents"],
+        }
+
+    def exit_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return latest open-position exit status for operations UI."""
+
+        try:
+            runs = self.registry.shared().exit_runs(environment=environment)
+            intents = self.registry.shared().exit_intents(environment=environment)
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Exit status is unavailable because persistence is offline.",
+                "latestRun": None,
+                "openPositionCount": 0,
+                "triggeredCount": 0,
+                "simulatedCount": 0,
+                "submittedCount": 0,
+                "refusedCount": 0,
+                "intents": [],
+            }
+        if not runs:
+            return {
+                "status": "idle",
+                "message": "No exit run has been recorded yet.",
+                "latestRun": None,
+                "openPositionCount": 0,
+                "triggeredCount": 0,
+                "simulatedCount": 0,
+                "submittedCount": 0,
+                "refusedCount": 0,
+                "intents": [],
+            }
+        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
+        latest = runs[0]
+        latest_intents = [intent for intent in intents if intent["exit_run_id"] == latest["id"]]
+        latest_intents.sort(key=lambda row: row.get("created_at"), reverse=True)
+        payload = exit_run_payload(latest, latest_intents[:100])
+        return {
+            "status": payload["status"],
+            "message": _exit_summary_message(payload),
+            "latestRun": payload,
+            "openPositionCount": payload["openPositionCount"],
+            "triggeredCount": payload["triggeredCount"],
+            "simulatedCount": payload["simulatedCount"],
+            "submittedCount": payload["submittedCount"],
+            "refusedCount": payload["refusedCount"],
+            "intents": payload["intents"],
         }
 
     def historical_import_summary(self, environment: Environment) -> dict[str, Any]:
@@ -1593,6 +1848,18 @@ class RuntimeStatusService:
             and not credential["present"]
         ]
 
+    def _venue_credential_status(self, environment: Environment) -> dict[str, bool]:
+        credentials = self.credential_rows(environment)
+        status: dict[str, bool] = {}
+        for venue in (Venue.POLYMARKET_US.value, Venue.POLYMARKET_INTERNATIONAL.value, Venue.ALPACA.value):
+            required = [
+                credential
+                for credential in credentials
+                if credential["venue"] == venue and credential["requiredForLive"]
+            ]
+            status[venue] = bool(required) and all(credential["present"] for credential in required)
+        return status
+
     def _risk_value(self, risk_config: dict[str, Any], venue: str, field_name: str) -> str:
         value = risk_config.get(venue, {}).get(field_name)
         return str(value) if value is not None else "not configured"
@@ -1618,6 +1885,8 @@ class RuntimeStatusService:
         scanner_run: dict[str, Any],
         reasoning_run: dict[str, Any],
         strategy_run: dict[str, Any],
+        execution_run: dict[str, Any],
+        exit_run: dict[str, Any],
         actor: str,
     ) -> dict[str, Any]:
         pull_status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
@@ -1643,6 +1912,13 @@ class RuntimeStatusService:
                 "strategyVoteCount": strategy_run["voteCount"],
                 "strategyApprovedCount": strategy_run["approvedCount"],
                 "strategyRefusedCount": strategy_run["refusedCount"],
+                "orderIntentCount": execution_run["intentCount"],
+                "orderSubmittedCount": execution_run["submittedCount"],
+                "orderSimulatedCount": execution_run["simulatedCount"],
+                "orderRefusedCount": execution_run["refusedCount"],
+                "exitOpenPositionCount": exit_run["openPositionCount"],
+                "exitTriggeredCount": exit_run["triggeredCount"],
+                "exitRefusedCount": exit_run["refusedCount"],
                 "venues": venue_names,
             },
             "created_at": completed_at,
@@ -1656,6 +1932,8 @@ class RuntimeStatusService:
             scanner_run=scanner_run,
             reasoning_run=reasoning_run,
             strategy_run=strategy_run,
+            execution_run=execution_run,
+            exit_run=exit_run,
             candidate_count=candidate_count,
             market_data_status=pull_status,
         )
@@ -1678,6 +1956,8 @@ class RuntimeStatusService:
         scanner_run: dict[str, Any],
         reasoning_run: dict[str, Any],
         strategy_run: dict[str, Any],
+        execution_run: dict[str, Any],
+        exit_run: dict[str, Any],
         candidate_count: int,
         market_data_status: str,
     ) -> list[dict[str, Any]]:
@@ -1726,6 +2006,24 @@ class RuntimeStatusService:
             if value
         ]
         strategy_message = _pipeline_strategy_consensus_message(strategy_run)
+        execution_record_ids = [
+            value
+            for value in (
+                [execution_run.get("id")]
+                + [intent.get("id") for intent in execution_run.get("intents", [])]
+            )
+            if value
+        ]
+        execution_message = _pipeline_execution_message(execution_run)
+        exit_record_ids = [
+            value
+            for value in (
+                [exit_run.get("id")]
+                + [intent.get("id") for intent in exit_run.get("intents", [])]
+            )
+            if value
+        ]
+        exit_message = _pipeline_exit_message(exit_run)
         stage_payloads = {
             "data_fetch": {
                 "status": _pipeline_data_fetch_status(market_data_status),
@@ -1760,23 +2058,30 @@ class RuntimeStatusService:
                 "record_ids": reasoning_record_ids,
             },
             "execution": {
-                "status": _pipeline_strategy_consensus_status(
-                    str(strategy_run.get("status", "idle"))
-                ),
-                "message": strategy_message,
+                "status": _pipeline_lifecycle_status(str(execution_run.get("status", "idle"))),
+                "message": execution_message,
                 "metrics": {
                     "voteCount": strategy_run.get("voteCount", 0),
                     "approvedCount": strategy_run.get("approvedCount", 0),
                     "refusedCount": strategy_run.get("refusedCount", 0),
-                    "orderIntentCount": 0,
+                    "orderIntentCount": execution_run.get("intentCount", 0),
+                    "submittedCount": execution_run.get("submittedCount", 0),
+                    "simulatedCount": execution_run.get("simulatedCount", 0),
+                    "orderRefusedCount": execution_run.get("refusedCount", 0),
                 },
-                "record_ids": strategy_record_ids,
+                "record_ids": strategy_record_ids + execution_record_ids,
             },
             "exit": {
-                "status": "waiting",
-                "message": "Exit checks are waiting for open-position monitoring.",
-                "metrics": {"openPositionCount": 0},
-                "record_ids": [],
+                "status": _pipeline_exit_status(str(exit_run.get("status", "idle"))),
+                "message": exit_message,
+                "metrics": {
+                    "openPositionCount": exit_run.get("openPositionCount", 0),
+                    "triggeredCount": exit_run.get("triggeredCount", 0),
+                    "simulatedCount": exit_run.get("simulatedCount", 0),
+                    "submittedCount": exit_run.get("submittedCount", 0),
+                    "exitRefusedCount": exit_run.get("refusedCount", 0),
+                },
+                "record_ids": exit_record_ids,
             },
         }
         rows = []
@@ -2746,6 +3051,26 @@ def _pipeline_strategy_consensus_status(strategy_status: str) -> str:
     return "waiting"
 
 
+def _pipeline_lifecycle_status(execution_status: str) -> str:
+    if execution_status in {"completed", "refused"}:
+        return "completed"
+    if execution_status == "partial":
+        return "partial"
+    if execution_status in {"failed", "blocked", "unavailable"}:
+        return "blocked"
+    return "waiting"
+
+
+def _pipeline_exit_status(exit_status: str) -> str:
+    if exit_status in {"completed", "no_positions", "no_triggers", "refused"}:
+        return "completed"
+    if exit_status == "partial":
+        return "partial"
+    if exit_status in {"failed", "blocked", "unavailable"}:
+        return "blocked"
+    return "waiting"
+
+
 def _pipeline_reasoning_message(reasoning_run: dict[str, Any]) -> str:
     status = str(reasoning_run.get("status", "idle"))
     if status == "no_candidates":
@@ -2777,10 +3102,45 @@ def _pipeline_strategy_consensus_message(strategy_run: dict[str, Any]) -> str:
     if status in {"approved", "refused", "partial"}:
         return (
             f"Strategy consensus recorded {votes} vote{'' if votes == 1 else 's'}, "
-            f"approved {approved}, and refused {refused}. Risk sizing and order intents "
-            "are still pending."
+            f"approved {approved}, and refused {refused}."
         )
     return "Strategy consensus is waiting for scored reasoning output."
+
+
+def _pipeline_execution_message(execution_run: dict[str, Any]) -> str:
+    status = str(execution_run.get("status", "idle"))
+    if status == "no_consensus":
+        return "Execution had no approved strategy consensus output to size."
+    if status == "no_intents":
+        return "Execution ran but no order intents were created."
+    intents = int(execution_run.get("intentCount", 0))
+    simulated = int(execution_run.get("simulatedCount", 0))
+    submitted = int(execution_run.get("submittedCount", 0))
+    refused = int(execution_run.get("refusedCount", 0))
+    if intents:
+        return (
+            f"Execution recorded {intents} order intent{'' if intents == 1 else 's'}, "
+            f"simulated {simulated}, submitted {submitted}, and refused {refused}."
+        )
+    return "Execution is waiting for approved consensus output."
+
+
+def _pipeline_exit_message(exit_run: dict[str, Any]) -> str:
+    status = str(exit_run.get("status", "idle"))
+    if status == "no_positions":
+        return "Exit monitor found no open positions."
+    if status == "no_triggers":
+        return "Exit monitor found open positions, but no exit trigger fired."
+    triggered = int(exit_run.get("triggeredCount", 0))
+    simulated = int(exit_run.get("simulatedCount", 0))
+    submitted = int(exit_run.get("submittedCount", 0))
+    refused = int(exit_run.get("refusedCount", 0))
+    if triggered:
+        return (
+            f"Exit monitor recorded {triggered} exit intent{'' if triggered == 1 else 's'}, "
+            f"simulated {simulated}, submitted {submitted}, and refused {refused}."
+        )
+    return "Exit monitor is waiting for open-position data."
 
 
 def _strategy_consensus_summary_message(strategy_run: dict[str, Any]) -> str:
@@ -2796,6 +3156,20 @@ def _strategy_consensus_summary_message(strategy_run: dict[str, Any]) -> str:
         f"Latest strategy consensus recorded {votes} vote{'' if votes == 1 else 's'}, "
         f"approved {approved}, and refused {refused} before risk sizing."
     )
+
+
+def _execution_summary_message(execution_run: dict[str, Any]) -> str:
+    status = str(execution_run.get("status", "idle"))
+    if status == "idle":
+        return "No execution run has been recorded yet."
+    return _pipeline_execution_message(execution_run)
+
+
+def _exit_summary_message(exit_run: dict[str, Any]) -> str:
+    status = str(exit_run.get("status", "idle"))
+    if status == "idle":
+        return "No exit run has been recorded yet."
+    return _pipeline_exit_message(exit_run)
 
 
 def _as_money(value: Any) -> Decimal:

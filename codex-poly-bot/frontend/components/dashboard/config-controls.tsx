@@ -24,6 +24,17 @@ type ConfigPatchDraft = {
 };
 
 type ConfigValue = string | boolean | number | string[] | Record<string, unknown>;
+type PresetMetadata = {
+  presetName: string;
+  status: string;
+  source: string;
+  symbolCount: number;
+  snapshotSymbolCount: number;
+  customSymbolCount: number;
+  refreshedAt: string | null;
+  ageHours: number | null;
+  message: string | null;
+};
 
 export type ConfigSnapshot = {
   environment: string;
@@ -66,6 +77,10 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const selectedDetail = CONFIG_PATH_DETAILS[path];
   const currentValue = valueAtPath(settings, path);
   const resolvedSymbols = symbolsFromValue(valueAtPath(settings, "alpaca.symbol_universe"));
+  const presetMetadata = presetMetadataFromValue(valueAtPath(settings, "alpaca.preset_metadata"));
+  const refreshEnabled = valueAtPath(settings, "alpaca.preset_refresh.enabled");
+  const refreshCadence = valueAtPath(settings, "alpaca.preset_refresh.cadence_hours");
+  const staleAfter = valueAtPath(settings, "alpaca.preset_refresh.stale_after_hours");
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -225,6 +240,26 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           Resolved symbols: {resolvedSymbols.length}. First symbols:{" "}
           {resolvedSymbols.slice(0, 12).join(", ") || "none"}.
         </p>
+        <div className="preset-refresh-summary">
+          <span>
+            Refresh {refreshEnabled === false ? "disabled" : "enabled"}.
+          </span>
+          <span>Cadence {String(refreshCadence ?? 24)}h.</span>
+          <span>Stale after {String(staleAfter ?? 168)}h.</span>
+        </div>
+        {presetMetadata.length ? (
+          <div className="preset-metadata-list" aria-label="Preset membership snapshots">
+            {presetMetadata.map((preset) => (
+              <div key={preset.presetName}>
+                <strong>{preset.presetName}</strong>
+                <span>{preset.symbolCount} symbols</span>
+                <span>{preset.status}</span>
+                <span>{preset.source}</span>
+                <span>{formatPresetAge(preset.ageHours)}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <button className="button primary" type="submit">
           Save stock universe
         </button>
@@ -500,12 +535,50 @@ function symbolsFromValue(value: unknown): string[] {
   return value.map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean);
 }
 
+function presetMetadataFromValue(value: unknown): PresetMetadata[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!isPlainObject(item)) {
+        return null;
+      }
+      return {
+        presetName: String(item.presetName ?? ""),
+        status: String(item.status ?? ""),
+        source: String(item.source ?? ""),
+        symbolCount: Number(item.symbolCount ?? 0),
+        snapshotSymbolCount: Number(item.snapshotSymbolCount ?? 0),
+        customSymbolCount: Number(item.customSymbolCount ?? 0),
+        refreshedAt: typeof item.refreshedAt === "string" ? item.refreshedAt : null,
+        ageHours: Number.isFinite(Number(item.ageHours)) ? Number(item.ageHours) : null,
+        message: typeof item.message === "string" ? item.message : null,
+      };
+    })
+    .filter((item): item is PresetMetadata => Boolean(item && item.presetName));
+}
+
+function formatPresetAge(ageHours: number | null | undefined): string {
+  if (ageHours === null || ageHours === undefined) {
+    return "age unknown";
+  }
+  if (ageHours < 1) {
+    return "fresh";
+  }
+  if (ageHours < 48) {
+    return `${ageHours}h old`;
+  }
+  return `${Math.floor(ageHours / 24)}d old`;
+}
+
 function pathRequiresJson(path: AllowedConfigPath): boolean {
   return (
     path === "alpaca.symbol_universe" ||
     path === "alpaca.symbol_presets" ||
     path === "alpaca.custom_symbols" ||
     path === "alpaca.custom_presets" ||
+    path === "alpaca.preset_refresh.sources" ||
     path === "notifications.recipients"
   );
 }
