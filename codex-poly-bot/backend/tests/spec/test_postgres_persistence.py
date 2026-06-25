@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -132,6 +133,7 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "openai.alpaca_reconciliation_mismatches" in plan.table_names
     assert "shared.job_runs" in plan.table_names
     assert "shared.comparison_metric_snapshots" in plan.table_names
+    assert "shared.economics_snapshots" in plan.table_names
     assert "shared.pipeline_runs" in plan.table_names
     assert "shared.pipeline_steps" in plan.table_names
     assert "openai.order_intents" in plan.table_names
@@ -180,6 +182,68 @@ def test_req_db_003_01_shared_config_audit_system_health_records_persistence_run
     assert len(registry.state.rows("shared.config_versions")) == 1
     assert len(registry.state.rows("shared.audit_events")) == 1
     assert len(registry.state.rows("shared.system_health")) == 1
+
+def test_req_db_003_03_shared_economics_snapshots_persist_monthly_history() -> None:
+    """TST-REQ-DB-003-03: Validates REQ-DB-003 and REQ-UI-010
+
+    Given: profitability snapshots for two months
+    When: monthly economics history is read
+    Then: only the selected month's stored ROI data is returned
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+
+    shared.record_economics_snapshot(
+        environment=Environment.DEVELOPMENT,
+        month_key="2026-05",
+        trading_realized_pnl_usd=Decimal("4.00"),
+        trading_unrealized_pnl_usd=Decimal("1.00"),
+        trading_total_pnl_usd=Decimal("5.00"),
+        ai_cost_usd=Decimal("0.20"),
+        ai_prompt_tokens=100,
+        ai_completion_tokens=40,
+        ai_total_tokens=140,
+        aws_daily_cost_usd=Decimal("1.00"),
+        aws_month_to_date_cost_usd=Decimal("30.00"),
+        aws_source="user preference fallback",
+        aws_scope="fallback",
+        aws_estimated=True,
+        net_after_costs_usd=Decimal("3.80"),
+        profitability_status="profitable",
+        payload={"month": "2026-05"},
+        created_at=datetime(2026, 5, 31, tzinfo=UTC),
+    )
+    shared.record_economics_snapshot(
+        environment=Environment.DEVELOPMENT,
+        month_key="2026-06",
+        trading_realized_pnl_usd=Decimal("12.50"),
+        trading_unrealized_pnl_usd=Decimal("1.25"),
+        trading_total_pnl_usd=Decimal("13.75"),
+        ai_cost_usd=Decimal("0.45"),
+        ai_prompt_tokens=1200,
+        ai_completion_tokens=300,
+        ai_total_tokens=1500,
+        aws_daily_cost_usd=Decimal("1.00"),
+        aws_month_to_date_cost_usd=Decimal("30.00"),
+        aws_source="user preference fallback",
+        aws_scope="fallback",
+        aws_estimated=True,
+        net_after_costs_usd=Decimal("12.30"),
+        profitability_status="profitable",
+        payload={"month": "2026-06"},
+        created_at=datetime(2026, 6, 25, tzinfo=UTC),
+    )
+
+    rows = shared.economics_snapshots(
+        environment=Environment.DEVELOPMENT,
+        month_key="2026-06",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["month_key"] == "2026-06"
+    assert rows[0]["ai_total_tokens"] == 1500
+    assert rows[0]["aws_month_to_date_cost_usd"] == Decimal("30.00")
+    assert rows[0]["net_after_costs_usd"] == Decimal("12.30")
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003
