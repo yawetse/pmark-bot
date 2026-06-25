@@ -692,6 +692,12 @@ def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() ->
     assert payload["economics"]["aws"]["scope"] == "fallback"
     assert payload["economics"]["trading"]["totalPnlUsd"] == "13.75"
     assert payload["economics"]["profitability"]["netAfterRecordedCostsUsd"] == "12.30"
+    assert payload["economics"]["history"]["stored"] is True
+    snapshot_rows = state.rows("shared.economics_snapshots")
+    assert len(snapshot_rows) == 1
+    assert snapshot_rows[0]["ai_cost_usd"] == Decimal("0.45")
+    assert snapshot_rows[0]["aws_daily_cost_usd"] == Decimal("1.00")
+    assert snapshot_rows[0]["net_after_costs_usd"] == Decimal("12.30")
 
 
 def test_req_ui_010_03_dashboard_summary_uses_real_aws_billing_when_available() -> None:
@@ -757,6 +763,20 @@ def test_req_ui_010_03_dashboard_summary_uses_real_aws_billing_when_available() 
     assert payload["aws"]["monthToDateCostUsd"] == "42.00"
     assert payload["aws"]["fallbackDailyCostUsd"] == "1.00"
     assert payload["profitability"]["netAfterRecordedCostsUsd"] == "10.80"
+    snapshot_rows = state.rows("shared.economics_snapshots")
+    assert snapshot_rows[0]["aws_source"] == "aws cost explorer"
+    assert snapshot_rows[0]["aws_month_to_date_cost_usd"] == Decimal("42.00")
+
+    history = client.get(
+        f"/api/economics/history?month={snapshot_rows[0]['month_key']}",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    history_payload = history.json()
+
+    assert history.status_code == 200
+    assert history_payload["count"] == 1
+    assert history_payload["snapshots"][0]["awsMonthToDateCostUsd"] == "42.00"
+    assert history_payload["snapshots"][0]["netAfterRecordedCostsUsd"] == "10.80"
 
 
 def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch) -> None:

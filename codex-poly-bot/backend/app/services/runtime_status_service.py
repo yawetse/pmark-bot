@@ -81,6 +81,7 @@ class RuntimeStatusService:
     PIPELINE_RUNS_TABLE = f"{SHARED_SCHEMA}.pipeline_runs"
     PIPELINE_STEPS_TABLE = f"{SHARED_SCHEMA}.pipeline_steps"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
+    ECONOMICS_SNAPSHOTS_TABLE = f"{SHARED_SCHEMA}.economics_snapshots"
     PIPELINE_STAGES = (
         ("data_fetch", 1, "Data Fetch"),
         ("scanner", 2, "Scanner"),
@@ -685,6 +686,7 @@ class RuntimeStatusService:
         REQ: REQ-UI-004, REQ-UI-010, REQ-CMP-002, REQ-OBS-005
         """
 
+        now = datetime.now(UTC)
         ai_usage = self._ai_usage_summary(environment, config_payload)
         trading = self._trading_pnl_summary()
         aws_cost = self._aws_cost_summary(environment=environment, preferences=preferences)
@@ -692,9 +694,9 @@ class RuntimeStatusService:
         recorded_costs = _as_money(ai_usage["totalCostUsd"]) + daily_aws
         trading_total = _as_money(trading["totalPnlUsd"])
         net = trading_total - recorded_costs
-        return {
+        payload = {
             "environment": environment.value,
-            "generatedAt": datetime.now(UTC).isoformat(),
+            "generatedAt": now.isoformat(),
             "trading": trading,
             "ai": ai_usage,
             "aws": aws_cost,
@@ -703,6 +705,53 @@ class RuntimeStatusService:
                 "status": "profitable" if net > 0 else ("losing" if net < 0 else "flat"),
                 "costBasis": "trading P&L minus recorded AI cost and one day of AWS infrastructure cost",
             },
+        }
+        snapshot = self._record_economics_snapshot(
+            environment=environment,
+            payload=payload,
+            created_at=now,
+        )
+        month_key = _month_key(now)
+        payload["history"] = {
+            "source": self.ECONOMICS_SNAPSHOTS_TABLE,
+            "stored": snapshot is not None,
+            "latestSnapshotId": snapshot.get("id") if snapshot else None,
+            "monthKey": month_key,
+            "snapshotsThisMonth": len(self._economics_snapshot_rows(environment, month_key=month_key)),
+            "message": (
+                "Economics snapshot stored for monthly cost history."
+                if snapshot
+                else "Economics snapshot storage is unavailable."
+            ),
+        }
+        return payload
+
+    def economics_history(
+        self,
+        *,
+        environment: Environment,
+        month_key: str | None = None,
+        limit: int = 31,
+    ) -> dict[str, Any]:
+        """Return stored economics snapshots for a month.
+
+        REQ: REQ-UI-010, REQ-OBS-005
+        """
+
+        selected_month = _normalize_month_key(month_key)
+        rows = self._economics_snapshot_rows(environment, month_key=selected_month)
+        rows.sort(key=lambda row: row.get("created_at"), reverse=True)
+        capped_limit = min(max(1, int(limit)), 366)
+        snapshots = [
+            self._economics_snapshot_payload(row)
+            for row in rows[:capped_limit]
+        ]
+        return {
+            "environment": environment.value,
+            "source": self.ECONOMICS_SNAPSHOTS_TABLE,
+            "monthKey": selected_month,
+            "count": len(snapshots),
+            "snapshots": snapshots,
         }
 
     def loop_observability(
@@ -1497,6 +1546,70 @@ class RuntimeStatusService:
             "message": message,
         }
 
+    def _record_economics_snapshot(
+        self,
+        *,
+        environment: Environment,
+        payload: dict[str, Any],
+        created_at: datetime,
+    ) -> dict[str, Any] | None:
+        try:
+            return self.registry.shared().record_economics_snapshot(
+                environment=environment,
+                month_key=_month_key(created_at),
+                trading_realized_pnl_usd=_as_money(payload["trading"]["realizedPnlUsd"]),
+                trading_unrealized_pnl_usd=_as_money(payload["trading"]["unrealizedPnlUsd"]),
+                trading_total_pnl_usd=_as_money(payload["trading"]["totalPnlUsd"]),
+                ai_cost_usd=_as_money(payload["ai"]["totalCostUsd"]),
+                ai_prompt_tokens=_as_int(payload["ai"]["promptTokens"]),
+                ai_completion_tokens=_as_int(payload["ai"]["completionTokens"]),
+                ai_total_tokens=_as_int(payload["ai"]["totalTokens"]),
+                aws_daily_cost_usd=_as_money(payload["aws"]["dailyInfraCostEstimateUsd"]),
+                aws_month_to_date_cost_usd=_as_money(payload["aws"]["monthToDateCostUsd"]),
+                aws_source=str(payload["aws"]["source"]),
+                aws_scope=str(payload["aws"]["scope"]),
+                aws_estimated=bool(payload["aws"]["estimated"]),
+                net_after_costs_usd=_as_money(payload["profitability"]["netAfterRecordedCostsUsd"]),
+                profitability_status=str(payload["profitability"]["status"]),
+                payload=payload,
+                created_at=created_at,
+            )
+        except PersistenceUnavailableError:
+            return None
+
+    def _economics_snapshot_rows(
+        self,
+        environment: Environment,
+        *,
+        month_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            return self.registry.shared().economics_snapshots(
+                environment=environment,
+                month_key=month_key,
+            )
+        except PersistenceUnavailableError:
+            return []
+
+    def _economics_snapshot_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "environment": row["environment"],
+            "monthKey": row["month_key"],
+            "createdAt": _isoformat_or_none(row.get("created_at")),
+            "tradingPnlUsd": _money(_as_money(row.get("trading_total_pnl_usd", "0"))),
+            "aiCostUsd": _money(_as_money(row.get("ai_cost_usd", "0"))),
+            "aiPromptTokens": _as_int(row.get("ai_prompt_tokens")),
+            "aiCompletionTokens": _as_int(row.get("ai_completion_tokens")),
+            "aiTotalTokens": _as_int(row.get("ai_total_tokens")),
+            "awsDailyCostUsd": _money(_as_money(row.get("aws_daily_cost_usd", "0"))),
+            "awsMonthToDateCostUsd": _money(_as_money(row.get("aws_month_to_date_cost_usd", "0"))),
+            "awsSource": row.get("aws_source", "unknown"),
+            "awsScope": row.get("aws_scope", "unknown"),
+            "awsEstimated": bool(row.get("aws_estimated", True)),
+            "netAfterRecordedCostsUsd": _money(_as_money(row.get("net_after_costs_usd", "0"))),
+            "status": row.get("profitability_status", "unknown"),
+        }
 
     def _ai_usage_summary(
         self,
@@ -1883,6 +1996,24 @@ def _aws_fallback_payload(
         "estimated": True,
         "message": message,
     }
+
+
+def _month_key(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y-%m")
+
+
+def _normalize_month_key(value: str | None) -> str:
+    if value is None:
+        return _month_key(datetime.now(UTC))
+    candidate = value.strip()
+    parts = candidate.split("-")
+    if len(parts) != 2:
+        return _month_key(datetime.now(UTC))
+    try:
+        normalized = datetime(int(parts[0]), int(parts[1]), 1, tzinfo=UTC)
+    except ValueError:
+        return _month_key(datetime.now(UTC))
+    return _month_key(normalized)
 
 
 def _safe_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:

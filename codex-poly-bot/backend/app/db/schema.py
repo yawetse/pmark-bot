@@ -223,6 +223,30 @@ def _shared_tables() -> list[Table]:
             schema=SHARED_SCHEMA,
         ),
         Table(
+            "economics_snapshots",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("month_key", String, nullable=False),
+            Column("trading_realized_pnl_usd", Numeric(18, 8), nullable=False),
+            Column("trading_unrealized_pnl_usd", Numeric(18, 8), nullable=False),
+            Column("trading_total_pnl_usd", Numeric(18, 8), nullable=False),
+            Column("ai_cost_usd", Numeric(18, 8), nullable=False),
+            Column("ai_prompt_tokens", Integer, nullable=False),
+            Column("ai_completion_tokens", Integer, nullable=False),
+            Column("ai_total_tokens", Integer, nullable=False),
+            Column("aws_daily_cost_usd", Numeric(18, 8), nullable=False),
+            Column("aws_month_to_date_cost_usd", Numeric(18, 8), nullable=False),
+            Column("aws_source", String, nullable=False),
+            Column("aws_scope", String, nullable=False),
+            Column("aws_estimated", Boolean, nullable=False),
+            Column("net_after_costs_usd", Numeric(18, 8), nullable=False),
+            Column("profitability_status", String, nullable=False),
+            Column("payload", JSONB, nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
             "ai_usage_events",
             metadata,
             Column("id", String, primary_key=True),
@@ -360,6 +384,13 @@ Index(
     "ix_audit_events_environment_created_at",
     metadata.tables["shared.audit_events"].c.environment,
     metadata.tables["shared.audit_events"].c.created_at,
+)
+
+Index(
+    "ix_economics_snapshots_environment_month_created_at",
+    metadata.tables["shared.economics_snapshots"].c.environment,
+    metadata.tables["shared.economics_snapshots"].c.month_key,
+    metadata.tables["shared.economics_snapshots"].c.created_at,
 )
 
 
