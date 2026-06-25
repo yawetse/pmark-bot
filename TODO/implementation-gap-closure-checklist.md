@@ -53,20 +53,20 @@ Polymarket:
 - [x] Add schema for wallet performance stats.
 - [x] Add schema for target wallet lists and ranking snapshots.
 - [x] Add checkpoint state for historical backfill and incremental sync.
-- [ ] Implement Gamma market metadata backfill with resumable pagination.
-- [ ] Implement Polygon event backfill with block-window retries and cursor persistence.
-- [ ] Implement event decoding tests using fixture logs.
-- [ ] Implement market metadata join tests using fixture markets.
-- [ ] Implement wallet performance ranking tests, including the 100-trade and 70% win-rate thresholds.
-- [ ] Show historical import status in the dashboard.
+- [x] Implement Gamma market metadata backfill with resumable pagination.
+- [x] Implement Polygon event backfill with block-window retries and cursor persistence.
+- [x] Implement event decoding tests using fixture logs.
+- [x] Implement market metadata join tests using fixture markets.
+- [x] Implement wallet performance ranking tests, including the 100-trade and 70% win-rate thresholds.
+- [x] Show historical import status in the dashboard.
 
 Stocks:
 
-- [ ] Add schema for Alpaca historical fills, orders, positions, and account snapshots.
-- [ ] Add schema for daily and intraday stock bars used for scanner backtests.
-- [ ] Implement Alpaca historical order and fill import for paper and live accounts.
-- [ ] Implement realized and unrealized stock P&L reconstruction.
-- [ ] Show broker history import status in the dashboard.
+- [x] Add schema for Alpaca historical fills, orders, positions, and account snapshots.
+- [x] Add schema for daily and intraday stock bars used for scanner backtests.
+- [x] Implement Alpaca historical order and fill import for paper and live accounts.
+- [x] Implement realized and unrealized stock P&L reconstruction.
+- [x] Show broker history import status in the dashboard.
 
 ## Phase 2: Scanner
 
@@ -199,7 +199,7 @@ Start with Phase 1 Polymarket data foundation:
 
 - [x] Add schema for Gamma market metadata, raw chain fill events, processed trades, wallet stats, target wallet snapshots, and importer checkpoints.
 - [x] Add a clean-room historical importer service interface with fixture-based tests.
-- [ ] Implement Gamma market metadata backfill first.
-- [ ] Implement Polygon `OrderFilled` backfill second.
-- [ ] Implement wallet ranking third.
-- [ ] Add a dashboard import status card after the backend records exist.
+- [x] Implement Gamma market metadata backfill first.
+- [x] Implement Polygon `OrderFilled` backfill second.
+- [x] Implement wallet ranking third.
+- [x] Add a dashboard import status card after the backend records exist.
