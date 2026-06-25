@@ -681,6 +681,56 @@ class PolymarketHistoryImporter:
             source_stat_ids=[row["id"] for row in selected],
         )
 
+    def rebuild_wallet_performance_stats(
+        self,
+        *,
+        environment: Environment,
+        source: str = "polymarket_trades",
+        calculated_at: datetime | None = None,
+    ) -> list[dict]:
+        """Aggregate persisted realized trades into wallet performance rows."""
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for trade in self.registry.shared().polymarket_trades(environment=environment):
+            if trade.get("realized_pnl_usd") is None:
+                continue
+            wallet = _required_text(trade.get("wallet_address"), "wallet address").lower()
+            grouped.setdefault(wallet, []).append(trade)
+
+        observed_at = calculated_at or datetime.now(UTC)
+        stats: list[dict] = []
+        for wallet, trades in grouped.items():
+            realized_values = [
+                Decimal(str(trade["realized_pnl_usd"]))
+                for trade in trades
+                if trade.get("realized_pnl_usd") is not None
+            ]
+            if not realized_values:
+                continue
+            trade_count = len(realized_values)
+            win_count = sum(1 for value in realized_values if value > 0)
+            total_realized = sum(realized_values, Decimal("0"))
+            win_rate = Decimal(win_count) / Decimal(trade_count)
+            stats.append(
+                self.registry.shared().record_polymarket_wallet_performance_stat(
+                    environment=environment,
+                    wallet_address=wallet,
+                    trade_count=trade_count,
+                    win_rate=win_rate,
+                    total_realized_pnl_usd=total_realized,
+                    source=source,
+                    calculated_at=observed_at,
+                )
+            )
+        stats.sort(
+            key=lambda row: (
+                Decimal(str(row["total_realized_pnl_usd"])),
+                int(row["trade_count"]),
+            ),
+            reverse=True,
+        )
+        return stats
+
 
 def _first_text(*values: Any) -> str | None:
     for value in values:

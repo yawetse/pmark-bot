@@ -472,6 +472,78 @@ def test_req_dat_009_09_polygon_order_filled_backfill_records_rate_limit() -> No
     assert checkpoint["cursor_value"] == "99"
 
 
+def test_req_dat_009_10_wallet_performance_rebuild_feeds_target_ranking() -> None:
+    """TST-REQ-DAT-009-10: Validates REQ-DAT-009 and REQ-STR-002
+
+    Given: realized historical trade rows for several Polymarket wallets
+    When: wallet performance stats and the target wallet snapshot are rebuilt
+    Then: only wallets with 100+ realized trades and 70%+ win rate are ranked by P&L
+    """
+    registry = RepositoryRegistry()
+    importer = PolymarketHistoryImporter(registry)
+    observed = datetime(2026, 6, 25, 14, 30, tzinfo=UTC)
+    wallet_high_pnl = "0x4444444444444444444444444444444444444444"
+    wallet_lower_pnl = "0x5555555555555555555555555555555555555555"
+    wallet_low_win_rate = "0x6666666666666666666666666666666666666666"
+    wallet_low_count = "0x7777777777777777777777777777777777777777"
+
+    _record_realized_trades(
+        importer,
+        wallet_address=wallet_high_pnl,
+        trade_count=120,
+        win_count=90,
+        win_pnl=Decimal("1.00"),
+        loss_pnl=Decimal("-0.10"),
+        observed=observed,
+    )
+    _record_realized_trades(
+        importer,
+        wallet_address=wallet_lower_pnl,
+        trade_count=100,
+        win_count=80,
+        win_pnl=Decimal("0.75"),
+        loss_pnl=Decimal("-0.25"),
+        observed=observed,
+    )
+    _record_realized_trades(
+        importer,
+        wallet_address=wallet_low_win_rate,
+        trade_count=100,
+        win_count=69,
+        win_pnl=Decimal("2.00"),
+        loss_pnl=Decimal("-0.10"),
+        observed=observed,
+    )
+    _record_realized_trades(
+        importer,
+        wallet_address=wallet_low_count,
+        trade_count=99,
+        win_count=99,
+        win_pnl=Decimal("5.00"),
+        loss_pnl=Decimal("-0.01"),
+        observed=observed,
+    )
+
+    stats = importer.rebuild_wallet_performance_stats(
+        environment=Environment.DEVELOPMENT,
+        calculated_at=observed,
+    )
+    snapshot = importer.build_target_wallet_snapshot(environment=Environment.DEVELOPMENT)
+
+    stats_by_wallet = {row["wallet_address"]: row for row in stats}
+    assert stats_by_wallet[wallet_high_pnl]["trade_count"] == 120
+    assert stats_by_wallet[wallet_high_pnl]["win_rate"] == Decimal("0.75")
+    assert stats_by_wallet[wallet_high_pnl]["total_realized_pnl_usd"] == Decimal("87.00")
+    assert stats_by_wallet[wallet_lower_pnl]["trade_count"] == 100
+    assert stats_by_wallet[wallet_lower_pnl]["win_rate"] == Decimal("0.8")
+    assert stats_by_wallet[wallet_lower_pnl]["total_realized_pnl_usd"] == Decimal("55.00")
+    assert snapshot["wallet_count"] == 2
+    assert [wallet["walletAddress"] for wallet in snapshot["wallets"]] == [
+        wallet_high_pnl,
+        wallet_lower_pnl,
+    ]
+
+
 def _gamma_market(market_id: str, condition_id: str) -> dict:
     return {
         "id": market_id,
@@ -529,3 +601,35 @@ def _word(value: int) -> str:
 
 def _request_json(request: httpx.Request) -> dict:
     return json.loads(request.content.decode())
+
+
+def _record_realized_trades(
+    importer: PolymarketHistoryImporter,
+    *,
+    wallet_address: str,
+    trade_count: int,
+    win_count: int,
+    win_pnl: Decimal,
+    loss_pnl: Decimal,
+    observed: datetime,
+) -> None:
+    for index in range(trade_count):
+        realized_pnl = win_pnl if index < win_count else loss_pnl
+        importer.record_processed_trade(
+            environment=Environment.DEVELOPMENT,
+            trade={
+                "market_id": f"market-{wallet_address[-4:]}",
+                "condition_id": f"0xcondition{wallet_address[-4:]}",
+                "asset_id": f"token-{wallet_address[-4:]}",
+                "wallet_address": wallet_address,
+                "side": "BUY",
+                "price": "0.50",
+                "size": "1",
+                "realized_pnl_usd": str(realized_pnl),
+                "outcome": "YES",
+                "role": "maker",
+                "transaction_hash": f"0xtx{wallet_address[-4:]}{index}",
+                "block_number": 90000000 + index,
+                "traded_at": observed.isoformat(),
+            },
+        )
