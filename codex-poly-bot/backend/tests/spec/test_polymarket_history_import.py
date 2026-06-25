@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+import json
 
 import httpx
 
@@ -12,9 +13,18 @@ from app.domain import Environment
 from app.services import (
     POLYMARKET_CTF_EXCHANGE_V2,
     POLYMARKET_GAMMA_MARKET_SOURCE,
+    POLYMARKET_POLYGON_ORDER_FILLED_SOURCE,
     PolymarketGammaMarketBackfiller,
     PolymarketHistoryImporter,
+    PolymarketPolygonOrderFilledBackfiller,
+    decode_order_filled_v2_log,
 )
+
+
+ORDER_FILLED_TOPIC = "0x" + "11" * 32
+ORDER_HASH_TOPIC = "0x" + "22" * 32
+MAKER_ADDRESS = "0xabcDEF0000000000000000000000000000000001"
+TAKER_ADDRESS = "0xabcDEF0000000000000000000000000000000002"
 
 
 def test_req_dat_009_01_polymarket_history_importer_persists_fixture_step_zero_data() -> None:
@@ -313,6 +323,155 @@ def test_req_dat_009_06_gamma_market_backfill_records_rate_limit_status() -> Non
     assert checkpoint["cursor_value"] == "0"
 
 
+def test_req_dat_009_07_decodes_order_filled_v2_fixture_log() -> None:
+    """TST-REQ-DAT-009-07: Validates REQ-DAT-009
+
+    Given: a CTF Exchange V2 OrderFilled fixture log
+    When: the log is decoded and stored through the importer boundary
+    Then: indexed addresses, token id, amounts, and hex block fields are normalized
+    """
+    registry = RepositoryRegistry()
+    importer = PolymarketHistoryImporter(registry)
+    raw_log = _order_filled_log(
+        block_number=84902321,
+        log_index=4,
+        transaction_hash="0xtx1",
+        token_id=12345,
+        maker_amount=1_000_000,
+        taker_amount=420_000,
+    )
+
+    decoded = decode_order_filled_v2_log(raw_log)
+    stored = importer.record_decoded_fill_event(
+        environment=Environment.DEVELOPMENT,
+        event=decoded,
+        block_timestamp=datetime(2026, 6, 25, 14, 0, tzinfo=UTC),
+    )
+
+    assert decoded["args"]["orderHash"] == ORDER_HASH_TOPIC
+    assert decoded["args"]["maker"] == MAKER_ADDRESS.lower()
+    assert decoded["args"]["taker"] == TAKER_ADDRESS.lower()
+    assert decoded["args"]["side"] == 0
+    assert decoded["args"]["tokenId"] == "12345"
+    assert decoded["args"]["makerAmountFilled"] == "1000000"
+    assert decoded["args"]["takerAmountFilled"] == "420000"
+    assert stored["block_number"] == 84902321
+    assert stored["log_index"] == 4
+    assert stored["maker_address"] == MAKER_ADDRESS.lower()
+    assert stored["taker_address"] == TAKER_ADDRESS.lower()
+    assert stored["asset_id"] == "12345"
+
+
+def test_req_dat_009_08_polygon_order_filled_backfill_splits_retry_windows() -> None:
+    """TST-REQ-DAT-009-08: Validates REQ-DAT-009
+
+    Given: Polygon RPC rejects a broad eth_getLogs range but accepts smaller ranges
+    When: the OrderFilled backfiller runs
+    Then: it retries split block windows, persists logs, and checkpoints the scanned block
+    """
+    registry = RepositoryRegistry()
+    observed = datetime(2026, 6, 25, 14, 10, tzinfo=UTC)
+    requested_ranges: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _request_json(request)
+        assert payload["method"] == "eth_getLogs"
+        params = payload["params"][0]
+        assert params["address"] == POLYMARKET_CTF_EXCHANGE_V2.lower()
+        assert params["topics"] == [ORDER_FILLED_TOPIC]
+        requested_ranges.append((params["fromBlock"], params["toBlock"]))
+        if params["fromBlock"] == "0x64" and params["toBlock"] == "0x68":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {"code": -32005, "message": "block range too large"},
+                },
+            )
+        if params["fromBlock"] == "0x64" and params["toBlock"] == "0x66":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 1, "result": [_order_filled_log(100, 1, "0xtx100")]},
+            )
+        if params["fromBlock"] == "0x67" and params["toBlock"] == "0x68":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": 1, "result": [_order_filled_log(104, 2, "0xtx104")]},
+            )
+        return httpx.Response(500, json={"error": "unexpected range"})
+
+    backfiller = PolymarketPolygonOrderFilledBackfiller(
+        registry,
+        rpc_url="https://polygon-rpc.test",
+        order_filled_topic=ORDER_FILLED_TOPIC,
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = backfiller.backfill_order_filled_events(
+        environment=Environment.DEVELOPMENT,
+        start_block=100,
+        end_block=104,
+        max_block_range=5,
+        max_windows=1,
+        fetched_at=observed,
+    )
+
+    rows = registry.state.rows("shared.polymarket_chain_fill_events")
+    checkpoint = registry.shared().historical_import_checkpoints(
+        environment=Environment.DEVELOPMENT
+    )[0]
+    assert requested_ranges == [("0x64", "0x68"), ("0x64", "0x66"), ("0x67", "0x68")]
+    assert summary.chain_fill_count == 2
+    assert summary.status == "complete"
+    assert summary.next_cursor == "104"
+    assert summary.source == (
+        f"{POLYMARKET_POLYGON_ORDER_FILLED_SOURCE}:"
+        f"{POLYMARKET_CTF_EXCHANGE_V2.lower()}:{ORDER_FILLED_TOPIC}"
+    )
+    assert [row["transaction_hash"] for row in rows] == ["0xtx100", "0xtx104"]
+    assert checkpoint["cursor_value"] == "104"
+    assert checkpoint["status"] == "complete"
+    assert checkpoint["last_success_at"] == observed
+
+
+def test_req_dat_009_09_polygon_order_filled_backfill_records_rate_limit() -> None:
+    """TST-REQ-DAT-009-09: Validates REQ-DAT-009
+
+    Given: Polygon RPC rate limits eth_getLogs
+    When: the OrderFilled backfiller runs
+    Then: no logs are stored and checkpoint status records the rate limit
+    """
+    registry = RepositoryRegistry()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "rate limited"})
+
+    backfiller = PolymarketPolygonOrderFilledBackfiller(
+        registry,
+        rpc_url="https://polygon-rpc.test",
+        order_filled_topic=ORDER_FILLED_TOPIC,
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = backfiller.backfill_order_filled_events(
+        environment=Environment.DEVELOPMENT,
+        start_block=100,
+        end_block=101,
+    )
+
+    checkpoint = registry.shared().historical_import_checkpoints(
+        environment=Environment.DEVELOPMENT
+    )[0]
+    assert summary.status == "rate_limited"
+    assert summary.error_code == "provider_rate_limited"
+    assert summary.chain_fill_count == 0
+    assert summary.next_cursor == "99"
+    assert registry.state.rows("shared.polymarket_chain_fill_events") == []
+    assert checkpoint["status"] == "rate_limited"
+    assert checkpoint["cursor_value"] == "99"
+
+
 def _gamma_market(market_id: str, condition_id: str) -> dict:
     return {
         "id": market_id,
@@ -326,3 +485,47 @@ def _gamma_market(market_id: str, condition_id: str) -> dict:
         "clobTokenIds": [f"{market_id}-yes", f"{market_id}-no"],
         "outcomes": ["YES", "NO"],
     }
+
+
+def _order_filled_log(
+    block_number: int,
+    log_index: int,
+    transaction_hash: str,
+    *,
+    token_id: int = 42,
+    maker_amount: int = 1_000_000,
+    taker_amount: int = 500_000,
+) -> dict:
+    return {
+        "address": POLYMARKET_CTF_EXCHANGE_V2,
+        "blockNumber": hex(block_number),
+        "blockHash": "0xblock",
+        "logIndex": hex(log_index),
+        "transactionHash": transaction_hash,
+        "topics": [
+            ORDER_FILLED_TOPIC,
+            ORDER_HASH_TOPIC,
+            _address_topic(MAKER_ADDRESS),
+            _address_topic(TAKER_ADDRESS),
+        ],
+        "data": "0x"
+        + _word(0)
+        + _word(token_id)
+        + _word(maker_amount)
+        + _word(taker_amount)
+        + _word(0)
+        + ("33" * 32)
+        + ("44" * 32),
+    }
+
+
+def _address_topic(address: str) -> str:
+    return "0x" + ("0" * 24) + address.lower().removeprefix("0x")
+
+
+def _word(value: int) -> str:
+    return f"{value:064x}"
+
+
+def _request_json(request: httpx.Request) -> dict:
+    return json.loads(request.content.decode())
