@@ -5,9 +5,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import httpx
+
 from app.db import RepositoryRegistry
 from app.domain import Environment
-from app.services import POLYMARKET_CTF_EXCHANGE_V2, PolymarketHistoryImporter
+from app.services import (
+    POLYMARKET_CTF_EXCHANGE_V2,
+    POLYMARKET_GAMMA_MARKET_SOURCE,
+    PolymarketGammaMarketBackfiller,
+    PolymarketHistoryImporter,
+)
 
 
 def test_req_dat_009_01_polymarket_history_importer_persists_fixture_step_zero_data() -> None:
@@ -167,3 +174,155 @@ def test_req_dat_009_03_polymarket_history_checkpoint_upserts_by_source() -> Non
     assert second["id"] == first["id"]
     assert second["cursor_value"] == "250"
     assert len(registry.state.rows("shared.historical_import_checkpoints")) == 1
+
+
+def test_req_dat_009_04_gamma_market_backfill_uses_limit_offset_checkpoint() -> None:
+    """TST-REQ-DAT-009-04: Validates REQ-DAT-009
+
+    Given: Gamma returns two limit/offset pages of active markets
+    When: the historical backfiller runs against the provider boundary
+    Then: market metadata is persisted and the next offset checkpoint is stored
+    """
+    registry = RepositoryRegistry()
+    observed = datetime(2026, 6, 25, 13, 15, tzinfo=UTC)
+    calls: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/markets"
+        params = dict(request.url.params)
+        calls.append(params)
+        offset = int(params["offset"])
+        pages = {
+            0: [
+                _gamma_market("market-1", "0xcondition1"),
+                _gamma_market("market-2", "0xcondition2"),
+            ],
+            2: [_gamma_market("market-3", "0xcondition3")],
+        }
+        return httpx.Response(200, json=pages[offset])
+
+    backfiller = PolymarketGammaMarketBackfiller(
+        registry,
+        base_url="https://gamma.polymarket.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = backfiller.backfill_markets(
+        environment=Environment.DEVELOPMENT,
+        limit=2,
+        max_pages=2,
+        active=True,
+        closed=False,
+        order="volume",
+        ascending=False,
+        fetched_at=observed,
+    )
+
+    rows = registry.state.rows("shared.polymarket_gamma_markets")
+    checkpoint = registry.shared().historical_import_checkpoints(
+        environment=Environment.DEVELOPMENT
+    )[0]
+    assert [call["offset"] for call in calls] == ["0", "2"]
+    assert all(call["limit"] == "2" for call in calls)
+    assert all(call["active"] == "true" for call in calls)
+    assert all(call["closed"] == "false" for call in calls)
+    assert summary.market_count == 3
+    assert summary.status == "complete"
+    assert summary.next_cursor == "3"
+    assert summary.source == f"{POLYMARKET_GAMMA_MARKET_SOURCE}:active=true:closed=false"
+    assert [row["market_id"] for row in rows] == ["market-1", "market-2", "market-3"]
+    assert checkpoint["cursor_value"] == "3"
+    assert checkpoint["status"] == "complete"
+    assert checkpoint["last_success_at"] == observed
+
+
+def test_req_dat_009_05_gamma_market_backfill_resumes_from_checkpoint() -> None:
+    """TST-REQ-DAT-009-05: Validates REQ-DAT-009
+
+    Given: a stored Gamma offset checkpoint
+    When: the backfiller runs again
+    Then: the next provider request starts from the checkpoint cursor
+    """
+    registry = RepositoryRegistry()
+    importer = PolymarketHistoryImporter(registry)
+    source = f"{POLYMARKET_GAMMA_MARKET_SOURCE}:closed=true"
+    importer.record_import_checkpoint(
+        environment=Environment.DEVELOPMENT,
+        source=source,
+        cursor_type="offset",
+        cursor_value="2",
+        status="stored",
+    )
+    requested_offsets: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_offsets.append(str(request.url.params["offset"]))
+        return httpx.Response(200, json=[_gamma_market("market-3", "0xcondition3")])
+
+    backfiller = PolymarketGammaMarketBackfiller(
+        registry,
+        base_url="https://gamma.polymarket.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = backfiller.backfill_markets(
+        environment=Environment.DEVELOPMENT,
+        limit=100,
+        max_pages=1,
+        closed=True,
+    )
+
+    checkpoint = registry.shared().historical_import_checkpoints(
+        environment=Environment.DEVELOPMENT
+    )[0]
+    assert requested_offsets == ["2"]
+    assert summary.market_count == 1
+    assert summary.next_cursor == "3"
+    assert checkpoint["cursor_value"] == "3"
+    assert checkpoint["status"] == "complete"
+
+
+def test_req_dat_009_06_gamma_market_backfill_records_rate_limit_status() -> None:
+    """TST-REQ-DAT-009-06: Validates REQ-DAT-009
+
+    Given: Gamma returns HTTP 429
+    When: the backfiller runs
+    Then: no market rows are stored and the checkpoint records rate limiting
+    """
+    registry = RepositoryRegistry()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "slow down"})
+
+    backfiller = PolymarketGammaMarketBackfiller(
+        registry,
+        base_url="https://gamma.polymarket.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    summary = backfiller.backfill_markets(environment=Environment.DEVELOPMENT, limit=50)
+
+    checkpoint = registry.shared().historical_import_checkpoints(
+        environment=Environment.DEVELOPMENT
+    )[0]
+    assert summary.status == "rate_limited"
+    assert summary.error_code == "provider_rate_limited"
+    assert summary.market_count == 0
+    assert registry.state.rows("shared.polymarket_gamma_markets") == []
+    assert checkpoint["status"] == "rate_limited"
+    assert checkpoint["cursor_value"] == "0"
+
+
+def _gamma_market(market_id: str, condition_id: str) -> dict:
+    return {
+        "id": market_id,
+        "conditionId": condition_id,
+        "slug": market_id,
+        "question": f"Will {market_id} resolve yes?",
+        "active": True,
+        "closed": False,
+        "category": "crypto",
+        "endDate": "2026-07-01T00:00:00Z",
+        "clobTokenIds": [f"{market_id}-yes", f"{market_id}-no"],
+        "outcomes": ["YES", "NO"],
+    }

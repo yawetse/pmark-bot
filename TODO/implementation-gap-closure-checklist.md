@@ -53,7 +53,7 @@ Polymarket:
 - [x] Add schema for wallet performance stats.
 - [x] Add schema for target wallet lists and ranking snapshots.
 - [x] Add checkpoint state for historical backfill and incremental sync.
-- [ ] Implement Gamma market metadata backfill with resumable pagination.
+- [x] Implement Gamma market metadata backfill with resumable pagination.
 - [ ] Implement Polygon event backfill with block-window retries and cursor persistence.
 - [ ] Implement event decoding tests using fixture logs.
 - [ ] Implement market metadata join tests using fixture markets.
@@ -199,7 +199,7 @@ Start with Phase 1 Polymarket data foundation:
 
 - [x] Add schema for Gamma market metadata, raw chain fill events, processed trades, wallet stats, target wallet snapshots, and importer checkpoints.
 - [x] Add a clean-room historical importer service interface with fixture-based tests.
-- [ ] Implement Gamma market metadata backfill first.
+- [x] Implement Gamma market metadata backfill first.
 - [ ] Implement Polygon `OrderFilled` backfill second.
 - [ ] Implement wallet ranking third.
 - [ ] Add a dashboard import status card after the backend records exist.

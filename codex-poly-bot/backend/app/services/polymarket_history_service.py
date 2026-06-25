@@ -10,11 +10,15 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+import httpx
+
 from app.db import RepositoryRegistry
 from app.domain import Environment
 
 
 POLYMARKET_CTF_EXCHANGE_V2 = "0xE111180000d2663C0091e4f400237545B87B996B"
+POLYMARKET_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
+POLYMARKET_GAMMA_MARKET_SOURCE = "polymarket_gamma_markets"
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,191 @@ class PolymarketHistoricalImportSummary:
     trade_count: int = 0
     checkpoint_id: str | None = None
     target_wallet_snapshot_id: str | None = None
+    status: str = "stored"
+    message: str = ""
+    error_code: str | None = None
+    source: str | None = None
+    next_cursor: str | None = None
+
+
+class PolymarketGammaBackfillError(RuntimeError):
+    """Provider failure normalized for historical importer status rows."""
+
+    def __init__(self, *, status: str, error_code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.error_code = error_code
+        self.message = message
+
+
+class PolymarketGammaMarketBackfiller:
+    """Fetch Gamma market metadata with limit/offset pagination."""
+
+    def __init__(
+        self,
+        registry: RepositoryRegistry,
+        *,
+        base_url: str = POLYMARKET_GAMMA_BASE_URL,
+        transport: httpx.BaseTransport | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> None:
+        self.registry = registry
+        self.importer = PolymarketHistoryImporter(registry)
+        self.base_url = _base_url(base_url, POLYMARKET_GAMMA_BASE_URL)
+        self.transport = transport
+        self.timeout_seconds = max(0.5, float(timeout_seconds))
+
+    def backfill_markets(
+        self,
+        *,
+        environment: Environment,
+        limit: int = 100,
+        max_pages: int = 1,
+        active: bool | None = None,
+        closed: bool | None = True,
+        order: str | None = None,
+        ascending: bool | None = None,
+        fetched_at: datetime | None = None,
+    ) -> PolymarketHistoricalImportSummary:
+        """Fetch and persist Gamma markets from the last stored offset."""
+
+        page_limit = _bounded_int(limit, default=100, minimum=1, maximum=500)
+        pages_to_fetch = _bounded_int(max_pages, default=1, minimum=1, maximum=1000)
+        observed_at = fetched_at or datetime.now(UTC)
+        source = _gamma_market_source(active=active, closed=closed)
+        offset = _checkpoint_offset(self.registry, environment=environment, source=source)
+        initial_offset = offset
+        written = 0
+        pages = 0
+        last_page_count = 0
+        status = "complete"
+
+        with self._client() as client:
+            for _page in range(pages_to_fetch):
+                try:
+                    payload = self._get_json(
+                        client=client,
+                        params=_gamma_market_params(
+                            limit=page_limit,
+                            offset=offset,
+                            active=active,
+                            closed=closed,
+                            order=order,
+                            ascending=ascending,
+                        ),
+                    )
+                except PolymarketGammaBackfillError as exc:
+                    checkpoint = self.importer.record_import_checkpoint(
+                        environment=environment,
+                        source=source,
+                        cursor_type="offset",
+                        cursor_value=str(offset),
+                        status=exc.status,
+                        metadata={
+                            "errorCode": exc.error_code,
+                            "message": exc.message,
+                            "limit": page_limit,
+                            "initialOffset": initial_offset,
+                            "active": active,
+                            "closed": closed,
+                        },
+                    )
+                    return PolymarketHistoricalImportSummary(
+                        environment=environment,
+                        checkpoint_id=checkpoint["id"],
+                        status=exc.status,
+                        message=exc.message,
+                        error_code=exc.error_code,
+                        source=source,
+                        next_cursor=str(offset),
+                    )
+
+                markets = _gamma_market_items(payload)
+                last_page_count = len(markets)
+                for market in markets:
+                    self.importer.record_market_metadata(
+                        environment=environment,
+                        payload=market,
+                        fetched_at=observed_at,
+                    )
+                    written += 1
+
+                pages += 1
+                offset += last_page_count
+                if last_page_count < page_limit:
+                    status = "complete"
+                    break
+                status = "stored"
+
+        checkpoint = self.importer.record_import_checkpoint(
+            environment=environment,
+            source=source,
+            cursor_type="offset",
+            cursor_value=str(offset),
+            status=status,
+            metadata={
+                "limit": page_limit,
+                "pages": pages,
+                "initialOffset": initial_offset,
+                "lastPageCount": last_page_count,
+                "active": active,
+                "closed": closed,
+                "order": order,
+                "ascending": ascending,
+            },
+            last_success_at=observed_at,
+        )
+        return PolymarketHistoricalImportSummary(
+            environment=environment,
+            market_count=written,
+            checkpoint_id=checkpoint["id"],
+            status=status,
+            message=(
+                f"Stored {written} Gamma market metadata row"
+                f"{'' if written == 1 else 's'} from {pages} page"
+                f"{'' if pages == 1 else 's'}."
+            ),
+            source=source,
+            next_cursor=str(offset),
+        )
+
+    def _get_json(
+        self,
+        *,
+        client: httpx.Client,
+        params: dict[str, str],
+    ) -> dict[str, Any] | list[Any]:
+        try:
+            response = client.get(f"{self.base_url}/markets", params=params)
+        except httpx.HTTPError as exc:
+            raise PolymarketGammaBackfillError(
+                status="failed",
+                error_code="provider_http_error",
+                message=f"Gamma markets backfill failed: {type(exc).__name__}.",
+            ) from exc
+        if response.status_code == 429:
+            raise PolymarketGammaBackfillError(
+                status="rate_limited",
+                error_code="provider_rate_limited",
+                message="Gamma markets backfill was rate limited by Polymarket.",
+            )
+        if response.status_code >= 400:
+            raise PolymarketGammaBackfillError(
+                status="failed",
+                error_code=f"provider_http_{response.status_code}",
+                message=f"Gamma markets backfill returned HTTP {response.status_code}.",
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise PolymarketGammaBackfillError(
+                status="failed",
+                error_code="provider_invalid_json",
+                message="Gamma markets backfill returned invalid JSON.",
+            ) from exc
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(timeout=self.timeout_seconds, transport=self.transport)
 
 
 class PolymarketHistoryImporter:
@@ -321,3 +510,70 @@ def _tags_from_market(payload: dict[str, Any]) -> list[Any]:
         return tags
     tag = _first_text(payload.get("tag"), payload.get("category"))
     return [tag] if tag else []
+
+
+def _base_url(value: str | None, default: str) -> str:
+    text = (value or default).strip().rstrip("/")
+    return text or default
+
+
+def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError):
+        parsed = default
+    return min(maximum, max(minimum, parsed))
+
+
+def _gamma_market_source(*, active: bool | None, closed: bool | None) -> str:
+    parts = [POLYMARKET_GAMMA_MARKET_SOURCE]
+    if active is not None:
+        parts.append(f"active={str(active).lower()}")
+    if closed is not None:
+        parts.append(f"closed={str(closed).lower()}")
+    return ":".join(parts)
+
+
+def _checkpoint_offset(
+    registry: RepositoryRegistry,
+    *,
+    environment: Environment,
+    source: str,
+) -> int:
+    for row in registry.shared().historical_import_checkpoints(environment=environment):
+        if row["source"] == source and row["cursor_type"] == "offset":
+            return _int(row.get("cursor_value"))
+    return 0
+
+
+def _gamma_market_params(
+    *,
+    limit: int,
+    offset: int,
+    active: bool | None,
+    closed: bool | None,
+    order: str | None,
+    ascending: bool | None,
+) -> dict[str, str]:
+    params = {"limit": str(limit), "offset": str(offset)}
+    if active is not None:
+        params["active"] = str(active).lower()
+    if closed is not None:
+        params["closed"] = str(closed).lower()
+    if order:
+        params["order"] = order
+    if ascending is not None:
+        params["ascending"] = str(ascending).lower()
+    return params
+
+
+def _gamma_market_items(payload: dict[str, Any] | list[Any]) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("markets", "data", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []

@@ -144,6 +144,10 @@ from app.services.notification_service import (
 )
 from app.services.polymarket_history_service import (
     POLYMARKET_CTF_EXCHANGE_V2,
+    POLYMARKET_GAMMA_BASE_URL,
+    POLYMARKET_GAMMA_MARKET_SOURCE,
+    PolymarketGammaBackfillError,
+    PolymarketGammaMarketBackfiller,
     PolymarketHistoricalImportSummary,
     PolymarketHistoryImporter,
 )
@@ -259,8 +263,12 @@ __all__ = [
     "PolymarketExecutionRequest",
     "PerformanceRecord",
     "POLYMARKET_CTF_EXCHANGE_V2",
+    "POLYMARKET_GAMMA_BASE_URL",
+    "POLYMARKET_GAMMA_MARKET_SOURCE",
     "PolymarketRiskConfig",
     "PolymarketRiskInput",
+    "PolymarketGammaBackfillError",
+    "PolymarketGammaMarketBackfiller",
     "PolymarketHistoricalImportSummary",
     "PolymarketHistoryImporter",
     "PositionMovement",
