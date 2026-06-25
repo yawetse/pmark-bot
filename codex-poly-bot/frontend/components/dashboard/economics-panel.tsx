@@ -55,6 +55,14 @@ export type EconomicsSummaryView = {
     status: "profitable" | "losing" | "flat";
     costBasis: string;
   };
+  history: {
+    source: string;
+    stored: boolean;
+    latestSnapshotId: string | null;
+    monthKey: string;
+    snapshotsThisMonth: number;
+    message: string;
+  };
 };
 
 export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView }) {
@@ -113,6 +121,7 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
             <Metric label="MTD cost" value={formatUsd(economics.aws.monthToDateCostUsd)} />
             <Metric label="Scope" value={economics.aws.scope} />
             <Metric label="Period" value={formatPeriod(economics.aws.periodStart, economics.aws.periodEnd)} />
+            <Metric label="Snapshots" value={String(economics.history.snapshotsThisMonth)} />
           </div>
           <p className="panel-note">{economics.aws.message}</p>
         </div>

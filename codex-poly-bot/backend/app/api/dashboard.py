@@ -508,6 +508,23 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             preferences=preferences["settings"],
         )
 
+    @router.get("/api/economics/history")
+    def economics_history(
+        month: str | None = None,
+        limit: int = 31,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return stored profitability snapshots for a month.
+
+        REQ: REQ-UI-010, REQ-OBS-005
+        """
+
+        return services.runtime_status.economics_history(
+            environment=context.environment,
+            month_key=month,
+            limit=limit,
+        )
+
     @router.get("/api/audit-events")
     def audit_events(
         context: DashboardRequestContext = Depends(require_dashboard_access),

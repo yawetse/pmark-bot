@@ -289,6 +289,70 @@ class SharedRepositories:
             },
         )
 
+    def record_economics_snapshot(
+        self,
+        *,
+        environment: Environment,
+        month_key: str,
+        trading_realized_pnl_usd: Decimal,
+        trading_unrealized_pnl_usd: Decimal,
+        trading_total_pnl_usd: Decimal,
+        ai_cost_usd: Decimal,
+        ai_prompt_tokens: int,
+        ai_completion_tokens: int,
+        ai_total_tokens: int,
+        aws_daily_cost_usd: Decimal,
+        aws_month_to_date_cost_usd: Decimal,
+        aws_source: str,
+        aws_scope: str,
+        aws_estimated: bool,
+        net_after_costs_usd: Decimal,
+        profitability_status: str,
+        payload: dict,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.economics_snapshots",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "month_key": month_key,
+                "trading_realized_pnl_usd": Decimal(str(trading_realized_pnl_usd)),
+                "trading_unrealized_pnl_usd": Decimal(str(trading_unrealized_pnl_usd)),
+                "trading_total_pnl_usd": Decimal(str(trading_total_pnl_usd)),
+                "ai_cost_usd": Decimal(str(ai_cost_usd)),
+                "ai_prompt_tokens": max(0, int(ai_prompt_tokens)),
+                "ai_completion_tokens": max(0, int(ai_completion_tokens)),
+                "ai_total_tokens": max(0, int(ai_total_tokens)),
+                "aws_daily_cost_usd": Decimal(str(aws_daily_cost_usd)),
+                "aws_month_to_date_cost_usd": Decimal(str(aws_month_to_date_cost_usd)),
+                "aws_source": aws_source,
+                "aws_scope": aws_scope,
+                "aws_estimated": bool(aws_estimated),
+                "net_after_costs_usd": Decimal(str(net_after_costs_usd)),
+                "profitability_status": profitability_status,
+                "payload": _json_ready(payload),
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def economics_snapshots(
+        self,
+        *,
+        environment: Environment,
+        month_key: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.economics_snapshots")
+            if row["environment"] == environment.value
+        ]
+        if month_key is not None:
+            rows = [row for row in rows if row["month_key"] == month_key]
+        return rows
+
     def record_audit_event(
         self,
         *,
