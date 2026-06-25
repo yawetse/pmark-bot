@@ -731,6 +731,54 @@ class PolymarketHistoryImporter:
         )
         return stats
 
+    def join_fill_event_to_market_metadata(
+        self,
+        *,
+        environment: Environment,
+        fill_event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Resolve a fill event asset id to persisted Gamma market metadata."""
+
+        asset_id = _first_text(
+            fill_event.get("asset_id"),
+            fill_event.get("assetId"),
+            fill_event.get("token_id"),
+            fill_event.get("tokenId"),
+        )
+        if not asset_id:
+            raw_event = fill_event.get("raw_event")
+            args = raw_event.get("args") if isinstance(raw_event, dict) else None
+            if isinstance(args, dict):
+                asset_id = _first_text(args.get("assetId"), args.get("tokenId"))
+        if not asset_id:
+            return None
+
+        for market in self.registry.shared().polymarket_gamma_markets(environment=environment):
+            for token in market.get("tokens") or []:
+                if not isinstance(token, dict):
+                    continue
+                token_id = _first_text(
+                    token.get("token_id"),
+                    token.get("tokenId"),
+                    token.get("id"),
+                    token.get("asset_id"),
+                    token.get("assetId"),
+                )
+                if token_id != str(asset_id):
+                    continue
+                return {
+                    "marketRecordId": market["id"],
+                    "marketId": market["market_id"],
+                    "conditionId": market.get("condition_id"),
+                    "assetId": str(asset_id),
+                    "outcome": _first_text(token.get("outcome"), token.get("name")),
+                    "question": market.get("question"),
+                    "slug": market.get("slug"),
+                    "category": market.get("category"),
+                    "endDate": _isoformat_datetime(market.get("end_date")),
+                }
+        return None
+
 
 def _first_text(*values: Any) -> str | None:
     for value in values:
@@ -824,6 +872,14 @@ def _parse_datetime(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _isoformat_datetime(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if value is None:
+        return None
+    return str(value)
 
 
 def _tokens_from_market(payload: dict[str, Any]) -> list[Any]:

@@ -544,6 +544,68 @@ def test_req_dat_009_10_wallet_performance_rebuild_feeds_target_ranking() -> Non
     ]
 
 
+def test_req_dat_009_11_fill_event_joins_to_gamma_market_metadata() -> None:
+    """TST-REQ-DAT-009-11: Validates REQ-DAT-009
+
+    Given: a fixture Gamma market and a decoded fill event for one outcome token
+    When: the importer joins the fill event to market metadata
+    Then: the market id, condition id, outcome, and market record id are returned
+    """
+    registry = RepositoryRegistry()
+    importer = PolymarketHistoryImporter(registry)
+    observed = datetime(2026, 6, 25, 14, 45, tzinfo=UTC)
+    market = importer.record_market_metadata(
+        environment=Environment.DEVELOPMENT,
+        fetched_at=observed,
+        payload={
+            "id": "market-join",
+            "conditionId": "0xconditionjoin",
+            "slug": "join-market",
+            "question": "Will the join test pass?",
+            "active": False,
+            "closed": True,
+            "category": "testing",
+            "endDate": observed.isoformat(),
+            "tokens": [
+                {"token_id": "yes-token", "outcome": "YES"},
+                {"token_id": "no-token", "outcome": "NO"},
+            ],
+        },
+    )
+    fill = importer.record_decoded_fill_event(
+        environment=Environment.DEVELOPMENT,
+        block_timestamp=observed,
+        event={
+            "address": POLYMARKET_CTF_EXCHANGE_V2,
+            "blockNumber": 100,
+            "logIndex": 1,
+            "transactionHash": "0xjointx",
+            "args": {
+                "maker": MAKER_ADDRESS,
+                "taker": TAKER_ADDRESS,
+                "tokenId": "yes-token",
+            },
+        },
+    )
+
+    joined = importer.join_fill_event_to_market_metadata(
+        environment=Environment.DEVELOPMENT,
+        fill_event=fill,
+    )
+
+    assert joined == {
+        "marketRecordId": market["id"],
+        "marketId": "market-join",
+        "conditionId": "0xconditionjoin",
+        "assetId": "yes-token",
+        "outcome": "YES",
+        "question": "Will the join test pass?",
+        "slug": "join-market",
+        "category": "testing",
+        "endDate": observed.isoformat(),
+    }
+
+
 def _gamma_market(market_id: str, condition_id: str) -> dict:
     return {
         "id": market_id,

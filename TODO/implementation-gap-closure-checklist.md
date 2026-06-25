@@ -56,7 +56,7 @@ Polymarket:
 - [x] Implement Gamma market metadata backfill with resumable pagination.
 - [x] Implement Polygon event backfill with block-window retries and cursor persistence.
 - [x] Implement event decoding tests using fixture logs.
-- [ ] Implement market metadata join tests using fixture markets.
+- [x] Implement market metadata join tests using fixture markets.
 - [x] Implement wallet performance ranking tests, including the 100-trade and 70% win-rate thresholds.
 - [x] Show historical import status in the dashboard.
 
