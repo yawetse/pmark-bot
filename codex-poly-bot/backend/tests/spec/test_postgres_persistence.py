@@ -25,9 +25,11 @@ from app.domain import (
     Instrument,
     InstrumentType,
     ModelProvider,
+    OrderSide,
     OrderType,
     PositionState,
     PositionTransition,
+    StrategySignal,
     TradeDecision,
     Venue,
 )
@@ -138,6 +140,11 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.pipeline_steps" in plan.table_names
     assert "shared.scanner_runs" in plan.table_names
     assert "shared.scanner_candidates" in plan.table_names
+    assert "shared.reasoning_runs" in plan.table_names
+    assert "shared.reasoning_outputs" in plan.table_names
+    assert "shared.strategy_consensus_runs" in plan.table_names
+    assert "shared.strategy_votes" in plan.table_names
+    assert "shared.strategy_consensus_outputs" in plan.table_names
     assert "shared.polymarket_gamma_markets" in plan.table_names
     assert "shared.polymarket_chain_fill_events" in plan.table_names
     assert "shared.polymarket_trades" in plan.table_names
@@ -531,6 +538,144 @@ def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
         scanner_run_id=run["id"],
         status="accepted",
     )[0]["id"] == accepted["id"]
+
+
+def test_req_db_003_07_shared_reasoning_records_persist_for_phase_three() -> None:
+    """TST-REQ-DB-003-07: Validates REQ-DB-003 and REQ-LLM-003
+
+    Given: a reasoning run and scored output
+    When: the shared repositories persist reasoning records
+    Then: Phase 3 prompt, response, signal, and token fields can be read back
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    observed = datetime(2026, 6, 25, 18, 0, tzinfo=UTC)
+    run = shared.record_reasoning_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-1",
+        scanner_run_id="scanner-1",
+        trigger="manual",
+        status="completed",
+        config={"polymarket": {"prompt_version": "pm-brain-v1"}},
+        provider_count=1,
+        prompt_count=1,
+        scored_count=1,
+        skipped_count=0,
+        failed_count=0,
+        started_at=observed,
+        completed_at=observed,
+    )
+    output = shared.record_reasoning_output(
+        environment=Environment.DEVELOPMENT,
+        reasoning_run_id=run["id"],
+        scanner_candidate_id="candidate-1",
+        venue=Venue.POLYMARKET_US.value,
+        instrument_id="condition-1:yes-token",
+        model_provider=ModelProvider.OPENAI,
+        prompt_version="pm-brain-v1",
+        status="scored",
+        directional_signal="buy_yes",
+        signal_strength=Decimal("0.15"),
+        confidence=Decimal("0.80"),
+        estimated_probability=Decimal("0.60"),
+        output_thesis="base rate and disposition support yes",
+        cost_usd=Decimal("0.01"),
+        prompt_tokens=120,
+        completion_tokens=40,
+        prompt_payload={"checks": ["base_rate"]},
+        response_payload={"estimated_probability": "0.60"},
+        check_results=[{"name": "base_rate", "status": "prompted"}],
+        created_at=observed,
+    )
+
+    assert shared.reasoning_runs(environment=Environment.DEVELOPMENT)[0]["id"] == run["id"]
+    outputs = shared.reasoning_outputs(environment=Environment.DEVELOPMENT)
+    assert outputs[0]["id"] == output["id"]
+    assert outputs[0]["total_tokens"] == 160
+    assert shared.reasoning_outputs(
+        environment=Environment.DEVELOPMENT,
+        reasoning_run_id=run["id"],
+        model_provider=ModelProvider.OPENAI,
+        status="scored",
+    )[0]["directional_signal"] == "buy_yes"
+
+
+def test_req_db_003_08_shared_strategy_consensus_records_persist_for_phase_four() -> None:
+    """TST-REQ-DB-003-08: Validates REQ-DB-003, REQ-STR-007, and REQ-STR-008
+
+    Given: strategy votes and consensus output
+    When: the shared repositories persist Phase 4 rows
+    Then: votes and approved consensus can be read back for dashboard runs
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    observed = datetime(2026, 6, 25, 18, 0, tzinfo=UTC)
+    run = shared.record_strategy_consensus_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-1",
+        reasoning_run_id="reasoning-1",
+        trigger="manual",
+        status="approved",
+        config={"consensus_rule": "default"},
+        vote_count=2,
+        approved_count=1,
+        refused_count=0,
+        started_at=observed,
+        completed_at=observed,
+    )
+    vote = shared.record_strategy_vote(
+        environment=Environment.DEVELOPMENT,
+        consensus_run_id=run["id"],
+        reasoning_output_id="reasoning-output-1",
+        scanner_candidate_id="candidate-1",
+        venue=Venue.POLYMARKET_US.value,
+        instrument_id="condition-1:yes-token",
+        model_provider=ModelProvider.OPENAI,
+        strategy_name="convergence",
+        direction=OrderSide.BUY.value,
+        confidence=Decimal("0.80"),
+        status="accepted",
+        inputs_hash="convergence-inputs",
+        source_payload={"candidate": "condition-1"},
+        created_at=observed,
+    )
+    output = shared.record_strategy_consensus_output(
+        environment=Environment.DEVELOPMENT,
+        consensus_run_id=run["id"],
+        venue=Venue.POLYMARKET_US.value,
+        instrument_id="condition-1:yes-token",
+        model_provider=ModelProvider.OPENAI,
+        status="approved",
+        side=OrderSide.BUY.value,
+        size_multiplier=Decimal("0.50"),
+        signal_count=1,
+        strategy_names=["convergence"],
+        source_payload={"vote_ids": [vote["id"]]},
+        created_at=observed,
+    )
+    signal = StrategySignal(
+        strategy_name="convergence",
+        model_provider=ModelProvider.OPENAI,
+        instrument=prediction_instrument(),
+        direction=OrderSide.BUY,
+        confidence=Decimal("0.80"),
+        inputs_hash="convergence-inputs",
+    )
+    registry.for_model(ModelProvider.OPENAI).record_strategy_signal(signal)
+
+    assert shared.strategy_consensus_runs(environment=Environment.DEVELOPMENT)[0]["id"] == run["id"]
+    assert shared.strategy_votes(
+        environment=Environment.DEVELOPMENT,
+        consensus_run_id=run["id"],
+        status="accepted",
+    )[0]["id"] == vote["id"]
+    assert shared.strategy_consensus_outputs(
+        environment=Environment.DEVELOPMENT,
+        consensus_run_id=run["id"],
+        model_provider=ModelProvider.OPENAI,
+        status="approved",
+    )[0]["id"] == output["id"]
+    assert registry.state.rows("openai.strategy_signals")[0]["strategy_name"] == "convergence"
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003

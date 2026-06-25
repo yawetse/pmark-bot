@@ -28,6 +28,16 @@ from app.services.scanner_service import (
     ScannerService,
     scanner_run_payload,
 )
+from app.services.brain_service import (
+    BrainService,
+    DEFAULT_REASONING_CONFIG,
+    reasoning_run_payload,
+)
+from app.services.strategy_consensus_service import (
+    DEFAULT_STRATEGY_CONSENSUS_CONFIG,
+    StrategyConsensusService,
+    strategy_consensus_run_payload,
+)
 from app.services.stock_universe import DEFAULT_ALPACA_SYMBOL_PRESETS
 
 
@@ -87,6 +97,11 @@ class RuntimeStatusService:
     PIPELINE_STEPS_TABLE = f"{SHARED_SCHEMA}.pipeline_steps"
     SCANNER_RUNS_TABLE = f"{SHARED_SCHEMA}.scanner_runs"
     SCANNER_CANDIDATES_TABLE = f"{SHARED_SCHEMA}.scanner_candidates"
+    REASONING_RUNS_TABLE = f"{SHARED_SCHEMA}.reasoning_runs"
+    REASONING_OUTPUTS_TABLE = f"{SHARED_SCHEMA}.reasoning_outputs"
+    STRATEGY_CONSENSUS_RUNS_TABLE = f"{SHARED_SCHEMA}.strategy_consensus_runs"
+    STRATEGY_VOTES_TABLE = f"{SHARED_SCHEMA}.strategy_votes"
+    STRATEGY_CONSENSUS_OUTPUTS_TABLE = f"{SHARED_SCHEMA}.strategy_consensus_outputs"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
     ECONOMICS_SNAPSHOTS_TABLE = f"{SHARED_SCHEMA}.economics_snapshots"
     PIPELINE_STAGES = (
@@ -114,6 +129,11 @@ class RuntimeStatusService:
             environ=getattr(settings, "runtime_env", {})
         )
         self.scanner = ScannerService(self.registry)
+        self.brain = BrainService(
+            self.registry,
+            environ=getattr(settings, "runtime_env", {}),
+        )
+        self.strategy_consensus = StrategyConsensusService(self.registry)
 
     def runtime_config_payload(self) -> dict[str, Any]:
         """Return config defaults aligned to deployed runtime flags.
@@ -177,6 +197,8 @@ class RuntimeStatusService:
                 },
             },
             "scanner": DEFAULT_SCANNER_CONFIG,
+            "reasoning": DEFAULT_REASONING_CONFIG,
+            "strategy_consensus": DEFAULT_STRATEGY_CONSENSUS_CONFIG,
             "alpaca": alpaca_payload,
             "notifications": {
                 "recipients": self.settings.notification_recipients,
@@ -327,6 +349,25 @@ class RuntimeStatusService:
             started_at=now,
             completed_at=now,
         )
+        reasoning_run = self.brain.run(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="manual",
+            scanner_run=scanner_run.payload,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
+        strategy_run = self.strategy_consensus.run(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="manual",
+            scanner_run=scanner_run.payload,
+            reasoning_run=reasoning_run.payload,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
         self.registry.state.insert(
             f"{SHARED_SCHEMA}.job_runs",
             {
@@ -343,6 +384,14 @@ class RuntimeStatusService:
                     "scanner_run_id": scanner_run.payload.get("id"),
                     "scanner_accepted": scanner_run.payload["acceptedCount"],
                     "scanner_rejected": scanner_run.payload["rejectedCount"],
+                    "reasoning_run_id": reasoning_run.payload.get("id"),
+                    "reasoning_scored": reasoning_run.payload["scoredCount"],
+                    "reasoning_skipped": reasoning_run.payload["skippedCount"],
+                    "reasoning_failed": reasoning_run.payload["failedCount"],
+                    "strategy_consensus_run_id": strategy_run.payload.get("id"),
+                    "strategy_votes": strategy_run.payload["voteCount"],
+                    "strategy_approved": strategy_run.payload["approvedCount"],
+                    "strategy_refused": strategy_run.payload["refusedCount"],
                 },
                 "created_at": now,
             },
@@ -378,6 +427,14 @@ class RuntimeStatusService:
                 "scanner_run_id": scanner_run.payload.get("id"),
                 "scanner_accepted": scanner_run.payload["acceptedCount"],
                 "scanner_rejected": scanner_run.payload["rejectedCount"],
+                "reasoning_run_id": reasoning_run.payload.get("id"),
+                "reasoning_scored": reasoning_run.payload["scoredCount"],
+                "reasoning_skipped": reasoning_run.payload["skippedCount"],
+                "reasoning_failed": reasoning_run.payload["failedCount"],
+                "strategy_consensus_run_id": strategy_run.payload.get("id"),
+                "strategy_votes": strategy_run.payload["voteCount"],
+                "strategy_approved": strategy_run.payload["approvedCount"],
+                "strategy_refused": strategy_run.payload["refusedCount"],
             },
         )
         pipeline_run = self._record_pipeline_run(
@@ -388,6 +445,8 @@ class RuntimeStatusService:
             completed_at=now,
             market_data_pulls=market_data_pulls,
             scanner_run=scanner_run.payload,
+            reasoning_run=reasoning_run.payload,
+            strategy_run=strategy_run.payload,
             actor=username,
         )
         return {
@@ -401,6 +460,8 @@ class RuntimeStatusService:
             "marketDataPull": market_data_pull,
             "marketDataPulls": market_data_pulls,
             "scannerRun": scanner_run.payload,
+            "reasoningRun": reasoning_run.payload,
+            "strategyRun": strategy_run.payload,
             "pipelineRun": pipeline_run,
         }
 
@@ -434,6 +495,25 @@ class RuntimeStatusService:
             started_at=now,
             completed_at=now,
         )
+        reasoning_run = self.brain.run(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="scheduled",
+            scanner_run=scanner_run.payload,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
+        strategy_run = self.strategy_consensus.run(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="scheduled",
+            scanner_run=scanner_run.payload,
+            reasoning_run=reasoning_run.payload,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
         status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
         try:
             self.registry.state.insert(
@@ -451,6 +531,14 @@ class RuntimeStatusService:
                         "scanner_run_id": scanner_run.payload.get("id"),
                         "scanner_accepted": scanner_run.payload["acceptedCount"],
                         "scanner_rejected": scanner_run.payload["rejectedCount"],
+                        "reasoning_run_id": reasoning_run.payload.get("id"),
+                        "reasoning_scored": reasoning_run.payload["scoredCount"],
+                        "reasoning_skipped": reasoning_run.payload["skippedCount"],
+                        "reasoning_failed": reasoning_run.payload["failedCount"],
+                        "strategy_consensus_run_id": strategy_run.payload.get("id"),
+                        "strategy_votes": strategy_run.payload["voteCount"],
+                        "strategy_approved": strategy_run.payload["approvedCount"],
+                        "strategy_refused": strategy_run.payload["refusedCount"],
                     },
                     "created_at": now,
                 },
@@ -465,6 +553,8 @@ class RuntimeStatusService:
             completed_at=now,
             market_data_pulls=market_data_pulls,
             scanner_run=scanner_run.payload,
+            reasoning_run=reasoning_run.payload,
+            strategy_run=strategy_run.payload,
             actor="scheduler",
         )
         return {
@@ -478,6 +568,8 @@ class RuntimeStatusService:
             ),
             "marketDataPulls": market_data_pulls,
             "scannerRun": scanner_run.payload,
+            "reasoningRun": reasoning_run.payload,
+            "strategyRun": strategy_run.payload,
             "pipelineRun": pipeline_run,
         }
 
@@ -659,6 +751,8 @@ class RuntimeStatusService:
             "orderEvents": order_items,
             "pipelineRuns": self.pipeline_runs(environment),
             "scanner": self.scanner_summary(environment),
+            "reasoning": self.reasoning_summary(environment),
+            "strategyConsensus": self.strategy_consensus_summary(environment),
             "historicalImport": self.historical_import_summary(environment),
             "brokerHistory": self.broker_history_summary(environment),
         }
@@ -707,6 +801,105 @@ class RuntimeStatusService:
             "acceptedCount": payload["acceptedCount"],
             "rejectedCount": payload["rejectedCount"],
             "candidates": payload["candidates"],
+        }
+
+    def reasoning_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return latest reasoning status and scored rows for operations UI.
+
+        REQ: REQ-LLM-001, REQ-LLM-003, REQ-UI-004, REQ-OBS-005
+        """
+
+        try:
+            runs = self.registry.shared().reasoning_runs(environment=environment)
+            outputs = self.registry.shared().reasoning_outputs(environment=environment)
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Reasoning status is unavailable because persistence is offline.",
+                "latestRun": None,
+                "promptCount": 0,
+                "scoredCount": 0,
+                "skippedCount": 0,
+                "failedCount": 0,
+                "outputs": [],
+            }
+        if not runs:
+            return {
+                "status": "idle",
+                "message": "No reasoning run has been recorded yet.",
+                "latestRun": None,
+                "promptCount": 0,
+                "scoredCount": 0,
+                "skippedCount": 0,
+                "failedCount": 0,
+                "outputs": [],
+            }
+        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
+        latest = runs[0]
+        latest_outputs = [
+            output for output in outputs if output["reasoning_run_id"] == latest["id"]
+        ]
+        latest_outputs.sort(key=lambda row: row.get("created_at"), reverse=True)
+        payload = reasoning_run_payload(latest, latest_outputs[:100])
+        return {
+            "status": payload["status"],
+            "message": _reasoning_summary_message(payload),
+            "latestRun": payload,
+            "promptCount": payload["promptCount"],
+            "scoredCount": payload["scoredCount"],
+            "skippedCount": payload["skippedCount"],
+            "failedCount": payload["failedCount"],
+            "outputs": payload["outputs"],
+        }
+
+    def strategy_consensus_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return latest strategy vote and consensus status for operations UI.
+
+        REQ: REQ-STR-007, REQ-STR-008, REQ-UI-004, REQ-OBS-005
+        """
+
+        try:
+            runs = self.registry.shared().strategy_consensus_runs(environment=environment)
+            votes = self.registry.shared().strategy_votes(environment=environment)
+            outputs = self.registry.shared().strategy_consensus_outputs(environment=environment)
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Strategy consensus status is unavailable because persistence is offline.",
+                "latestRun": None,
+                "voteCount": 0,
+                "approvedCount": 0,
+                "refusedCount": 0,
+                "votes": [],
+                "outputs": [],
+            }
+        if not runs:
+            return {
+                "status": "idle",
+                "message": "No strategy consensus run has been recorded yet.",
+                "latestRun": None,
+                "voteCount": 0,
+                "approvedCount": 0,
+                "refusedCount": 0,
+                "votes": [],
+                "outputs": [],
+            }
+        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
+        latest = runs[0]
+        latest_votes = [vote for vote in votes if vote["consensus_run_id"] == latest["id"]]
+        latest_outputs = [output for output in outputs if output["consensus_run_id"] == latest["id"]]
+        latest_votes.sort(key=lambda row: row.get("created_at"), reverse=True)
+        latest_outputs.sort(key=lambda row: row.get("created_at"), reverse=True)
+        payload = strategy_consensus_run_payload(latest, latest_votes[:200], latest_outputs[:100])
+        return {
+            "status": payload["status"],
+            "message": _strategy_consensus_summary_message(payload),
+            "latestRun": payload,
+            "voteCount": payload["voteCount"],
+            "approvedCount": payload["approvedCount"],
+            "refusedCount": payload["refusedCount"],
+            "votes": payload["votes"],
+            "outputs": payload["outputs"],
         }
 
     def historical_import_summary(self, environment: Environment) -> dict[str, Any]:
@@ -1423,6 +1616,8 @@ class RuntimeStatusService:
         completed_at: datetime,
         market_data_pulls: list[dict[str, Any]],
         scanner_run: dict[str, Any],
+        reasoning_run: dict[str, Any],
+        strategy_run: dict[str, Any],
         actor: str,
     ) -> dict[str, Any]:
         pull_status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
@@ -1442,6 +1637,12 @@ class RuntimeStatusService:
                 "candidateCount": candidate_count,
                 "scannerAcceptedCount": scanner_run["acceptedCount"],
                 "scannerRejectedCount": scanner_run["rejectedCount"],
+                "reasoningScoredCount": reasoning_run["scoredCount"],
+                "reasoningSkippedCount": reasoning_run["skippedCount"],
+                "reasoningFailedCount": reasoning_run["failedCount"],
+                "strategyVoteCount": strategy_run["voteCount"],
+                "strategyApprovedCount": strategy_run["approvedCount"],
+                "strategyRefusedCount": strategy_run["refusedCount"],
                 "venues": venue_names,
             },
             "created_at": completed_at,
@@ -1453,6 +1654,8 @@ class RuntimeStatusService:
             completed_at=completed_at,
             market_data_pulls=market_data_pulls,
             scanner_run=scanner_run,
+            reasoning_run=reasoning_run,
+            strategy_run=strategy_run,
             candidate_count=candidate_count,
             market_data_status=pull_status,
         )
@@ -1473,6 +1676,8 @@ class RuntimeStatusService:
         completed_at: datetime,
         market_data_pulls: list[dict[str, Any]],
         scanner_run: dict[str, Any],
+        reasoning_run: dict[str, Any],
+        strategy_run: dict[str, Any],
         candidate_count: int,
         market_data_status: str,
     ) -> list[dict[str, Any]]:
@@ -1502,6 +1707,25 @@ class RuntimeStatusService:
             if scanner_run.get("candidateCount")
             else "No priced candidates reached the scanner from provider data."
         )
+        reasoning_record_ids = [
+            value
+            for value in (
+                [reasoning_run.get("id")]
+                + [output.get("id") for output in reasoning_run.get("outputs", [])]
+            )
+            if value
+        ]
+        reasoning_message = _pipeline_reasoning_message(reasoning_run)
+        strategy_record_ids = [
+            value
+            for value in (
+                [strategy_run.get("id")]
+                + [vote.get("id") for vote in strategy_run.get("votes", [])]
+                + [output.get("id") for output in strategy_run.get("outputs", [])]
+            )
+            if value
+        ]
+        strategy_message = _pipeline_strategy_consensus_message(strategy_run)
         stage_payloads = {
             "data_fetch": {
                 "status": _pipeline_data_fetch_status(market_data_status),
@@ -1524,16 +1748,29 @@ class RuntimeStatusService:
                 "record_ids": scanner_record_ids,
             },
             "brain": {
-                "status": "waiting",
-                "message": "Reasoning is waiting for scanner-to-LLM orchestration.",
-                "metrics": {"promptCount": 0},
-                "record_ids": [],
+                "status": _pipeline_reasoning_status(str(reasoning_run.get("status", "idle"))),
+                "message": reasoning_message,
+                "metrics": {
+                    "providerCount": reasoning_run.get("providerCount", 0),
+                    "promptCount": reasoning_run.get("promptCount", 0),
+                    "scoredCount": reasoning_run.get("scoredCount", 0),
+                    "skippedCount": reasoning_run.get("skippedCount", 0),
+                    "failedCount": reasoning_run.get("failedCount", 0),
+                },
+                "record_ids": reasoning_record_ids,
             },
             "execution": {
-                "status": "waiting",
-                "message": "Execution is waiting for scored strategy decisions and risk approval.",
-                "metrics": {"orderIntentCount": 0},
-                "record_ids": [],
+                "status": _pipeline_strategy_consensus_status(
+                    str(strategy_run.get("status", "idle"))
+                ),
+                "message": strategy_message,
+                "metrics": {
+                    "voteCount": strategy_run.get("voteCount", 0),
+                    "approvedCount": strategy_run.get("approvedCount", 0),
+                    "refusedCount": strategy_run.get("refusedCount", 0),
+                    "orderIntentCount": 0,
+                },
+                "record_ids": strategy_record_ids,
             },
             "exit": {
                 "status": "waiting",
@@ -2444,6 +2681,23 @@ def _scanner_summary_message(payload: dict[str, Any]) -> str:
     )
 
 
+def _reasoning_summary_message(payload: dict[str, Any]) -> str:
+    status = str(payload.get("status", "idle"))
+    if status == "idle":
+        return "No reasoning run has been recorded yet."
+    if status == "no_candidates":
+        return "Latest reasoning run had no accepted scanner candidates to score."
+    if status == "skipped":
+        return "Latest reasoning run skipped all prompts because provider credentials or budgets were unavailable."
+    if status == "failed":
+        return "Latest reasoning run failed before any candidate could be scored."
+    return (
+        f"Latest reasoning run scored {payload.get('scoredCount', 0)}, skipped "
+        f"{payload.get('skippedCount', 0)}, and failed {payload.get('failedCount', 0)} prompt"
+        f"{'' if payload.get('failedCount', 0) == 1 else 's'}."
+    )
+
+
 def _pipeline_data_fetch_status(market_data_status: str) -> str:
     if market_data_status == "pulled":
         return "completed"
@@ -2472,6 +2726,76 @@ def _pipeline_scanner_status(scanner_status: str) -> str:
     if scanner_status == "no_candidates_passed":
         return "waiting"
     return "waiting"
+
+
+def _pipeline_reasoning_status(reasoning_status: str) -> str:
+    if reasoning_status == "completed":
+        return "completed"
+    if reasoning_status == "partial":
+        return "partial"
+    if reasoning_status in {"failed", "blocked", "skipped"}:
+        return "blocked"
+    return "waiting"
+
+
+def _pipeline_strategy_consensus_status(strategy_status: str) -> str:
+    if strategy_status in {"approved", "refused", "partial"}:
+        return "completed" if strategy_status != "partial" else "partial"
+    if strategy_status in {"failed", "blocked", "unavailable"}:
+        return "blocked"
+    return "waiting"
+
+
+def _pipeline_reasoning_message(reasoning_run: dict[str, Any]) -> str:
+    status = str(reasoning_run.get("status", "idle"))
+    if status == "no_candidates":
+        return "Reasoning had no accepted scanner candidates to score."
+    if status == "skipped":
+        return "Reasoning skipped all prompts because provider credentials or budgets were unavailable."
+    if status == "failed":
+        return "Reasoning failed before any candidate was scored."
+    scored = int(reasoning_run.get("scoredCount", 0))
+    skipped = int(reasoning_run.get("skippedCount", 0))
+    failed = int(reasoning_run.get("failedCount", 0))
+    if scored or skipped or failed:
+        return (
+            f"Reasoning scored {scored}, skipped {skipped}, and failed "
+            f"{failed} prompt{'' if failed == 1 else 's'}."
+        )
+    return "Reasoning is waiting for scanner survivors."
+
+
+def _pipeline_strategy_consensus_message(strategy_run: dict[str, Any]) -> str:
+    status = str(strategy_run.get("status", "idle"))
+    if status == "no_scores":
+        return "Strategy consensus had no scored reasoning outputs to evaluate."
+    if status == "no_votes":
+        return "Strategy consensus ran, but no strategy produced a directional vote."
+    votes = int(strategy_run.get("voteCount", 0))
+    approved = int(strategy_run.get("approvedCount", 0))
+    refused = int(strategy_run.get("refusedCount", 0))
+    if status in {"approved", "refused", "partial"}:
+        return (
+            f"Strategy consensus recorded {votes} vote{'' if votes == 1 else 's'}, "
+            f"approved {approved}, and refused {refused}. Risk sizing and order intents "
+            "are still pending."
+        )
+    return "Strategy consensus is waiting for scored reasoning output."
+
+
+def _strategy_consensus_summary_message(strategy_run: dict[str, Any]) -> str:
+    status = str(strategy_run.get("status", "idle"))
+    if status == "no_scores":
+        return "No scored reasoning outputs were available for strategy consensus."
+    if status == "no_votes":
+        return "No strategy produced a directional vote for the latest scored candidates."
+    votes = int(strategy_run.get("voteCount", 0))
+    approved = int(strategy_run.get("approvedCount", 0))
+    refused = int(strategy_run.get("refusedCount", 0))
+    return (
+        f"Latest strategy consensus recorded {votes} vote{'' if votes == 1 else 's'}, "
+        f"approved {approved}, and refused {refused} before risk sizing."
+    )
 
 
 def _as_money(value: Any) -> Decimal:

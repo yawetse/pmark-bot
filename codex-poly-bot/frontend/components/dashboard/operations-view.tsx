@@ -125,6 +125,116 @@ export type ScannerSummaryView = {
   candidates: ScannerCandidateView[];
 };
 
+export type ReasoningOutputView = {
+  id: string;
+  reasoningRunId?: string | null;
+  scannerCandidateId?: string | null;
+  venue: string;
+  instrumentId: string;
+  modelProvider: string;
+  promptVersion: string;
+  status: string;
+  refusalReason?: string | null;
+  directionalSignal: string;
+  signalStrength?: string | null;
+  confidence?: string | null;
+  estimatedProbability?: string | null;
+  costUsd?: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  checks?: Array<Record<string, unknown>>;
+  thesis?: string | null;
+  createdAt?: string | null;
+};
+
+export type ReasoningRunView = {
+  id?: string | null;
+  environment?: string;
+  pipelineRunId?: string | null;
+  scannerRunId?: string | null;
+  trigger?: string;
+  status: string;
+  providerCount: number;
+  promptCount: number;
+  scoredCount: number;
+  skippedCount: number;
+  failedCount: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  outputs: ReasoningOutputView[];
+};
+
+export type ReasoningSummaryView = {
+  status: string;
+  message: string;
+  latestRun?: ReasoningRunView | null;
+  promptCount: number;
+  scoredCount: number;
+  skippedCount: number;
+  failedCount: number;
+  outputs: ReasoningOutputView[];
+};
+
+export type StrategyVoteView = {
+  id: string;
+  consensusRunId?: string | null;
+  reasoningOutputId?: string | null;
+  scannerCandidateId?: string | null;
+  venue: string;
+  instrumentId: string;
+  modelProvider: string;
+  strategyName: string;
+  direction?: string | null;
+  confidence?: string | null;
+  status: string;
+  refusalReason?: string | null;
+  inputsHash?: string | null;
+  createdAt?: string | null;
+};
+
+export type StrategyConsensusOutputView = {
+  id: string;
+  consensusRunId?: string | null;
+  venue: string;
+  instrumentId: string;
+  modelProvider: string;
+  status: string;
+  side?: string | null;
+  sizeMultiplier?: string | null;
+  signalCount: number;
+  strategyNames?: string[];
+  refusalReason?: string | null;
+  createdAt?: string | null;
+};
+
+export type StrategyConsensusRunView = {
+  id?: string | null;
+  environment?: string;
+  pipelineRunId?: string | null;
+  reasoningRunId?: string | null;
+  trigger?: string;
+  status: string;
+  voteCount: number;
+  approvedCount: number;
+  refusedCount: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  votes: StrategyVoteView[];
+  outputs: StrategyConsensusOutputView[];
+};
+
+export type StrategyConsensusSummaryView = {
+  status: string;
+  message: string;
+  latestRun?: StrategyConsensusRunView | null;
+  voteCount: number;
+  approvedCount: number;
+  refusedCount: number;
+  votes: StrategyVoteView[];
+  outputs: StrategyConsensusOutputView[];
+};
+
 export type OperationsSummaryView = {
   killSwitch: string;
   openOrders: number;
@@ -135,6 +245,8 @@ export type OperationsSummaryView = {
   orderEvents: OrderEventView[];
   pipelineRuns: PipelineRunView[];
   scanner?: ScannerSummaryView;
+  reasoning?: ReasoningSummaryView;
+  strategyConsensus?: StrategyConsensusSummaryView;
   historicalImport?: HistoricalImportView;
   brokerHistory?: BrokerHistoryView;
 };
@@ -181,6 +293,28 @@ const FALLBACK_SCANNER: ScannerSummaryView = {
   candidates: [],
 };
 
+const FALLBACK_REASONING: ReasoningSummaryView = {
+  status: "idle",
+  message: "No reasoning run has been recorded yet.",
+  latestRun: null,
+  promptCount: 0,
+  scoredCount: 0,
+  skippedCount: 0,
+  failedCount: 0,
+  outputs: [],
+};
+
+const FALLBACK_STRATEGY_CONSENSUS: StrategyConsensusSummaryView = {
+  status: "idle",
+  message: "No strategy consensus run has been recorded yet.",
+  latestRun: null,
+  voteCount: 0,
+  approvedCount: 0,
+  refusedCount: 0,
+  votes: [],
+  outputs: [],
+};
+
 const FALLBACK_OPERATIONS: OperationsSummaryView = {
   killSwitch: "unknown",
   openOrders: 0,
@@ -191,6 +325,8 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   orderEvents: [],
   pipelineRuns: [],
   scanner: FALLBACK_SCANNER,
+  reasoning: FALLBACK_REASONING,
+  strategyConsensus: FALLBACK_STRATEGY_CONSENSUS,
   historicalImport: FALLBACK_HISTORICAL_IMPORT,
   brokerHistory: FALLBACK_BROKER_HISTORY,
 };
@@ -211,6 +347,10 @@ export function OperationsView({
   const [latestMarketData, setLatestMarketData] = useState(marketData);
   const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
   const [scanner, setScanner] = useState(summary.scanner ?? FALLBACK_SCANNER);
+  const [reasoning, setReasoning] = useState(summary.reasoning ?? FALLBACK_REASONING);
+  const [strategyConsensus, setStrategyConsensus] = useState(
+    summary.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS,
+  );
   const displayTimeZone = useResolvedTimeZone(timeZone);
   const pendingEvents = summary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
@@ -263,6 +403,10 @@ export function OperationsView({
       <PipelineRunsPanel runs={pipelineRuns} timeZone={displayTimeZone} />
 
       <ScannerPanel scanner={scanner} timeZone={displayTimeZone} />
+
+      <ReasoningPanel reasoning={reasoning} timeZone={displayTimeZone} />
+
+      <StrategyConsensusPanel strategyConsensus={strategyConsensus} timeZone={displayTimeZone} />
 
       <HistoricalImportPanel
         historicalImport={summary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
@@ -320,6 +464,32 @@ export function OperationsView({
         acceptedCount: scannerRun.acceptedCount ?? 0,
         rejectedCount: scannerRun.rejectedCount ?? 0,
         candidates: scannerRun.candidates ?? [],
+      });
+    }
+    if (result.reasoningRun) {
+      const reasoningRun = result.reasoningRun as ReasoningRunView;
+      setReasoning({
+        status: reasoningRun.status ?? "idle",
+        message: `Latest reasoning run scored ${reasoningRun.scoredCount ?? 0}, skipped ${reasoningRun.skippedCount ?? 0}, and failed ${reasoningRun.failedCount ?? 0} prompts.`,
+        latestRun: reasoningRun,
+        promptCount: reasoningRun.promptCount ?? 0,
+        scoredCount: reasoningRun.scoredCount ?? 0,
+        skippedCount: reasoningRun.skippedCount ?? 0,
+        failedCount: reasoningRun.failedCount ?? 0,
+        outputs: reasoningRun.outputs ?? [],
+      });
+    }
+    if (result.strategyRun) {
+      const strategyRun = result.strategyRun as StrategyConsensusRunView;
+      setStrategyConsensus({
+        status: strategyRun.status ?? "idle",
+        message: `Latest strategy consensus recorded ${strategyRun.voteCount ?? 0} votes, approved ${strategyRun.approvedCount ?? 0}, and refused ${strategyRun.refusedCount ?? 0}.`,
+        latestRun: strategyRun,
+        voteCount: strategyRun.voteCount ?? 0,
+        approvedCount: strategyRun.approvedCount ?? 0,
+        refusedCount: strategyRun.refusedCount ?? 0,
+        votes: strategyRun.votes ?? [],
+        outputs: strategyRun.outputs ?? [],
       });
     }
   }
@@ -599,6 +769,156 @@ function ScannerPanel({
   );
 }
 
+function ReasoningPanel({
+  reasoning,
+  timeZone,
+}: {
+  reasoning: ReasoningSummaryView;
+  timeZone: string;
+}) {
+  const columns: DashboardGridColumn<ReasoningOutputView>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "instrumentId", headerName: "Instrument", minWidth: 220 },
+    { field: "modelProvider", headerName: "Provider", minWidth: 130 },
+    { field: "promptVersion", headerName: "Prompt", minWidth: 150 },
+    { field: "status", headerName: "State", minWidth: 120 },
+    { field: "refusalReason", headerName: "Refusal", minWidth: 220 },
+    { field: "directionalSignal", headerName: "Signal", minWidth: 140 },
+    { field: "signalStrength", headerName: "Strength", minWidth: 120 },
+    { field: "confidence", headerName: "Confidence", minWidth: 130 },
+    { field: "estimatedProbability", headerName: "Probability", minWidth: 130 },
+    { field: "costUsd", headerName: "Cost", minWidth: 110 },
+    { field: "totalTokens", headerName: "Tokens", minWidth: 110 },
+    {
+      field: "checks",
+      headerName: "Checks",
+      minWidth: 280,
+      valueGetter: (params) => reasoningCheckSummary(params.data?.checks),
+    },
+    { field: "thesis", headerName: "Thesis", minWidth: 320 },
+    {
+      field: "createdAt",
+      headerName: "Scored",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="reasoning-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Reasoning / Brain</p>
+          <h2 id="reasoning-title">LLM scoring output</h2>
+        </div>
+        <span className={`status ${statusClass(reasoning.status)}`}>{reasoning.status}</span>
+      </div>
+      <p className="panel-note">{reasoning.message}</p>
+      <div className="metric-grid">
+        <Metric label="Prompts" value={String(reasoning.promptCount)} />
+        <Metric label="Scored" value={String(reasoning.scoredCount)} />
+        <Metric label="Skipped" value={String(reasoning.skippedCount)} />
+        <Metric label="Failed" value={String(reasoning.failedCount)} />
+      </div>
+      <DashboardDataGrid
+        rows={reasoning.outputs}
+        columns={columns}
+        emptyTitle="No reasoning output"
+        emptyBody="Reasoning rows will appear after accepted scanner candidates are sent to configured model providers."
+        getRowId={(output) => output.id}
+        searchPlaceholder="Filter reasoning output"
+      />
+    </section>
+  );
+}
+
+function StrategyConsensusPanel({
+  strategyConsensus,
+  timeZone,
+}: {
+  strategyConsensus: StrategyConsensusSummaryView;
+  timeZone: string;
+}) {
+  const voteColumns: DashboardGridColumn<StrategyVoteView>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "instrumentId", headerName: "Instrument", minWidth: 220 },
+    { field: "modelProvider", headerName: "Provider", minWidth: 130 },
+    { field: "strategyName", headerName: "Strategy", minWidth: 160 },
+    { field: "status", headerName: "State", minWidth: 120 },
+    { field: "direction", headerName: "Direction", minWidth: 120 },
+    { field: "confidence", headerName: "Confidence", minWidth: 130 },
+    { field: "refusalReason", headerName: "Refusal", minWidth: 240 },
+    {
+      field: "createdAt",
+      headerName: "Voted",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+  const outputColumns: DashboardGridColumn<StrategyConsensusOutputView>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "instrumentId", headerName: "Instrument", minWidth: 220 },
+    { field: "modelProvider", headerName: "Provider", minWidth: 130 },
+    { field: "status", headerName: "State", minWidth: 120 },
+    { field: "side", headerName: "Side", minWidth: 100 },
+    { field: "sizeMultiplier", headerName: "Size", minWidth: 110 },
+    { field: "signalCount", headerName: "Signals", minWidth: 110 },
+    {
+      field: "strategyNames",
+      headerName: "Strategies",
+      minWidth: 220,
+      valueGetter: (params) => (params.data?.strategyNames ?? []).join(", "),
+    },
+    { field: "refusalReason", headerName: "Refusal", minWidth: 240 },
+    {
+      field: "createdAt",
+      headerName: "Resolved",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="strategy-consensus-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Strategy consensus</p>
+          <h2 id="strategy-consensus-title">Votes before risk sizing</h2>
+        </div>
+        <span className={`status ${statusClass(strategyConsensus.status)}`}>
+          {strategyConsensus.status}
+        </span>
+      </div>
+      <p className="panel-note">{strategyConsensus.message}</p>
+      <div className="metric-grid">
+        <Metric label="Votes" value={String(strategyConsensus.voteCount)} />
+        <Metric label="Approved" value={String(strategyConsensus.approvedCount)} />
+        <Metric label="Refused" value={String(strategyConsensus.refusedCount)} />
+        <Metric
+          label="Completed"
+          value={formatDateTime(strategyConsensus.latestRun?.completedAt, timeZone)}
+        />
+      </div>
+      <DashboardDataGrid
+        rows={strategyConsensus.votes}
+        columns={voteColumns}
+        emptyTitle="No strategy votes"
+        emptyBody="Strategy votes will appear after scored reasoning output is evaluated by the consensus step."
+        getRowId={(vote) => vote.id}
+        searchPlaceholder="Filter strategy votes"
+      />
+      <DashboardDataGrid
+        rows={strategyConsensus.outputs}
+        columns={outputColumns}
+        emptyTitle="No consensus outputs"
+        emptyBody="Consensus outputs will appear after strategy votes are resolved for each scored candidate."
+        getRowId={(output) => output.id}
+        searchPlaceholder="Filter consensus outputs"
+      />
+    </section>
+  );
+}
+
 function BrokerHistoryPanel({
   brokerHistory,
   timeZone,
@@ -675,6 +995,19 @@ function scannerMetricSummary(metrics: Record<string, unknown> | undefined): str
   return parts.join("; ");
 }
 
+function reasoningCheckSummary(checks: Array<Record<string, unknown>> | undefined): string {
+  if (!checks?.length) {
+    return "";
+  }
+  return checks
+    .map((check) => {
+      const name = check.name ? String(check.name) : "check";
+      const status = check.status ? String(check.status) : "unknown";
+      return `${name}: ${status}`;
+    })
+    .join("; ");
+}
+
 function metricPart(metrics: Record<string, unknown>, key: string, label: string): string {
   const value = metrics[key];
   if (value === null || value === undefined || value === "") {
@@ -699,10 +1032,14 @@ function formatDateTime(value: string | null | undefined, timeZone: string): str
 }
 
 function statusClass(status: string): "ok" | "idle" | "blocked" {
-  if (["blocked", "failed", "rate_limited"].includes(status)) {
+  if (["blocked", "failed", "rate_limited", "skipped"].includes(status)) {
     return "blocked";
   }
-  if (["waiting", "idle", "empty", "no_candidates_passed"].includes(status)) {
+  if (
+    ["waiting", "idle", "empty", "no_candidates_passed", "no_candidates", "no_scores", "no_votes"].includes(
+      status,
+    )
+  ) {
     return "idle";
   }
   return "ok";

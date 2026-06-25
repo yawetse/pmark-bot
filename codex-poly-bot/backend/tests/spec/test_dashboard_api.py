@@ -407,6 +407,8 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     pull_rows = client.app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
     scanner_rows = client.app.state.services.registry.state.rows("shared.scanner_runs")
     scanner_candidate_rows = client.app.state.services.registry.state.rows("shared.scanner_candidates")
+    reasoning_rows = client.app.state.services.registry.state.rows("shared.reasoning_runs")
+    strategy_rows = client.app.state.services.registry.state.rows("shared.strategy_consensus_runs")
     pipeline_rows = client.app.state.services.registry.state.rows("shared.pipeline_runs")
     pipeline_step_rows = client.app.state.services.registry.state.rows("shared.pipeline_steps")
 
@@ -426,6 +428,11 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert payload["pipelineRun"]["steps"][1]["metrics"]["rejectedCount"] == 2
     assert payload["scannerRun"]["candidateCount"] == 2
     assert payload["scannerRun"]["rejectedCount"] == 2
+    assert payload["reasoningRun"]["status"] == "no_candidates"
+    assert payload["strategyRun"]["status"] == "no_scores"
+    assert payload["pipelineRun"]["steps"][2]["metrics"]["promptCount"] == 0
+    assert payload["pipelineRun"]["steps"][3]["metrics"]["voteCount"] == 0
+    assert payload["pipelineRun"]["steps"][3]["metrics"]["orderIntentCount"] == 0
     assert payload["marketDataPull"]["trigger"] == "manual"
     assert payload["marketDataPull"]["status"] == "pulled"
     assert {pull["venue"] for pull in payload["marketDataPulls"]} == {
@@ -451,6 +458,10 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert scanner_rows[0]["pipeline_run_id"] == payload["runId"]
     assert scanner_rows[0]["rejected_count"] == 2
     assert {row["status"] for row in scanner_candidate_rows} == {"rejected"}
+    assert reasoning_rows[0]["pipeline_run_id"] == payload["runId"]
+    assert reasoning_rows[0]["status"] == "no_candidates"
+    assert strategy_rows[0]["pipeline_run_id"] == payload["runId"]
+    assert strategy_rows[0]["status"] == "no_scores"
     assert pipeline_rows[0]["id"] == payload["runId"]
     assert len(pipeline_step_rows) == 5
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
@@ -1130,16 +1141,29 @@ def test_req_str_003_05_config_api_saves_scanner_thresholds() -> None:
                     "path": "scanner.alpaca.strategies.momentum.enabled",
                     "value": False,
                 },
+                {
+                    "op": "replace",
+                    "path": "reasoning.polymarket.min_edge",
+                    "value": "0.08",
+                },
+                {
+                    "op": "replace",
+                    "path": "reasoning.alpaca.prompt_version",
+                    "value": "stock-brain-v2",
+                },
             ],
         },
     )
     current = client.get("/api/config/current", headers={"Authorization": f"Bearer {token}"})
     scanner = current.json()["settings"]["scanner"]
+    reasoning = current.json()["settings"]["reasoning"]
 
     assert response.status_code == 200
     assert scanner["polymarket"]["min_depth"] == "750"
     assert scanner["alpaca"]["strategies"]["unusual_volume"]["min_ratio"] == "2.25"
     assert scanner["alpaca"]["strategies"]["momentum"]["enabled"] is False
+    assert reasoning["polymarket"]["min_edge"] == "0.08"
+    assert reasoning["alpaca"]["prompt_version"] == "stock-brain-v2"
 
 
 def test_req_ui_008_03_kill_switch_api_disables_live_and_returns_progress() -> None:

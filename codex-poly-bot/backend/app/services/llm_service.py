@@ -21,7 +21,8 @@ from app.venues.polymarket import VenueCallResult
 
 SCORING_SYSTEM_PROMPT = (
     "Return one JSON object with output_thesis, confidence, "
-    "estimated_probability, and cost_estimate for the candidate."
+    "estimated_probability, and cost_estimate for the candidate. "
+    "Use the requested checks in the output thesis."
 )
 
 SCORING_JSON_SCHEMA: dict[str, Any] = {
@@ -326,6 +327,7 @@ class OpenAIResponsesProvider:
         self.max_output_tokens = max_output_tokens
         self.usage_recorder = usage_recorder
         self.token_pricing = token_pricing
+        self.last_usage_event: LlmUsageEvent | None = None
 
     def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
         """Send a scoring request through OpenAI's Responses API.
@@ -333,6 +335,7 @@ class OpenAIResponsesProvider:
         REQ: REQ-LLM-001, REQ-LLM-003
         """
 
+        self.last_usage_event = None
         body = self.transport.post_json(
             url=f"{self.base_url}/v1/responses",
             headers={
@@ -365,8 +368,6 @@ class OpenAIResponsesProvider:
         return score
 
     def _record_usage(self, *, body: dict[str, Any], fallback_cost: Decimal) -> None:
-        if self.usage_recorder is None:
-            return
         event = _usage_event_from_provider_response(
             body=body,
             model_provider=self.model_provider,
@@ -374,7 +375,10 @@ class OpenAIResponsesProvider:
             fallback_cost=fallback_cost,
             token_pricing=self.token_pricing,
         )
+        self.last_usage_event = event
         if event is None:
+            return
+        if self.usage_recorder is None:
             return
         try:
             self.usage_recorder.record_usage(event)
@@ -412,6 +416,7 @@ class ClaudeMessagesProvider:
         self.max_tokens = max_tokens
         self.usage_recorder = usage_recorder
         self.token_pricing = token_pricing
+        self.last_usage_event: LlmUsageEvent | None = None
 
     def score_candidate(self, request: LlmScoreRequest) -> ScoringOutput:
         """Send a scoring request through Anthropic's Messages API.
@@ -419,6 +424,7 @@ class ClaudeMessagesProvider:
         REQ: REQ-LLM-001, REQ-LLM-003
         """
 
+        self.last_usage_event = None
         body = self.transport.post_json(
             url=f"{self.base_url}/v1/messages",
             headers={
@@ -447,8 +453,6 @@ class ClaudeMessagesProvider:
         return score
 
     def _record_usage(self, *, body: dict[str, Any], fallback_cost: Decimal) -> None:
-        if self.usage_recorder is None:
-            return
         event = _usage_event_from_provider_response(
             body=body,
             model_provider=self.model_provider,
@@ -456,7 +460,10 @@ class ClaudeMessagesProvider:
             fallback_cost=fallback_cost,
             token_pricing=self.token_pricing,
         )
+        self.last_usage_event = event
         if event is None:
+            return
+        if self.usage_recorder is None:
             return
         try:
             self.usage_recorder.record_usage(event)
