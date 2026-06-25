@@ -15,6 +15,12 @@ from app.db import PersistenceUnavailableError, RepositoryRegistry, UnitOfWork
 from app.domain import Environment, ModelProvider, Venue
 from app.services.audit_service import ActorContext, AuditService, ConfigChange, ConfigMutationResult
 from app.services.auth_service import DashboardAccessResult
+from app.services.stock_universe import (
+    DEFAULT_ALPACA_SYMBOL_PRESETS,
+    normalize_preset_name,
+    normalize_symbol_list,
+    resolve_alpaca_symbol_universe,
+)
 
 
 class ConfigConflictError(ValueError):
@@ -133,6 +139,12 @@ class ConfigService:
                 )
 
         assert first_change is not None
+        patched_paths = {patch.path for patch in patches}
+        if patched_paths & {"alpaca.symbol_presets", "alpaca.custom_symbols", "alpaca.custom_presets"}:
+            alpaca_config = next_payload.setdefault("alpaca", {})
+            if isinstance(alpaca_config, dict):
+                alpaca_config["symbol_universe"] = resolve_alpaca_symbol_universe(next_payload)
+
         return self.save_config_change(
             actor=actor,
             environment=environment,
@@ -296,7 +308,29 @@ class ConfigService:
         if patch.path == "alpaca.symbol_universe":
             if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
                 raise ConfigValidationError("alpaca symbol universe must be a non-empty list")
-            return [item.strip().upper() for item in value]
+            return normalize_symbol_list(value)
+        if patch.path == "alpaca.symbol_presets":
+            if not isinstance(value, list):
+                raise ConfigValidationError("alpaca symbol presets must be a list")
+            return [
+                preset
+                for preset in (normalize_preset_name(item) for item in value)
+                if preset
+            ]
+        if patch.path == "alpaca.custom_symbols":
+            if not isinstance(value, list):
+                raise ConfigValidationError("alpaca custom symbols must be a list")
+            return normalize_symbol_list(value)
+        if patch.path == "alpaca.custom_presets":
+            if not isinstance(value, dict):
+                raise ConfigValidationError("alpaca custom presets must be a mapping")
+            normalized_presets = {}
+            for preset_name, symbols in value.items():
+                normalized_name = normalize_preset_name(preset_name)
+                if not normalized_name or not isinstance(symbols, list):
+                    raise ConfigValidationError("alpaca custom presets must map names to symbol lists")
+                normalized_presets[normalized_name] = normalize_symbol_list(symbols)
+            return normalized_presets
         if patch.path == "notifications.recipients":
             if not isinstance(value, dict) or not value:
                 raise ConfigValidationError("notification recipients must be a non-empty mapping")
@@ -395,6 +429,13 @@ class ConfigService:
         )
 
 
+DEFAULT_ALPACA_SYMBOL_UNIVERSE = tuple(
+    resolve_alpaca_symbol_universe(
+        {"alpaca": {"symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS), "custom_symbols": []}}
+    )
+)
+
+
 def default_config_payload() -> dict[str, Any]:
     """Return safe runtime config defaults for dashboard editing.
 
@@ -436,7 +477,10 @@ def default_config_payload() -> dict[str, Any]:
         },
         "alpaca": {
             "account_mode": "paper",
-            "symbol_universe": ["SPY"],
+            "symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS),
+            "custom_symbols": [],
+            "custom_presets": {},
+            "symbol_universe": list(DEFAULT_ALPACA_SYMBOL_UNIVERSE),
         },
         "notifications": {
             "recipients": {},

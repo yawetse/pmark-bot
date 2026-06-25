@@ -8,7 +8,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.adapters.aws import AwsBillingCost
-from app.domain import Environment
+from app.domain import Environment, ModelProvider
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
 
@@ -96,6 +96,7 @@ def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> No
     monkeypatch.setenv("BACKEND_TOKEN_SIGNING_SECRET", "deploy-token-secret")
     monkeypatch.setenv("DASHBOARD_CSRF_TOKEN", "deploy-csrf")
     monkeypatch.setenv("NEXTAUTH_URL", "https://dashboard.example.com")
+    monkeypatch.setenv("ALPACA_SYMBOL_UNIVERSE", "spy, qqq, spy, nvda")
 
     app = create_app()
     settings = app.state.settings
@@ -105,6 +106,13 @@ def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> No
     assert settings.signing_secret == "deploy-token-secret"
     assert settings.csrf_token == "deploy-csrf"
     assert settings.trusted_origins == ("https://dashboard.example.com",)
+    assert settings.alpaca_symbol_presets == ()
+    assert settings.alpaca_symbol_universe == ("SPY", "QQQ", "NVDA")
+    assert app.state.services.runtime_status.runtime_config_payload()["alpaca"]["symbol_universe"] == [
+        "SPY",
+        "QQQ",
+        "NVDA",
+    ]
 
 
 def test_req_ui_003_03_dashboard_api_blocks_unauthenticated_and_unallowlisted_users() -> None:
@@ -397,10 +405,21 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     job_rows = client.app.state.services.registry.state.rows("shared.job_runs")
     audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
     pull_rows = client.app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
+    pipeline_rows = client.app.state.services.registry.state.rows("shared.pipeline_runs")
+    pipeline_step_rows = client.app.state.services.registry.state.rows("shared.pipeline_steps")
 
     assert response.status_code == 202
     payload = response.json()
     assert payload["status"] == "accepted"
+    assert payload["pipelineRun"]["trigger"] == "manual"
+    assert [step["label"] for step in payload["pipelineRun"]["steps"]] == [
+        "Data Fetch",
+        "Scanner",
+        "Reasoning / Brain",
+        "Execution",
+        "Exit",
+    ]
+    assert payload["pipelineRun"]["steps"][0]["metrics"]["candidateCount"] == 2
     assert payload["marketDataPull"]["trigger"] == "manual"
     assert payload["marketDataPull"]["status"] == "pulled"
     assert {pull["venue"] for pull in payload["marketDataPulls"]} == {
@@ -423,9 +442,87 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "polymarket gamma and clob api",
         "alpaca market data api",
     }
+    assert pipeline_rows[0]["id"] == payload["runId"]
+    assert len(pipeline_step_rows) == 5
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
     assert audit_rows[-1]["event_type"] == "manual_loop_trigger"
     assert set(audit_rows[-1]["metadata"]["venues"]) == {"polymarket_us", "alpaca"}
+
+
+def test_req_ui_010_03_model_summary_reads_provider_schema_rows() -> None:
+    """TST-REQ-UI-010-03: Validates REQ-UI-010
+
+    Given: provider schema rows exist for a model
+    When: the model summary endpoint is requested
+    Then: positions, decisions, orders, budget, and P&L come from backend data
+    """
+
+    client, token = _client()
+    state = client.app.state.services.registry.state
+    now = datetime.now(UTC)
+    state.insert(
+        "openai.positions",
+        {
+            "position_id": "pos-1",
+            "state": "open",
+            "realized_pnl": Decimal("3.25"),
+            "unrealized_pnl": Decimal("1.75"),
+            "updated_at": now,
+        },
+    )
+    state.insert(
+        "openai.trade_decisions",
+        {
+            "id": "decision-1",
+            "environment": "development",
+            "model_provider": ModelProvider.OPENAI.value,
+            "venue": "alpaca",
+            "instrument_identifier": "QQQ",
+            "instrument_type": "etf",
+            "signal_inputs": {},
+            "decision": "buy",
+            "order_type": "limit",
+            "size": Decimal("2"),
+            "created_at": now,
+        },
+    )
+    state.insert(
+        "openai.order_events",
+        {
+            "id": "event-1",
+            "order_id": "order-1",
+            "event_type": "submitted",
+            "venue": "alpaca",
+            "model_provider": ModelProvider.OPENAI.value,
+            "message": "dry-run submitted",
+            "created_at": now,
+        },
+    )
+    state.insert(
+        "shared.ai_usage_events",
+        {
+            "id": "usage-1",
+            "environment": "development",
+            "provider": ModelProvider.OPENAI.value,
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "cost_usd": Decimal("0.15"),
+            "created_at": now,
+        },
+    )
+
+    response = client.get(
+        "/api/models/openai/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["positions"][0]["positionId"] == "pos-1"
+    assert payload["decisions"][0]["instrument"] == "QQQ"
+    assert payload["orders"][0]["id"] == "order-1"
+    assert payload["budget"]["used_usd"] == "0.15"
+    assert payload["pnl"] == "5.00"
 
 
 def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> None:
@@ -482,8 +579,15 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
     )
     job_rows = app.state.services.registry.state.rows("shared.job_runs")
     pull_rows = app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
+    pipeline_rows = app.state.services.registry.state.rows("shared.pipeline_runs")
+    pipeline_step_rows = app.state.services.registry.state.rows("shared.pipeline_steps")
 
     assert result["status"] == "partial"
+    assert result["pipelineRun"]["status"] == "partial"
+    assert result["pipelineRun"]["steps"][0]["status"] == "partial"
+    assert result["pipelineRun"]["steps"][0]["recordIds"] == [
+        pull["id"] for pull in result["marketDataPulls"]
+    ]
     assert result["marketDataPull"]["status"] == "partial"
     assert {pull["status"] for pull in result["marketDataPull"]["venues"]} == {
         "rate_limited",
@@ -491,6 +595,8 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
     }
     assert result["marketDataPull"]["candidateCount"] == 1
     assert pull_rows[0]["error_code"] == "provider_rate_limited"
+    assert pipeline_rows[0]["trigger"] == "scheduled"
+    assert len(pipeline_step_rows) == 5
     assert job_rows[-1]["job_name"] == "market-data-ingestion"
     assert job_rows[-1]["status"] == "partial"
 
@@ -715,6 +821,44 @@ def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:
     assert response.json()["applies_on_next_loop"] is True
     assert audit_rows[0]["actor"] == "yaw"
     assert audit_rows[0]["metadata"]["path"] == "venues.polymarket_us.enabled"
+
+
+def test_req_alp_014_03_config_api_saves_presets_and_additive_symbols() -> None:
+    """TST-REQ-ALP-014-03: Validates REQ-ALP-014 and REQ-UI-005
+
+    Given: the default Alpaca universe uses broad presets
+    When: an operator adds a custom preset and one-off IPO symbol
+    Then: the saved config keeps presets and resolves an additive universe
+    """
+
+    client, token = _client()
+    response = client.put(
+        "/api/config",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "environment": "development",
+            "version": "v1",
+            "patches": [
+                {"op": "replace", "path": "alpaca.symbol_presets", "value": ["sp500", "nasdaq100", "new_ipos"]},
+                {"op": "replace", "path": "alpaca.custom_symbols", "value": ["crcl"]},
+                {"op": "replace", "path": "alpaca.custom_presets", "value": {"new_ipos": ["fig"]}},
+            ],
+        },
+    )
+    current = client.get("/api/config/current", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    alpaca = current.json()["settings"]["alpaca"]
+    assert alpaca["symbol_presets"] == ["sp500", "nasdaq100", "new_ipos"]
+    assert alpaca["custom_symbols"] == ["CRCL"]
+    assert alpaca["custom_presets"] == {"new_ipos": ["FIG"]}
+    assert "AAPL" in alpaca["symbol_universe"]
+    assert "CRCL" in alpaca["symbol_universe"]
+    assert "FIG" in alpaca["symbol_universe"]
 
 
 def test_req_ui_008_03_kill_switch_api_disables_live_and_returns_progress() -> None:

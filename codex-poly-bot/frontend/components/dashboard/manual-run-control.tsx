@@ -17,6 +17,31 @@ export type ManualRunResult = {
   message: string;
   marketDataPull: MarketDataPullView;
   marketDataPulls?: MarketDataPullView[];
+  pipelineRun?: PipelineRunView;
+};
+
+export type PipelineStepView = {
+  id: string;
+  key: string;
+  order: number;
+  label: string;
+  status: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  message?: string | null;
+  metrics?: Record<string, unknown>;
+  recordIds?: string[];
+};
+
+export type PipelineRunView = {
+  id: string;
+  environment: string;
+  trigger: string;
+  status: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  metadata?: Record<string, unknown>;
+  steps: PipelineStepView[];
 };
 
 type RunState =

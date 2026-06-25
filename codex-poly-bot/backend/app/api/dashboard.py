@@ -162,8 +162,16 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "orders": {"items": operations["orderEvents"]},
             "models": {
                 "providers": [
-                    _model_summary(ModelProvider.CLAUDE),
-                    _model_summary(ModelProvider.OPENAI),
+                    services.runtime_status.model_summary(
+                        provider=ModelProvider.CLAUDE,
+                        environment=context.environment,
+                        config_payload=settings_payload,
+                    ),
+                    services.runtime_status.model_summary(
+                        provider=ModelProvider.OPENAI,
+                        environment=context.environment,
+                        config_payload=settings_payload,
+                    ),
                 ]
             },
             "comparison": {"metrics": [], "degraded_sections": []},
@@ -373,10 +381,14 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-010
         """
 
+        config_snapshot = _current_config(context.environment)
         return {
             "environment": context.environment.value,
-            "provider": provider.value,
-            **_model_summary(provider),
+            **services.runtime_status.model_summary(
+                provider=provider,
+                environment=context.environment,
+                config_payload=config_snapshot["settings"],
+            ),
         }
 
     @router.get("/api/comparison")
@@ -424,6 +436,20 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "active" if services.kill_switch.state(context.environment).active else "inactive"
         )
         return operations
+
+    @router.get("/api/operations/runs")
+    def operations_runs(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return recent manual and scheduled loop runs with stage details.
+
+        REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-005
+        """
+
+        return {
+            "environment": context.environment.value,
+            "items": services.runtime_status.pipeline_runs(context.environment),
+        }
 
     @router.post("/api/operations/manual-run")
     async def manual_run(
@@ -574,18 +600,6 @@ def _client_ip(request: Request) -> str:
     if request.client is None:
         return "unknown"
     return request.client.host
-
-
-def _model_summary(provider: ModelProvider) -> dict[str, Any]:
-    return {
-        "provider": provider.value,
-        "positions": [],
-        "decisions": [],
-        "orders": [],
-        "budget": {"used_usd": "0.00", "limit_usd": "0.00"},
-        "pnl": "0.00",
-        "degraded_sections": [],
-    }
 
 
 def _now() -> str:

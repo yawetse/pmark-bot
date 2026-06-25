@@ -16,6 +16,11 @@ case "${environment}" in
     alpaca_base_url="${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}"
     alpaca_data_feed="${ALPACA_DATA_FEED:-iex}"
     alpaca_account_status="${ALPACA_ACCOUNT_STATUS:-paper_ready}"
+    alpaca_symbol_presets="${ALPACA_SYMBOL_PRESETS:-sp500,nasdaq100}"
+    alpaca_custom_symbols="${ALPACA_CUSTOM_SYMBOLS:-}"
+    alpaca_symbol_universe="${ALPACA_SYMBOL_UNIVERSE:-}"
+    alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-100}"
+    alpaca_historical_bar_limit="${ALPACA_HISTORICAL_BAR_LIMIT:-30}"
     ;;
   production)
     live_enabled="true"
@@ -29,6 +34,11 @@ case "${environment}" in
     alpaca_base_url="${ALPACA_BASE_URL:-https://api.alpaca.markets}"
     alpaca_data_feed="${ALPACA_DATA_FEED:-iex}"
     alpaca_account_status="${ALPACA_ACCOUNT_STATUS:-reviewing}"
+    alpaca_symbol_presets="${ALPACA_SYMBOL_PRESETS:-sp500,nasdaq100}"
+    alpaca_custom_symbols="${ALPACA_CUSTOM_SYMBOLS:-}"
+    alpaca_symbol_universe="${ALPACA_SYMBOL_UNIVERSE:-}"
+    alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-100}"
+    alpaca_historical_bar_limit="${ALPACA_HISTORICAL_BAR_LIMIT:-30}"
     ;;
   *)
     echo "unsupported environment: ${environment}" >&2
@@ -109,6 +119,11 @@ parameter_overrides=(
   "AlpacaBaseUrl=${alpaca_base_url}"
   "AlpacaDataFeed=${alpaca_data_feed}"
   "AlpacaAccountStatus=${alpaca_account_status}"
+  "AlpacaSymbolPresets=${alpaca_symbol_presets}"
+  "AlpacaCustomSymbols=${alpaca_custom_symbols}"
+  "AlpacaSymbolUniverse=${alpaca_symbol_universe}"
+  "AlpacaSymbolChunkSize=${alpaca_symbol_chunk_size}"
+  "AlpacaHistoricalBarLimit=${alpaca_historical_bar_limit}"
   "SesIdentityEmail=${ses_identity_email}"
   "NotificationRecipients=${notification_recipients}"
   "EnableBackgroundWorker=${enable_background_worker}"

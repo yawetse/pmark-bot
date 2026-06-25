@@ -1,5 +1,10 @@
 // REQ: REQ-UI-004, REQ-UI-010, REQ-CMP-002, REQ-OBS-005
 
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
+
 type AiProviderCostView = {
   provider: string;
   promptTokens: number;
@@ -53,6 +58,29 @@ export type EconomicsSummaryView = {
 };
 
 export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView }) {
+  const providerColumns: DashboardGridColumn<AiProviderCostView>[] = [
+    { field: "provider", headerName: "Provider", minWidth: 140 },
+    {
+      field: "totalTokens",
+      headerName: "Tokens",
+      minWidth: 140,
+      valueFormatter: (params) => formatNumber(Number(params.value ?? 0)),
+    },
+    {
+      field: "costUsd",
+      headerName: "Cost",
+      minWidth: 120,
+      valueFormatter: (params) => formatUsd(String(params.value ?? "0")),
+    },
+    {
+      field: "budgetUsd",
+      headerName: "Budget",
+      minWidth: 120,
+      valueFormatter: (params) => formatUsd(String(params.value ?? "0")),
+    },
+    { field: "events", headerName: "Events", minWidth: 120 },
+  ];
+
   return (
     <section className="operator-panel span-2" aria-labelledby="economics-title">
       <div className="panel-heading">
@@ -99,30 +127,15 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
           </div>
         </div>
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>Tokens</th>
-              <th>Cost</th>
-              <th>Budget</th>
-              <th>Events</th>
-            </tr>
-          </thead>
-          <tbody>
-            {economics.ai.providers.map((provider) => (
-              <tr key={provider.provider}>
-                <td>{provider.provider}</td>
-                <td>{formatNumber(provider.totalTokens)}</td>
-                <td>{formatUsd(provider.costUsd)}</td>
-                <td>{formatUsd(provider.budgetUsd)}</td>
-                <td>{provider.events}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DashboardDataGrid
+        rows={economics.ai.providers}
+        columns={providerColumns}
+        emptyTitle="No token spend recorded"
+        emptyBody="The backend has not recorded provider token usage rows yet."
+        getRowId={(provider) => provider.provider}
+        pageSize={10}
+        searchPlaceholder="Filter providers"
+      />
     </section>
   );
 }

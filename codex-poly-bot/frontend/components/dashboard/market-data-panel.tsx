@@ -1,5 +1,10 @@
 // REQ: REQ-DAT-001, REQ-DAT-008, REQ-OBS-005
 
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
+
 export type MarketDataCandidateView = {
   id: string;
   venue: string;
@@ -10,6 +15,11 @@ export type MarketDataCandidateView = {
   spread?: string | null;
   state: string;
   pulledAt?: string | null;
+  dataSource?: string | null;
+  historyBarCount?: number | null;
+  previousClose?: string | null;
+  historyStart?: string | null;
+  historyEnd?: string | null;
 };
 
 export type MarketDataPullView = {
@@ -37,6 +47,28 @@ export function MarketDataPanel({
   const venuePulls = marketData.venues?.length ? marketData.venues : [marketData];
   const candidates = venuePulls.flatMap((venue) => venue.candidates);
   const latestPulledAt = latestTimestamp(venuePulls);
+  const columns: DashboardGridColumn<MarketDataCandidateView>[] = [
+    {
+      field: "market",
+      headerName: "Candidate",
+      minWidth: 220,
+      valueGetter: (params) => params.data?.market ?? params.data?.symbol ?? params.data?.id ?? "",
+    },
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "price", headerName: "Price", minWidth: 120 },
+    { field: "liquidity", headerName: "Liquidity", minWidth: 130 },
+    { field: "spread", headerName: "Spread", minWidth: 120 },
+    { field: "previousClose", headerName: "Prev Close", minWidth: 130 },
+    { field: "historyBarCount", headerName: "Bars", minWidth: 100 },
+    { field: "dataSource", headerName: "Source", minWidth: 170 },
+    { field: "state", headerName: "State", minWidth: 140 },
+    {
+      field: "pulledAt",
+      headerName: "Pulled",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
   return (
     <section className="operator-panel span-2" aria-labelledby="market-data-title">
       <div className="panel-heading">
@@ -80,39 +112,14 @@ export function MarketDataPanel({
           </article>
         ))}
       </div>
-      {candidates.length > 0 ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Candidate</th>
-                <th>Venue</th>
-                <th>Price</th>
-                <th>Liquidity</th>
-                <th>Spread</th>
-                <th>State</th>
-              </tr>
-            </thead>
-            <tbody>
-              {candidates.map((candidate) => (
-                <tr key={candidate.id}>
-                  <td>{candidate.market ?? candidate.symbol ?? candidate.id}</td>
-                  <td>{candidate.venue}</td>
-                  <td>{candidate.price ?? ""}</td>
-                  <td>{candidate.liquidity ?? ""}</td>
-                  <td>{candidate.spread ?? ""}</td>
-                  <td>{candidate.state}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="empty-state">
-          <strong>No candidates recorded</strong>
-          <p>The dashboard has not received priced candidate rows for the selected environment.</p>
-        </div>
-      )}
+      <DashboardDataGrid
+        rows={candidates}
+        columns={columns}
+        emptyTitle="No candidates recorded"
+        emptyBody="The dashboard has not received priced candidate rows for the selected environment."
+        getRowId={(candidate) => candidate.id}
+        searchPlaceholder="Filter candidates"
+      />
     </section>
   );
 }

@@ -34,6 +34,7 @@ from app.services.config_service import (
     ConfigSaveResult,
     ConfigService,
     ConfigValidationError,
+    DEFAULT_ALPACA_SYMBOL_UNIVERSE,
     RuntimeConfigSnapshot,
     default_config_payload,
 )
@@ -92,6 +93,12 @@ from app.services.ingestion_service import (
 from app.services.market_data_provider import (
     MarketDataProviderResult,
     ProviderBackedMarketDataFetcher,
+)
+from app.services.stock_universe import (
+    BUILT_IN_ALPACA_PRESETS,
+    DEFAULT_ALPACA_SYMBOL_PRESETS,
+    normalize_symbol_list,
+    resolve_alpaca_symbol_universe,
 )
 from app.services.llm_service import (
     ClaudeMessagesProvider,
@@ -194,6 +201,8 @@ __all__ = [
     "ConfigSaveResult",
     "ConfigService",
     "ConfigValidationError",
+    "DEFAULT_ALPACA_SYMBOL_UNIVERSE",
+    "DEFAULT_ALPACA_SYMBOL_PRESETS",
     "ComparisonGroup",
     "ComparisonDashboardView",
     "ComparisonSummary",
@@ -248,6 +257,7 @@ __all__ = [
     "PolymarketRiskInput",
     "PositionMovement",
     "ProviderBackedMarketDataFetcher",
+    "BUILT_IN_ALPACA_PRESETS",
     "RenderedDigest",
     "ReleaseReadinessCheck",
     "ReleaseReadinessSummary",
@@ -297,6 +307,8 @@ __all__ = [
     "mark_comparison_metric_unavailable",
     "reconcile_scoring_cost",
     "record_provider_cost",
+    "normalize_symbol_list",
+    "resolve_alpaca_symbol_universe",
     "release_readiness_summary",
     "render_wallet_dashboard_status",
     "render_daily_digest",

@@ -1,6 +1,13 @@
 // REQ: REQ-UI-010
 
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
+
 export type ModelProviderName = "claude" | "openai";
+
+type ModelRow = Record<string, unknown>;
 
 export type ModelSummary = {
   provider: ModelProviderName;
@@ -9,9 +16,9 @@ export type ModelSummary = {
     limit_usd?: string;
   };
   pnl?: string;
-  positions?: unknown[];
-  decisions?: unknown[];
-  orders?: unknown[];
+  positions?: ModelRow[];
+  decisions?: ModelRow[];
+  orders?: ModelRow[];
   degraded_sections?: string[];
 };
 
@@ -91,37 +98,53 @@ function ModelRows({
   emptyTitle,
   emptyBody,
 }: {
-  rows: unknown[];
+  rows: ModelRow[];
   emptyTitle: string;
   emptyBody: string;
 }) {
-  if (rows.length === 0) {
-    return (
-      <div className="empty-state">
-        <strong>{emptyTitle}</strong>
-        <p>{emptyBody}</p>
-      </div>
-    );
-  }
+  const normalizedRows = rows.map(normalizeRow);
+  const columns = columnsForRows(normalizedRows);
 
   return (
-    <ul className="status-list">
-      {rows.map((row, index) => (
-        <li key={index}>
-          <span>{formatRow(row)}</span>
-          <span className="status ok">recorded</span>
-        </li>
-      ))}
-    </ul>
+    <DashboardDataGrid
+      rows={normalizedRows}
+      columns={columns}
+      emptyTitle={emptyTitle}
+      emptyBody={emptyBody}
+      getRowId={(row) => row.id || row.positionId || JSON.stringify(row)}
+      searchPlaceholder="Filter rows"
+    />
   );
 }
 
-function formatRow(row: unknown): string {
-  if (typeof row === "string") {
-    return row;
+function normalizeRow(row: ModelRow): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, formatCellValue(value)]),
+  );
+}
+
+function columnsForRows(rows: Record<string, string>[]): DashboardGridColumn<Record<string, string>>[] {
+  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+  return keys.map((key) => ({
+    field: key,
+    headerName: titleFromKey(key),
+    minWidth: key.toLowerCase().includes("message") ? 240 : 140,
+  }));
+}
+
+function formatCellValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
   }
-  if (row && typeof row === "object") {
-    return JSON.stringify(row);
+  if (typeof value === "object") {
+    return JSON.stringify(value);
   }
-  return String(row);
+  return String(value);
+}
+
+function titleFromKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (value) => value.toUpperCase());
 }

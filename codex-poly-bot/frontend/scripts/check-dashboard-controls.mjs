@@ -27,6 +27,9 @@ for (const path of [
   "llm.openai.budget_usd",
   "risk.alpaca.max_position_usd",
   "risk.alpaca.market_order_slippage_threshold",
+  "alpaca.symbol_presets",
+  "alpaca.custom_symbols",
+  "alpaca.custom_presets",
   "notifications.recipients",
   "notifications.cooldown_seconds",
 ]) {
@@ -44,6 +47,11 @@ const configControls = read("components/dashboard/config-controls.tsx");
 assert.match(configControls, /isAllowedConfigPath/);
 assert.match(configControls, /dashboardApi<ConfigUpdateResponse>\("config"/);
 assert.match(configControls, /JSON\.parse/);
+assert.match(configControls, /Alpaca stock universe/);
+assert.match(configControls, /Save stock universe/);
+assert.match(configControls, /Resolved symbols/);
+assert.match(configControls, /parseCustomPresets/);
+assert.match(configControls, /parseSymbols/);
 assert.match(configControls, /result\.status === 409/);
 assert.match(configControls, /Current server version is/);
 assert.match(configControls, /CONFIG_PATH_DETAILS/);
@@ -94,6 +102,18 @@ for (const token of [
   "No orders recorded",
 ]) {
   assert.match(commandCenter, new RegExp(token));
+}
+
+const dataGrid = read("components/dashboard/data-grid.tsx");
+for (const token of [
+  "AgGridReact",
+  "AllCommunityModule",
+  "pagination",
+  "quickFilterText",
+  "sortable",
+  "filter",
+]) {
+  assert.match(dataGrid, new RegExp(token));
 }
 
 const loopMonitor = read("components/dashboard/loop-monitor.tsx");

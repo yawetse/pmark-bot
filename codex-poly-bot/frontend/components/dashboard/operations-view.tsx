@@ -6,7 +6,16 @@ import {
   EconomicsPanel,
   type EconomicsSummaryView,
 } from "@/components/dashboard/economics-panel";
-import { ManualRunControl, type ManualRunResult } from "@/components/dashboard/manual-run-control";
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
+import {
+  ManualRunControl,
+  type ManualRunResult,
+  type PipelineRunView,
+  type PipelineStepView,
+} from "@/components/dashboard/manual-run-control";
 import {
   MarketDataPanel,
   type MarketDataPullView,
@@ -16,6 +25,7 @@ import { dashboardApi } from "@/lib/api";
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
 
 const ORDER_STATES = ["refused", "submitted", "filled", "canceled", "failed", "unknown"] as const;
+const PIPELINE_STEP_LABELS = ["Data Fetch", "Scanner", "Reasoning / Brain", "Execution", "Exit"] as const;
 
 type OrderState = (typeof ORDER_STATES)[number];
 
@@ -24,6 +34,7 @@ export type OrderEventView = {
   state: OrderState;
   venue: string;
   provider: string;
+  createdAt?: string | null;
   message?: string | null;
 };
 
@@ -35,6 +46,7 @@ export type OperationsSummaryView = {
   degradedVenueStatus: string;
   manualReviewState: string;
   orderEvents: OrderEventView[];
+  pipelineRuns: PipelineRunView[];
 };
 
 const FALLBACK_OPERATIONS: OperationsSummaryView = {
@@ -45,6 +57,7 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   degradedVenueStatus: "unavailable",
   manualReviewState: "unknown",
   orderEvents: [],
+  pipelineRuns: [],
 };
 
 export function OperationsView({
@@ -61,6 +74,7 @@ export function OperationsView({
   timeZone?: string;
 }) {
   const [latestMarketData, setLatestMarketData] = useState(marketData);
+  const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
   const displayTimeZone = useResolvedTimeZone(timeZone);
   const pendingEvents = summary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
@@ -110,6 +124,8 @@ export function OperationsView({
 
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
 
+      <PipelineRunsPanel runs={pipelineRuns} timeZone={displayTimeZone} />
+
       {latestMarketData ? <MarketDataPanel marketData={latestMarketData} timeZone={displayTimeZone} /> : null}
 
       {economics ? <EconomicsPanel economics={economics} /> : null}
@@ -140,6 +156,12 @@ export function OperationsView({
 
   function onManualRunAccepted(result: ManualRunResult) {
     setLatestMarketData(result.marketDataPull);
+    if (result.pipelineRun) {
+      setPipelineRuns((currentRuns) => [
+        result.pipelineRun as PipelineRunView,
+        ...currentRuns.filter((run) => run.id !== result.pipelineRun?.id),
+      ]);
+    }
   }
 }
 
@@ -165,44 +187,24 @@ function OrderTable({
   emptyTitle: string;
   emptyBody: string;
 }) {
-  if (events.length === 0) {
-    return (
-      <div className="empty-state">
-        <strong>{emptyTitle}</strong>
-        <p>{emptyBody}</p>
-      </div>
-    );
-  }
+  const columns: DashboardGridColumn<OrderEventView>[] = [
+    { field: "id", headerName: "Order", minWidth: 180 },
+    { field: "state", headerName: "State", minWidth: 130 },
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "provider", headerName: "Provider", minWidth: 130 },
+    { field: "message", headerName: "Message", minWidth: 240 },
+    { field: "createdAt", headerName: "Created", minWidth: 190 },
+  ];
 
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Order</th>
-            <th>State</th>
-            <th>Venue</th>
-            <th>Provider</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((event) => (
-            <tr key={event.id}>
-              <td>{event.id}</td>
-              <td>
-                <span className={`status ${event.state === "failed" || event.state === "refused" ? "blocked" : "ok"}`}>
-                  {event.state}
-                </span>
-              </td>
-              <td>{event.venue}</td>
-              <td>{event.provider}</td>
-              <td>{event.message ?? ""}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DashboardDataGrid
+      rows={events}
+      columns={columns}
+      emptyTitle={emptyTitle}
+      emptyBody={emptyBody}
+      getRowId={(event) => event.id}
+      searchPlaceholder="Filter orders"
+    />
   );
 }
 
@@ -213,6 +215,121 @@ function Metric({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function PipelineRunsPanel({
+  runs,
+  timeZone,
+}: {
+  runs: PipelineRunView[];
+  timeZone: string;
+}) {
+  const latestRun = runs[0];
+  const latestSteps: PipelineStepView[] = latestRun?.steps.length
+    ? latestRun.steps
+    : PIPELINE_STEP_LABELS.map((label, index) => ({
+        id: `pending-${index + 1}`,
+        key: label.toLowerCase().replaceAll(" ", "_").replaceAll("/", "_"),
+        order: index + 1,
+        label,
+        status: "waiting",
+        startedAt: null,
+        completedAt: null,
+        message: "Waiting for the next recorded run.",
+        recordIds: [],
+      }));
+  const columns: DashboardGridColumn<PipelineRunView>[] = [
+    { field: "id", headerName: "Run", minWidth: 220 },
+    { field: "trigger", headerName: "Trigger", minWidth: 130 },
+    { field: "status", headerName: "Status", minWidth: 130 },
+    {
+      field: "startedAt",
+      headerName: "Started",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+    {
+      field: "completedAt",
+      headerName: "Completed",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+    {
+      field: "metadata",
+      headerName: "Candidates",
+      minWidth: 130,
+      valueGetter: (params) => String(params.data?.metadata?.candidateCount ?? 0),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="pipeline-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Run pipeline</p>
+          <h2 id="pipeline-title">Latest run steps</h2>
+        </div>
+        <span className={`status ${latestRun ? statusClass(latestRun.status) : "idle"}`}>
+          {latestRun?.status ?? "idle"}
+        </span>
+      </div>
+      {latestRun ? (
+        <div className="pipeline-stepper">
+          {latestSteps.map((step) => (
+            <article className="pipeline-step" key={step.id}>
+              <span className="pipeline-step-index">{step.order}</span>
+              <div>
+                <div className="pipeline-step-heading">
+                  <strong>{step.label}</strong>
+                  <span className={`status ${statusClass(step.status)}`}>{step.status}</span>
+                </div>
+                <p>{step.message}</p>
+                <div className="pipeline-step-meta">
+                  <span>Records: {step.recordIds?.length ?? 0}</span>
+                  <span>Completed: {formatDateTime(step.completedAt, timeZone)}</span>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="panel-note">No manual or scheduled runs have been recorded yet.</p>
+      )}
+      <DashboardDataGrid
+        rows={runs}
+        columns={columns}
+        emptyTitle="No runs recorded"
+        emptyBody="Manual and scheduled runs will appear here after they start."
+        getRowId={(run) => run.id}
+        searchPlaceholder="Filter runs"
+      />
+    </section>
+  );
+}
+
+function formatDateTime(value: string | null | undefined, timeZone: string): string {
+  if (!value) {
+    return "not recorded";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "not recorded";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    timeZone,
+  }).format(date);
+}
+
+function statusClass(status: string): "ok" | "idle" | "blocked" {
+  if (["blocked", "failed", "rate_limited"].includes(status)) {
+    return "blocked";
+  }
+  if (["waiting", "idle", "empty"].includes(status)) {
+    return "idle";
+  }
+  return "ok";
 }
 
 function KillSwitchControl({ active }: { active: boolean }) {

@@ -8,6 +8,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 const modelSummary = read("components/dashboard/model-summary.tsx");
 for (const token of [
+  "DashboardDataGrid",
   "positions",
   "decisions",
   "orders",
@@ -35,6 +36,14 @@ for (const token of [
   "Pending Orders",
   "Trade and Order History",
   "ManualRunControl",
+  "PipelineRunsPanel",
+  "Run pipeline",
+  "Data Fetch",
+  "Scanner",
+  "Reasoning / Brain",
+  "Execution",
+  "Exit",
+  "pipelineRuns",
   "MarketDataPanel",
   "EconomicsPanel",
   "No pending orders",
@@ -70,7 +79,25 @@ for (const token of [
   "market-venue-card",
   "Latest pull",
 ]) {
-  assert.match(marketDataPanel, new RegExp(token));
+assert.match(marketDataPanel, new RegExp(token));
+}
+assert.match(marketDataPanel, /DashboardDataGrid/);
+
+const economicsPanel = read("components/dashboard/economics-panel.tsx");
+assert.match(economicsPanel, /DashboardDataGrid/);
+
+const dataGrid = read("components/dashboard/data-grid.tsx");
+for (const token of ["AgGridReact", "paginationPageSizeSelector", "quickFilterText"]) {
+  assert.match(dataGrid, new RegExp(token));
+}
+for (const view of [
+  operationsView,
+  marketDataPanel,
+  modelSummary,
+  comparisonView,
+  economicsPanel,
+]) {
+  assert.doesNotMatch(view, /<table/);
 }
 
 const helpPage = read("app/dashboard/help/page.tsx");
