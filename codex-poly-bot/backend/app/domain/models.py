@@ -94,8 +94,12 @@ class ExitTriggerType(str, Enum):
     """
 
     PROFIT_TARGET = "profit_target"
+    STOP_LOSS = "stop_loss"
+    TRAILING_STOP = "trailing_stop"
     VOLUME_SPIKE = "volume_spike"
     STALE_THESIS = "stale_thesis"
+    STALE_POSITION = "stale_position"
+    MARKET_HOURS = "market_hours"
 
 
 class DomainModel(BaseModel):

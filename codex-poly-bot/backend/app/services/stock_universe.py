@@ -1,10 +1,11 @@
 """Alpaca stock universe presets and symbol resolution helpers.
 
-REQ: REQ-DAT-008, REQ-UI-005, REQ-ALP-014
+REQ: REQ-DAT-008, REQ-UI-005, REQ-ALP-014, REQ-ALP-015
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Iterable
 
 
@@ -92,6 +93,17 @@ BUILT_IN_ALPACA_PRESETS: dict[str, tuple[str, ...]] = {
 }
 
 DEFAULT_ALPACA_SYMBOL_PRESETS = ("sp500", "nasdaq100")
+DEFAULT_ALPACA_PRESET_SOURCE_URLS: dict[str, str] = {
+    "sp500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+    "nasdaq100": "https://en.wikipedia.org/wiki/Nasdaq-100",
+}
+DEFAULT_ALPACA_PRESET_REFRESH_CONFIG: dict[str, Any] = {
+    "enabled": True,
+    "cadence_hours": 24,
+    "stale_after_hours": 168,
+    "sources": DEFAULT_ALPACA_PRESET_SOURCE_URLS,
+}
+SEED_SNAPSHOT_EFFECTIVE_AT = datetime(2026, 6, 25, tzinfo=UTC)
 
 
 def normalize_symbol_list(raw: Iterable[Any]) -> list[str]:
@@ -112,6 +124,25 @@ def normalize_preset_name(raw: Any) -> str:
     return str(raw).strip().lower().replace(" ", "_")
 
 
+def seed_alpaca_preset_snapshots() -> dict[str, dict[str, Any]]:
+    """Return static seed snapshots used before provider refresh runs."""
+
+    return {
+        preset_name: {
+            "presetName": preset_name,
+            "status": "seed",
+            "source": "static_seed",
+            "sourceUrl": DEFAULT_ALPACA_PRESET_SOURCE_URLS.get(preset_name),
+            "symbols": list(symbols),
+            "symbolCount": len(symbols),
+            "effectiveAt": SEED_SNAPSHOT_EFFECTIVE_AT.isoformat(),
+            "refreshedAt": SEED_SNAPSHOT_EFFECTIVE_AT.isoformat(),
+            "message": "Seed membership captured on 2026-06-25.",
+        }
+        for preset_name, symbols in BUILT_IN_ALPACA_PRESETS.items()
+    }
+
+
 def resolve_alpaca_symbol_universe(config_payload: dict[str, Any]) -> list[str]:
     """Resolve built-in presets, user presets, and individual custom symbols."""
 
@@ -123,6 +154,7 @@ def resolve_alpaca_symbol_universe(config_payload: dict[str, Any]) -> list[str]:
         return normalize_symbol_list(alpaca_config.get("symbol_universe") or [])
 
     custom_presets = _custom_presets(alpaca_config.get("custom_presets"))
+    preset_snapshots = _preset_snapshots(alpaca_config.get("preset_snapshots"))
     active_presets = [
         normalize_preset_name(preset)
         for preset in alpaca_config.get("symbol_presets") or ()
@@ -130,10 +162,57 @@ def resolve_alpaca_symbol_universe(config_payload: dict[str, Any]) -> list[str]:
     ]
     symbols: list[str] = []
     for preset in active_presets:
-        symbols.extend(BUILT_IN_ALPACA_PRESETS.get(preset, ()))
+        snapshot = preset_snapshots.get(preset)
+        symbols.extend(snapshot.get("symbols", ()) if snapshot else BUILT_IN_ALPACA_PRESETS.get(preset, ()))
         symbols.extend(custom_presets.get(preset, ()))
     symbols.extend(alpaca_config.get("custom_symbols") or ())
     return normalize_symbol_list(symbols)
+
+
+def stock_universe_metadata(config_payload: dict[str, Any], *, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Return dashboard metadata for active stock universe presets."""
+
+    alpaca_config = config_payload.get("alpaca", {})
+    if not isinstance(alpaca_config, dict):
+        return []
+    observed_at = now or datetime.now(UTC)
+    preset_snapshots = _preset_snapshots(alpaca_config.get("preset_snapshots"))
+    custom_presets = _custom_presets(alpaca_config.get("custom_presets"))
+    active_presets = [
+        normalize_preset_name(preset)
+        for preset in alpaca_config.get("symbol_presets") or ()
+        if normalize_preset_name(preset)
+    ]
+    rows: list[dict[str, Any]] = []
+    for preset in active_presets:
+        snapshot = preset_snapshots.get(preset)
+        snapshot_symbols = normalize_symbol_list(snapshot.get("symbols", ())) if snapshot else []
+        custom_symbols = custom_presets.get(preset, [])
+        fallback_symbols = normalize_symbol_list(BUILT_IN_ALPACA_PRESETS.get(preset, ()))
+        effective_symbols = normalize_symbol_list(snapshot_symbols or fallback_symbols)
+        combined_symbols = normalize_symbol_list([*effective_symbols, *custom_symbols])
+        refreshed_at = _parse_datetime((snapshot or {}).get("refreshedAt"))
+        age_hours = (
+            int((observed_at - refreshed_at).total_seconds() // 3600)
+            if refreshed_at is not None
+            else None
+        )
+        rows.append(
+            {
+                "presetName": preset,
+                "status": (snapshot or {}).get("status") or ("custom" if custom_symbols and not effective_symbols else "seed"),
+                "source": (snapshot or {}).get("source") or ("custom_preset" if custom_symbols and not effective_symbols else "static_seed"),
+                "sourceUrl": (snapshot or {}).get("sourceUrl"),
+                "symbolCount": len(combined_symbols),
+                "snapshotSymbolCount": len(effective_symbols),
+                "customSymbolCount": len(custom_symbols),
+                "effectiveAt": (snapshot or {}).get("effectiveAt"),
+                "refreshedAt": (snapshot or {}).get("refreshedAt"),
+                "ageHours": age_hours,
+                "message": (snapshot or {}).get("message"),
+            }
+        )
+    return rows
 
 
 def _custom_presets(raw: Any) -> dict[str, list[str]]:
@@ -146,3 +225,34 @@ def _custom_presets(raw: Any) -> dict[str, list[str]]:
             continue
         presets[preset_name] = normalize_symbol_list(symbols)
     return presets
+
+
+def _preset_snapshots(raw: Any) -> dict[str, dict[str, Any]]:
+    source = raw if isinstance(raw, dict) else seed_alpaca_preset_snapshots()
+    snapshots: dict[str, dict[str, Any]] = {}
+    for name, snapshot in source.items():
+        preset_name = normalize_preset_name(name)
+        if not preset_name or not isinstance(snapshot, dict):
+            continue
+        symbols = normalize_symbol_list(snapshot.get("symbols") or [])
+        if not symbols:
+            continue
+        snapshots[preset_name] = {
+            **snapshot,
+            "presetName": preset_name,
+            "symbols": symbols,
+            "symbolCount": len(symbols),
+        }
+    return snapshots
+
+
+def _parse_datetime(raw: Any) -> datetime | None:
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=UTC)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)

@@ -679,6 +679,64 @@ class SharedRepositories:
             if row["environment"] == environment.value
         ]
 
+    def record_alpaca_symbol_preset_snapshot(
+        self,
+        *,
+        environment: Environment,
+        preset_name: str,
+        status: str,
+        source: str,
+        source_url: str | None,
+        symbols: list | tuple,
+        effective_at: datetime,
+        refreshed_at: datetime,
+        message: str | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        normalized_symbols = [
+            str(symbol).strip().upper().replace(".", "-")
+            for symbol in symbols
+            if str(symbol).strip()
+        ]
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.alpaca_symbol_preset_snapshots",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "preset_name": preset_name.strip().lower().replace(" ", "_"),
+                "status": status,
+                "source": source,
+                "source_url": source_url,
+                "symbols": list(dict.fromkeys(normalized_symbols)),
+                "symbol_count": len(dict.fromkeys(normalized_symbols)),
+                "effective_at": effective_at,
+                "refreshed_at": refreshed_at,
+                "message": message,
+                "created_at": created_at or refreshed_at,
+            },
+        )
+
+    def alpaca_symbol_preset_snapshots(
+        self,
+        *,
+        environment: Environment,
+        preset_name: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_symbol_preset_snapshots")
+            if row["environment"] == environment.value
+        ]
+        if preset_name is not None:
+            normalized = preset_name.strip().lower().replace(" ", "_")
+            rows = [row for row in rows if row["preset_name"] == normalized]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
     def record_alpaca_historical_order(
         self,
         *,
@@ -1467,6 +1525,275 @@ class SharedRepositories:
             rows = [row for row in rows if row["consensus_run_id"] == consensus_run_id]
         if model_provider is not None:
             rows = [row for row in rows if row["model_provider"] == model_provider.value]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
+    def record_execution_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        strategy_consensus_run_id: str | None,
+        trigger: str,
+        status: str,
+        config: dict,
+        intent_count: int,
+        submitted_count: int,
+        simulated_count: int,
+        refused_count: int,
+        reconciliation_count: int,
+        started_at: datetime,
+        completed_at: datetime,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.execution_runs",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "pipeline_run_id": pipeline_run_id,
+                "strategy_consensus_run_id": strategy_consensus_run_id,
+                "trigger": trigger,
+                "status": status,
+                "config": _json_ready(config),
+                "intent_count": max(0, int(intent_count)),
+                "submitted_count": max(0, int(submitted_count)),
+                "simulated_count": max(0, int(simulated_count)),
+                "refused_count": max(0, int(refused_count)),
+                "reconciliation_count": max(0, int(reconciliation_count)),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "created_at": created_at or completed_at,
+            },
+        )
+
+    def record_order_intent(
+        self,
+        *,
+        environment: Environment,
+        execution_run_id: str,
+        pipeline_run_id: str,
+        strategy_consensus_output_id: str | None,
+        venue: str,
+        instrument_id: str,
+        model_provider: ModelProvider,
+        side: str,
+        order_type: str,
+        status: str,
+        notional_usd: Decimal,
+        size_multiplier: Decimal,
+        idempotency_key: str,
+        risk_payload: dict,
+        source_payload: dict,
+        refusal_reason: str | None = None,
+        venue_order_id: str | None = None,
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        table = f"{SHARED_SCHEMA}.order_intents"
+        for row in self.state.rows(table):
+            if row["idempotency_key"] == idempotency_key:
+                row.update(
+                    {
+                        "status": status,
+                        "refusal_reason": refusal_reason,
+                        "venue_order_id": venue_order_id,
+                        "risk_payload": _json_ready(risk_payload),
+                        "source_payload": _json_ready(source_payload),
+                        "updated_at": updated_at or datetime.now(UTC),
+                    }
+                )
+                return row
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            table,
+            {
+                "id": str(uuid4()),
+                "execution_run_id": execution_run_id,
+                "pipeline_run_id": pipeline_run_id,
+                "strategy_consensus_output_id": strategy_consensus_output_id,
+                "environment": environment.value,
+                "venue": venue,
+                "instrument_id": instrument_id,
+                "model_provider": model_provider.value,
+                "side": side,
+                "order_type": order_type,
+                "status": status,
+                "notional_usd": Decimal(str(notional_usd)),
+                "size_multiplier": Decimal(str(size_multiplier)),
+                "idempotency_key": idempotency_key,
+                "refusal_reason": refusal_reason,
+                "venue_order_id": venue_order_id,
+                "risk_payload": _json_ready(risk_payload),
+                "source_payload": _json_ready(source_payload),
+                "created_at": now,
+                "updated_at": updated_at or now,
+            },
+        )
+
+    def execution_runs(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.execution_runs")
+            if row["environment"] == environment.value
+        ]
+
+    def order_intents(
+        self,
+        *,
+        environment: Environment,
+        execution_run_id: str | None = None,
+        pipeline_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.order_intents")
+            if row["environment"] == environment.value
+        ]
+        if execution_run_id is not None:
+            rows = [row for row in rows if row["execution_run_id"] == execution_run_id]
+        if pipeline_run_id is not None:
+            rows = [row for row in rows if row["pipeline_run_id"] == pipeline_run_id]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
+    def record_exit_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        trigger: str,
+        status: str,
+        config: dict,
+        open_position_count: int,
+        triggered_count: int,
+        simulated_count: int,
+        submitted_count: int,
+        refused_count: int,
+        started_at: datetime,
+        completed_at: datetime,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.exit_runs",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "pipeline_run_id": pipeline_run_id,
+                "trigger": trigger,
+                "status": status,
+                "config": _json_ready(config),
+                "open_position_count": max(0, int(open_position_count)),
+                "triggered_count": max(0, int(triggered_count)),
+                "simulated_count": max(0, int(simulated_count)),
+                "submitted_count": max(0, int(submitted_count)),
+                "refused_count": max(0, int(refused_count)),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "created_at": created_at or completed_at,
+            },
+        )
+
+    def record_exit_intent(
+        self,
+        *,
+        environment: Environment,
+        exit_run_id: str,
+        pipeline_run_id: str,
+        venue: str,
+        instrument_id: str,
+        position_id: str,
+        trigger_type: str,
+        status: str,
+        side: str,
+        notional_usd: Decimal,
+        idempotency_key: str,
+        source_payload: dict,
+        model_provider: ModelProvider | None = None,
+        quantity: Decimal | None = None,
+        threshold: Decimal | None = None,
+        observed_value: Decimal | None = None,
+        refusal_reason: str | None = None,
+        venue_order_id: str | None = None,
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        table = f"{SHARED_SCHEMA}.exit_intents"
+        for row in self.state.rows(table):
+            if row["idempotency_key"] == idempotency_key:
+                row.update(
+                    {
+                        "status": status,
+                        "refusal_reason": refusal_reason,
+                        "venue_order_id": venue_order_id,
+                        "source_payload": _json_ready(source_payload),
+                        "updated_at": updated_at or datetime.now(UTC),
+                    }
+                )
+                return row
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            table,
+            {
+                "id": str(uuid4()),
+                "exit_run_id": exit_run_id,
+                "pipeline_run_id": pipeline_run_id,
+                "environment": environment.value,
+                "venue": venue,
+                "instrument_id": instrument_id,
+                "position_id": position_id,
+                "model_provider": model_provider.value if model_provider else None,
+                "trigger_type": trigger_type,
+                "status": status,
+                "side": side,
+                "quantity": None if quantity is None else Decimal(str(quantity)),
+                "notional_usd": Decimal(str(notional_usd)),
+                "threshold": None if threshold is None else Decimal(str(threshold)),
+                "observed_value": None if observed_value is None else Decimal(str(observed_value)),
+                "idempotency_key": idempotency_key,
+                "refusal_reason": refusal_reason,
+                "venue_order_id": venue_order_id,
+                "source_payload": _json_ready(source_payload),
+                "created_at": now,
+                "updated_at": updated_at or now,
+            },
+        )
+
+    def exit_runs(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.exit_runs")
+            if row["environment"] == environment.value
+        ]
+
+    def exit_intents(
+        self,
+        *,
+        environment: Environment,
+        exit_run_id: str | None = None,
+        pipeline_run_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.exit_intents")
+            if row["environment"] == environment.value
+        ]
+        if exit_run_id is not None:
+            rows = [row for row in rows if row["exit_run_id"] == exit_run_id]
+        if pipeline_run_id is not None:
+            rows = [row for row in rows if row["pipeline_run_id"] == pipeline_run_id]
         if status is not None:
             rows = [row for row in rows if row["status"] == status]
         return rows

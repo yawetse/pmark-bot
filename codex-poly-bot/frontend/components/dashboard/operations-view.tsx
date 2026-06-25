@@ -235,6 +235,104 @@ export type StrategyConsensusSummaryView = {
   outputs: StrategyConsensusOutputView[];
 };
 
+export type OrderIntentView = {
+  id: string;
+  executionRunId?: string | null;
+  pipelineRunId?: string | null;
+  consensusOutputId?: string | null;
+  venue: string;
+  instrumentId: string;
+  modelProvider: string;
+  side: string;
+  orderType: string;
+  status: string;
+  notionalUsd?: string | null;
+  sizeMultiplier?: string | null;
+  idempotencyKey?: string | null;
+  refusalReason?: string | null;
+  venueOrderId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ExecutionRunView = {
+  id?: string | null;
+  environment?: string;
+  pipelineRunId?: string | null;
+  strategyConsensusRunId?: string | null;
+  trigger?: string;
+  status: string;
+  intentCount: number;
+  submittedCount: number;
+  simulatedCount: number;
+  refusedCount: number;
+  reconciliationCount?: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  intents: OrderIntentView[];
+};
+
+export type ExecutionSummaryView = {
+  status: string;
+  message: string;
+  latestRun?: ExecutionRunView | null;
+  intentCount: number;
+  submittedCount: number;
+  simulatedCount: number;
+  refusedCount: number;
+  intents: OrderIntentView[];
+};
+
+export type ExitIntentView = {
+  id: string;
+  exitRunId?: string | null;
+  pipelineRunId?: string | null;
+  venue: string;
+  instrumentId: string;
+  positionId: string;
+  modelProvider?: string | null;
+  triggerType: string;
+  status: string;
+  side: string;
+  quantity?: string | null;
+  notionalUsd?: string | null;
+  threshold?: string | null;
+  observedValue?: string | null;
+  idempotencyKey?: string | null;
+  refusalReason?: string | null;
+  venueOrderId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type ExitRunView = {
+  id?: string | null;
+  environment?: string;
+  pipelineRunId?: string | null;
+  trigger?: string;
+  status: string;
+  openPositionCount: number;
+  triggeredCount: number;
+  submittedCount: number;
+  simulatedCount: number;
+  refusedCount: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  intents: ExitIntentView[];
+};
+
+export type ExitSummaryView = {
+  status: string;
+  message: string;
+  latestRun?: ExitRunView | null;
+  openPositionCount: number;
+  triggeredCount: number;
+  submittedCount: number;
+  simulatedCount: number;
+  refusedCount: number;
+  intents: ExitIntentView[];
+};
+
 export type OperationsSummaryView = {
   killSwitch: string;
   openOrders: number;
@@ -247,6 +345,8 @@ export type OperationsSummaryView = {
   scanner?: ScannerSummaryView;
   reasoning?: ReasoningSummaryView;
   strategyConsensus?: StrategyConsensusSummaryView;
+  execution?: ExecutionSummaryView;
+  exit?: ExitSummaryView;
   historicalImport?: HistoricalImportView;
   brokerHistory?: BrokerHistoryView;
 };
@@ -315,6 +415,29 @@ const FALLBACK_STRATEGY_CONSENSUS: StrategyConsensusSummaryView = {
   outputs: [],
 };
 
+const FALLBACK_EXECUTION: ExecutionSummaryView = {
+  status: "idle",
+  message: "No execution run has been recorded yet.",
+  latestRun: null,
+  intentCount: 0,
+  submittedCount: 0,
+  simulatedCount: 0,
+  refusedCount: 0,
+  intents: [],
+};
+
+const FALLBACK_EXIT: ExitSummaryView = {
+  status: "idle",
+  message: "No exit run has been recorded yet.",
+  latestRun: null,
+  openPositionCount: 0,
+  triggeredCount: 0,
+  submittedCount: 0,
+  simulatedCount: 0,
+  refusedCount: 0,
+  intents: [],
+};
+
 const FALLBACK_OPERATIONS: OperationsSummaryView = {
   killSwitch: "unknown",
   openOrders: 0,
@@ -327,6 +450,8 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   scanner: FALLBACK_SCANNER,
   reasoning: FALLBACK_REASONING,
   strategyConsensus: FALLBACK_STRATEGY_CONSENSUS,
+  execution: FALLBACK_EXECUTION,
+  exit: FALLBACK_EXIT,
   historicalImport: FALLBACK_HISTORICAL_IMPORT,
   brokerHistory: FALLBACK_BROKER_HISTORY,
 };
@@ -351,6 +476,8 @@ export function OperationsView({
   const [strategyConsensus, setStrategyConsensus] = useState(
     summary.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS,
   );
+  const [execution, setExecution] = useState(summary.execution ?? FALLBACK_EXECUTION);
+  const [exit, setExit] = useState(summary.exit ?? FALLBACK_EXIT);
   const displayTimeZone = useResolvedTimeZone(timeZone);
   const pendingEvents = summary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
@@ -407,6 +534,10 @@ export function OperationsView({
       <ReasoningPanel reasoning={reasoning} timeZone={displayTimeZone} />
 
       <StrategyConsensusPanel strategyConsensus={strategyConsensus} timeZone={displayTimeZone} />
+
+      <ExecutionPanel execution={execution} timeZone={displayTimeZone} />
+
+      <ExitPanel exit={exit} timeZone={displayTimeZone} />
 
       <HistoricalImportPanel
         historicalImport={summary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
@@ -490,6 +621,33 @@ export function OperationsView({
         refusedCount: strategyRun.refusedCount ?? 0,
         votes: strategyRun.votes ?? [],
         outputs: strategyRun.outputs ?? [],
+      });
+    }
+    if (result.executionRun) {
+      const executionRun = result.executionRun as ExecutionRunView;
+      setExecution({
+        status: executionRun.status ?? "idle",
+        message: `Latest execution recorded ${executionRun.intentCount ?? 0} intents, simulated ${executionRun.simulatedCount ?? 0}, submitted ${executionRun.submittedCount ?? 0}, and refused ${executionRun.refusedCount ?? 0}.`,
+        latestRun: executionRun,
+        intentCount: executionRun.intentCount ?? 0,
+        submittedCount: executionRun.submittedCount ?? 0,
+        simulatedCount: executionRun.simulatedCount ?? 0,
+        refusedCount: executionRun.refusedCount ?? 0,
+        intents: executionRun.intents ?? [],
+      });
+    }
+    if (result.exitRun) {
+      const exitRun = result.exitRun as ExitRunView;
+      setExit({
+        status: exitRun.status ?? "idle",
+        message: `Latest exit run saw ${exitRun.openPositionCount ?? 0} open positions and recorded ${exitRun.triggeredCount ?? 0} exit intents.`,
+        latestRun: exitRun,
+        openPositionCount: exitRun.openPositionCount ?? 0,
+        triggeredCount: exitRun.triggeredCount ?? 0,
+        submittedCount: exitRun.submittedCount ?? 0,
+        simulatedCount: exitRun.simulatedCount ?? 0,
+        refusedCount: exitRun.refusedCount ?? 0,
+        intents: exitRun.intents ?? [],
       });
     }
   }
@@ -919,6 +1077,114 @@ function StrategyConsensusPanel({
   );
 }
 
+function ExecutionPanel({
+  execution,
+  timeZone,
+}: {
+  execution: ExecutionSummaryView;
+  timeZone: string;
+}) {
+  const columns: DashboardGridColumn<OrderIntentView>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "instrumentId", headerName: "Instrument", minWidth: 220 },
+    { field: "modelProvider", headerName: "Provider", minWidth: 130 },
+    { field: "status", headerName: "State", minWidth: 120 },
+    { field: "side", headerName: "Side", minWidth: 100 },
+    { field: "orderType", headerName: "Type", minWidth: 100 },
+    { field: "notionalUsd", headerName: "Notional", minWidth: 120 },
+    { field: "sizeMultiplier", headerName: "Size", minWidth: 110 },
+    { field: "refusalReason", headerName: "Refusal", minWidth: 260 },
+    { field: "venueOrderId", headerName: "Venue order", minWidth: 180 },
+    {
+      field: "createdAt",
+      headerName: "Created",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="execution-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Execution</p>
+          <h2 id="execution-title">Risk gates and order intents</h2>
+        </div>
+        <span className={`status ${statusClass(execution.status)}`}>{execution.status}</span>
+      </div>
+      <p className="panel-note">{execution.message}</p>
+      <div className="metric-grid">
+        <Metric label="Intents" value={String(execution.intentCount)} />
+        <Metric label="Simulated" value={String(execution.simulatedCount)} />
+        <Metric label="Submitted" value={String(execution.submittedCount)} />
+        <Metric label="Refused" value={String(execution.refusedCount)} />
+      </div>
+      <DashboardDataGrid
+        rows={execution.intents}
+        columns={columns}
+        emptyTitle="No order intents"
+        emptyBody="Order intents will appear after approved consensus output passes risk gates."
+        getRowId={(intent) => intent.id}
+        searchPlaceholder="Filter order intents"
+      />
+    </section>
+  );
+}
+
+function ExitPanel({
+  exit,
+  timeZone,
+}: {
+  exit: ExitSummaryView;
+  timeZone: string;
+}) {
+  const columns: DashboardGridColumn<ExitIntentView>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "instrumentId", headerName: "Instrument", minWidth: 220 },
+    { field: "positionId", headerName: "Position", minWidth: 220 },
+    { field: "triggerType", headerName: "Trigger", minWidth: 150 },
+    { field: "status", headerName: "State", minWidth: 120 },
+    { field: "quantity", headerName: "Qty", minWidth: 100 },
+    { field: "notionalUsd", headerName: "Notional", minWidth: 120 },
+    { field: "threshold", headerName: "Threshold", minWidth: 120 },
+    { field: "observedValue", headerName: "Observed", minWidth: 120 },
+    { field: "refusalReason", headerName: "Refusal", minWidth: 260 },
+    {
+      field: "createdAt",
+      headerName: "Created",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="exit-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Exit</p>
+          <h2 id="exit-title">Open-position monitoring</h2>
+        </div>
+        <span className={`status ${statusClass(exit.status)}`}>{exit.status}</span>
+      </div>
+      <p className="panel-note">{exit.message}</p>
+      <div className="metric-grid">
+        <Metric label="Open positions" value={String(exit.openPositionCount)} />
+        <Metric label="Triggered" value={String(exit.triggeredCount)} />
+        <Metric label="Simulated" value={String(exit.simulatedCount)} />
+        <Metric label="Refused" value={String(exit.refusedCount)} />
+      </div>
+      <DashboardDataGrid
+        rows={exit.intents}
+        columns={columns}
+        emptyTitle="No exit intents"
+        emptyBody="Exit intents will appear after open positions cross configured exit thresholds."
+        getRowId={(intent) => intent.id}
+        searchPlaceholder="Filter exit intents"
+      />
+    </section>
+  );
+}
+
 function BrokerHistoryPanel({
   brokerHistory,
   timeZone,
@@ -1032,13 +1298,23 @@ function formatDateTime(value: string | null | undefined, timeZone: string): str
 }
 
 function statusClass(status: string): "ok" | "idle" | "blocked" {
-  if (["blocked", "failed", "rate_limited", "skipped"].includes(status)) {
+  if (["blocked", "failed", "rate_limited", "skipped", "refused"].includes(status)) {
     return "blocked";
   }
   if (
-    ["waiting", "idle", "empty", "no_candidates_passed", "no_candidates", "no_scores", "no_votes"].includes(
-      status,
-    )
+    [
+      "waiting",
+      "idle",
+      "empty",
+      "no_candidates_passed",
+      "no_candidates",
+      "no_scores",
+      "no_votes",
+      "no_consensus",
+      "no_intents",
+      "no_positions",
+      "no_triggers",
+    ].includes(status)
   ) {
     return "idle";
   }

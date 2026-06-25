@@ -16,14 +16,42 @@ from app.domain import Environment, ModelProvider, Venue
 from app.services.audit_service import ActorContext, AuditService, ConfigChange, ConfigMutationResult
 from app.services.auth_service import DashboardAccessResult
 from app.services.stock_universe import (
+    DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
     DEFAULT_ALPACA_SYMBOL_PRESETS,
     normalize_preset_name,
     normalize_symbol_list,
     resolve_alpaca_symbol_universe,
+    seed_alpaca_preset_snapshots,
+    stock_universe_metadata,
 )
+from app.services.stock_universe_refresh_service import latest_preset_snapshot_payloads
 from app.services.scanner_service import DEFAULT_SCANNER_CONFIG
 from app.services.brain_service import DEFAULT_REASONING_CONFIG
 from app.services.strategy_consensus_service import DEFAULT_STRATEGY_CONSENSUS_CONFIG
+
+
+DEFAULT_EXECUTION_CONFIG = {
+    "market_data_freshness_seconds": 300,
+    "order_type": "market",
+    "alpaca": {"model_capital_usd": "1000.00"},
+}
+DEFAULT_EXIT_CONFIG = {
+    "polymarket": {
+        "profit_target_usd": "5.00",
+        "profit_target_pct": "0.25",
+        "volume_spike_multiplier": "3.00",
+        "max_thesis_age_hours": "72",
+        "min_stale_price_move_pct": "0.10",
+    },
+    "alpaca": {
+        "profit_target_pct": "0.08",
+        "stop_loss_pct": "0.04",
+        "trailing_stop_pct": "0.05",
+        "max_position_age_hours": "168",
+        "min_stale_price_move_pct": "0.03",
+        "market_hours_only": True,
+    },
+}
 
 
 class ConfigConflictError(ValueError):
@@ -143,10 +171,15 @@ class ConfigService:
 
         assert first_change is not None
         patched_paths = {patch.path for patch in patches}
-        if patched_paths & {"alpaca.symbol_presets", "alpaca.custom_symbols", "alpaca.custom_presets"}:
+        if patched_paths & {
+            "alpaca.symbol_presets",
+            "alpaca.custom_symbols",
+            "alpaca.custom_presets",
+        }:
             alpaca_config = next_payload.setdefault("alpaca", {})
             if isinstance(alpaca_config, dict):
                 alpaca_config["symbol_universe"] = resolve_alpaca_symbol_universe(next_payload)
+                alpaca_config["preset_metadata"] = stock_universe_metadata(next_payload)
 
         return self.save_config_change(
             actor=actor,
@@ -217,7 +250,7 @@ class ConfigService:
         snapshot = RuntimeConfigSnapshot(
             environment=environment,
             version=row["version"],
-            payload=deepcopy(row["payload"]),
+            payload=self._with_stock_universe_snapshots(environment, deepcopy(row["payload"])),
         )
         self._last_good_snapshots[environment] = snapshot
         return ConfigReloadResult(snapshot=snapshot)
@@ -246,8 +279,43 @@ class ConfigService:
     def _current_payload(self, environment: Environment) -> dict[str, Any]:
         row = self._latest_config_row(environment)
         if row is not None:
-            return deepcopy(row["payload"])
-        return default_config_payload()
+            return self._with_stock_universe_snapshots(environment, deepcopy(row["payload"]))
+        return self._with_stock_universe_snapshots(environment, default_config_payload())
+
+    def _with_stock_universe_snapshots(
+        self,
+        environment: Environment,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        alpaca_config = payload.setdefault("alpaca", {})
+        if not isinstance(alpaca_config, dict):
+            return payload
+        refresh_config = alpaca_config.get("preset_refresh")
+        sources = {}
+        if isinstance(refresh_config, dict) and isinstance(refresh_config.get("sources"), dict):
+            sources = refresh_config["sources"]
+        alpaca_config["preset_refresh"] = {
+            **DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
+            **(refresh_config if isinstance(refresh_config, dict) else {}),
+            "sources": {
+                **DEFAULT_ALPACA_PRESET_REFRESH_CONFIG["sources"],
+                **sources,
+            },
+        }
+        snapshots = self._latest_preset_snapshots(environment)
+        alpaca_config["preset_snapshots"] = snapshots
+        if "symbol_presets" in alpaca_config or "custom_symbols" in alpaca_config:
+            alpaca_config["symbol_universe"] = resolve_alpaca_symbol_universe(payload)
+        alpaca_config["preset_metadata"] = stock_universe_metadata(payload)
+        return payload
+
+    def _latest_preset_snapshots(self, environment: Environment) -> dict[str, dict[str, Any]]:
+        try:
+            rows = self.registry.shared().alpaca_symbol_preset_snapshots(environment=environment)
+        except PersistenceUnavailableError:
+            return seed_alpaca_preset_snapshots()
+        snapshots = latest_preset_snapshot_payloads(rows)
+        return snapshots or seed_alpaca_preset_snapshots()
 
     def _validated_patch_value(self, patch: ConfigPatchOperation) -> Any:
         if patch.op not in {"add", "replace", "remove"}:
@@ -283,6 +351,10 @@ class ConfigService:
             return self._positive_int(value, patch.path)
         if parts[:1] == ["reasoning"] and len(parts) >= 3:
             return self._validated_reasoning_patch_value(parts, value, patch.path)
+        if parts[:1] == ["execution"] and len(parts) >= 2:
+            return self._validated_execution_patch_value(parts, value, patch.path)
+        if parts[:1] == ["exit"] and len(parts) >= 3:
+            return self._validated_exit_patch_value(parts, value, patch.path)
         if parts[:1] == ["llm"] and len(parts) >= 3:
             self._require_model_provider(parts[1])
             if len(parts) == 3 and parts[2] == "budget_usd":
@@ -340,6 +412,8 @@ class ConfigService:
                     raise ConfigValidationError("alpaca custom presets must map names to symbol lists")
                 normalized_presets[normalized_name] = normalize_symbol_list(symbols)
             return normalized_presets
+        if parts[:2] == ["alpaca", "preset_refresh"]:
+            return self._validated_preset_refresh_patch_value(parts, value, patch.path)
         if patch.path == "notifications.recipients":
             if not isinstance(value, dict) or not value:
                 raise ConfigValidationError("notification recipients must be a non-empty mapping")
@@ -416,6 +490,54 @@ class ConfigService:
             if not isinstance(value, list) or not set(value) <= allowed:
                 raise ConfigValidationError("unsupported Alpaca reasoning input")
             return list(dict.fromkeys(value))
+        raise ConfigValidationError(f"unsupported config path: {path}")
+
+    def _validated_execution_patch_value(self, parts: list[str], value: Any, path: str) -> Any:
+        if len(parts) == 2 and parts[1] == "market_data_freshness_seconds":
+            return self._positive_int(value, path)
+        if len(parts) == 2 and parts[1] == "order_type":
+            if value not in {"market", "limit"}:
+                raise ConfigValidationError("execution order type must be market or limit")
+            return value
+        if len(parts) == 3 and parts[1] == "alpaca" and parts[2] == "model_capital_usd":
+            return str(self._positive_decimal(value, path))
+        raise ConfigValidationError(f"unsupported config path: {path}")
+
+    def _validated_exit_patch_value(self, parts: list[str], value: Any, path: str) -> Any:
+        if parts[1] not in {"polymarket", "alpaca"}:
+            raise ConfigValidationError("unsupported exit venue")
+        if parts[1] == "alpaca" and len(parts) == 3 and parts[2] == "market_hours_only":
+            return self._bool(value, path)
+        if parts[-1] in {"max_thesis_age_hours", "max_position_age_hours"}:
+            return str(self._positive_decimal(value, path))
+        if parts[-1] in {
+            "profit_target_usd",
+            "profit_target_pct",
+            "volume_spike_multiplier",
+            "min_stale_price_move_pct",
+            "stop_loss_pct",
+            "trailing_stop_pct",
+        }:
+            return str(self._positive_decimal(value, path))
+        raise ConfigValidationError(f"unsupported config path: {path}")
+
+    def _validated_preset_refresh_patch_value(self, parts: list[str], value: Any, path: str) -> Any:
+        if len(parts) != 3:
+            raise ConfigValidationError(f"unsupported config path: {path}")
+        if parts[2] == "enabled":
+            return self._bool(value, path)
+        if parts[2] in {"cadence_hours", "stale_after_hours"}:
+            return self._positive_int(value, path)
+        if parts[2] == "sources":
+            if not isinstance(value, dict):
+                raise ConfigValidationError("alpaca preset refresh sources must be a mapping")
+            sources = {}
+            for preset_name, source_url in value.items():
+                normalized_name = normalize_preset_name(preset_name)
+                if not normalized_name or not isinstance(source_url, str) or not source_url.strip():
+                    raise ConfigValidationError("alpaca preset refresh sources must map presets to URLs")
+                sources[normalized_name] = source_url.strip()
+            return sources
         raise ConfigValidationError(f"unsupported config path: {path}")
 
     def _apply_patch(self, payload: dict[str, Any], patch: ConfigPatchOperation, value: Any) -> None:
@@ -506,7 +628,13 @@ class ConfigService:
 
 DEFAULT_ALPACA_SYMBOL_UNIVERSE = tuple(
     resolve_alpaca_symbol_universe(
-        {"alpaca": {"symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS), "custom_symbols": []}}
+        {
+            "alpaca": {
+                "symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS),
+                "custom_symbols": [],
+                "preset_snapshots": seed_alpaca_preset_snapshots(),
+            }
+        }
     )
 )
 
@@ -517,7 +645,7 @@ def default_config_payload() -> dict[str, Any]:
     REQ: REQ-UI-005, REQ-EXE-001, REQ-EXE-007, REQ-STR-002
     """
 
-    return {
+    payload = {
         "default_selected_venue": Venue.POLYMARKET_US.value,
         "live_enabled": False,
         "venues": {
@@ -553,11 +681,15 @@ def default_config_payload() -> dict[str, Any]:
         "scanner": DEFAULT_SCANNER_CONFIG,
         "reasoning": DEFAULT_REASONING_CONFIG,
         "strategy_consensus": DEFAULT_STRATEGY_CONSENSUS_CONFIG,
+        "execution": DEFAULT_EXECUTION_CONFIG,
+        "exit": DEFAULT_EXIT_CONFIG,
         "alpaca": {
             "account_mode": "paper",
             "symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS),
             "custom_symbols": [],
             "custom_presets": {},
+            "preset_refresh": DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
+            "preset_snapshots": seed_alpaca_preset_snapshots(),
             "symbol_universe": list(DEFAULT_ALPACA_SYMBOL_UNIVERSE),
         },
         "notifications": {
@@ -567,6 +699,8 @@ def default_config_payload() -> dict[str, Any]:
             "digest_schedule_utc": "13:00",
         },
     }
+    payload["alpaca"]["preset_metadata"] = stock_universe_metadata(payload)
+    return payload
 
 
 def _valid_hhmm(value: str) -> bool:

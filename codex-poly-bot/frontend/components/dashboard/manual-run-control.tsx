@@ -43,6 +43,25 @@ export type ManualRunResult = {
     votes?: unknown[];
     outputs?: unknown[];
   };
+  executionRun?: {
+    id?: string | null;
+    status?: string;
+    intentCount?: number;
+    submittedCount?: number;
+    simulatedCount?: number;
+    refusedCount?: number;
+    intents?: unknown[];
+  };
+  exitRun?: {
+    id?: string | null;
+    status?: string;
+    openPositionCount?: number;
+    triggeredCount?: number;
+    submittedCount?: number;
+    simulatedCount?: number;
+    refusedCount?: number;
+    intents?: unknown[];
+  };
   pipelineRun?: PipelineRunView;
 };
 
