@@ -192,6 +192,47 @@ def _shared_tables() -> list[Table]:
             schema=SHARED_SCHEMA,
         ),
         Table(
+            "scanner_runs",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("pipeline_run_id", String, nullable=False),
+            Column("trigger", String, nullable=False),
+            Column("status", String, nullable=False),
+            Column("config", JSONB, nullable=False),
+            Column("source_pull_ids", JSONB, nullable=False),
+            Column("accepted_count", Integer, nullable=False),
+            Column("rejected_count", Integer, nullable=False),
+            Column("started_at", DateTime(timezone=True), nullable=False),
+            Column("completed_at", DateTime(timezone=True), nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "scanner_candidates",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("scanner_run_id", String, nullable=False),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("instrument_id", String, nullable=False),
+            Column("display_name", String, nullable=False),
+            Column("symbol", String, nullable=True),
+            Column("market_id", String, nullable=True),
+            Column("outcome_id", String, nullable=True),
+            Column("status", String, nullable=False),
+            Column("refusal_reason", String, nullable=True),
+            Column("strategy_names", JSONB, nullable=False),
+            Column("price", Numeric(18, 8), nullable=True),
+            Column("liquidity", Numeric(18, 8), nullable=True),
+            Column("spread", Numeric(18, 8), nullable=True),
+            Column("hours_to_resolution", Numeric(18, 8), nullable=True),
+            Column("metrics", JSONB, nullable=False),
+            Column("source_payload", JSONB, nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
             "pipeline_runs",
             metadata,
             Column("id", String, primary_key=True),
@@ -673,6 +714,19 @@ Index(
     "ix_historical_import_checkpoints_environment_source",
     metadata.tables["shared.historical_import_checkpoints"].c.environment,
     metadata.tables["shared.historical_import_checkpoints"].c.source,
+)
+
+Index(
+    "ix_scanner_runs_environment_started_at",
+    metadata.tables["shared.scanner_runs"].c.environment,
+    metadata.tables["shared.scanner_runs"].c.started_at,
+)
+
+Index(
+    "ix_scanner_candidates_environment_venue_status",
+    metadata.tables["shared.scanner_candidates"].c.environment,
+    metadata.tables["shared.scanner_candidates"].c.venue,
+    metadata.tables["shared.scanner_candidates"].c.status,
 )
 
 Index(
