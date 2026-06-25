@@ -100,6 +100,17 @@ from app.services.stock_universe import (
     normalize_symbol_list,
     resolve_alpaca_symbol_universe,
 )
+from app.services.stock_history_service import (
+    ALPACA_BROKER_HISTORY_SOURCE_PREFIX,
+    ALPACA_DATA_BASE_URL,
+    ALPACA_LIVE_TRADING_BASE_URL,
+    ALPACA_PAPER_TRADING_BASE_URL,
+    ALPACA_STOCK_BARS_SOURCE_PREFIX,
+    AlpacaBrokerHistoryBackfiller,
+    AlpacaHistoricalImportSummary,
+    AlpacaHistoryImportError,
+    AlpacaStockHistoryImporter,
+)
 from app.services.llm_service import (
     ClaudeMessagesProvider,
     FakeLlmProvider,
@@ -196,10 +207,19 @@ from app.services.wallet_service import (
 
 __all__ = [
     "ActorContext",
+    "ALPACA_BROKER_HISTORY_SOURCE_PREFIX",
+    "ALPACA_DATA_BASE_URL",
+    "ALPACA_LIVE_TRADING_BASE_URL",
+    "ALPACA_PAPER_TRADING_BASE_URL",
+    "ALPACA_STOCK_BARS_SOURCE_PREFIX",
+    "AlpacaBrokerHistoryBackfiller",
     "AlpacaExecutionRequest",
     "AlpacaExecutionResult",
+    "AlpacaHistoricalImportSummary",
+    "AlpacaHistoryImportError",
     "AlpacaRiskConfig",
     "AlpacaRiskInput",
+    "AlpacaStockHistoryImporter",
     "AlertCooldownLedger",
     "AlertCooldownResult",
     "AuditService",

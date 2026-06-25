@@ -62,11 +62,11 @@ Polymarket:
 
 Stocks:
 
-- [ ] Add schema for Alpaca historical fills, orders, positions, and account snapshots.
-- [ ] Add schema for daily and intraday stock bars used for scanner backtests.
-- [ ] Implement Alpaca historical order and fill import for paper and live accounts.
-- [ ] Implement realized and unrealized stock P&L reconstruction.
-- [ ] Show broker history import status in the dashboard.
+- [x] Add schema for Alpaca historical fills, orders, positions, and account snapshots.
+- [x] Add schema for daily and intraday stock bars used for scanner backtests.
+- [x] Implement Alpaca historical order and fill import for paper and live accounts.
+- [x] Implement realized and unrealized stock P&L reconstruction.
+- [x] Show broker history import status in the dashboard.
 
 ## Phase 2: Scanner
 

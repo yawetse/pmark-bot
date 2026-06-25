@@ -544,6 +544,120 @@ def test_req_dat_009_11_operations_summary_exposes_historical_import_status() ->
     assert historical["lastUpdatedAt"] == observed.isoformat()
 
 
+def test_req_alp_017_06_operations_summary_exposes_broker_history_status() -> None:
+    """TST-REQ-ALP-017-06: Validates REQ-ALP-017, REQ-DAT-008, and REQ-UI-004
+
+    Given: Alpaca broker history rows and checkpoints exist
+    When: the operations summary endpoint is requested
+    Then: the dashboard receives broker counts separate from Polymarket import status
+    """
+    client, token = _client()
+    shared = client.app.state.services.registry.shared()
+    observed = datetime(2026, 6, 25, 16, 0, tzinfo=UTC)
+    shared.record_alpaca_historical_order(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        order_id="order-1",
+        symbol="SPY",
+        side="buy",
+        status="filled",
+        raw_payload={"id": "order-1"},
+        submitted_at=observed,
+    )
+    fill = shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-1",
+        order_id="order-1",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("500"),
+        filled_at=observed,
+        raw_payload={"id": "fill-1"},
+    )
+    position = shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("500"),
+        market_value=Decimal("505"),
+        unrealized_pnl_usd=Decimal("5"),
+        raw_payload={"symbol": "SPY"},
+        observed_at=observed,
+    )
+    shared.record_alpaca_broker_account_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        account_status="ACTIVE",
+        buying_power=Decimal("1000"),
+        raw_payload={"id": "acct-1"},
+        observed_at=observed,
+    )
+    shared.record_stock_bar(
+        environment=Environment.DEVELOPMENT,
+        symbol="SPY",
+        timeframe="1Day",
+        bar_start_at=observed,
+        open_price=Decimal("500"),
+        high_price=Decimal("506"),
+        low_price=Decimal("499"),
+        close_price=Decimal("505"),
+        volume=Decimal("1000000"),
+        source="alpaca market data api",
+        raw_payload={"t": observed.isoformat()},
+    )
+    shared.record_alpaca_symbol_pnl_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        open_quantity=Decimal("1"),
+        realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("5"),
+        total_pnl_usd=Decimal("5"),
+        cost_basis=Decimal("500"),
+        market_value=Decimal("505"),
+        fill_ids=[fill["id"]],
+        position_id=position["id"],
+        calculated_at=observed,
+    )
+    shared.upsert_historical_import_checkpoint(
+        environment=Environment.DEVELOPMENT,
+        source="alpaca_broker_history:paper",
+        cursor_type="timestamp",
+        cursor_value=observed.isoformat(),
+        status="stored",
+        metadata={"fills": 1},
+        last_success_at=observed,
+        updated_at=observed,
+    )
+
+    response = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+    broker = payload["brokerHistory"]
+
+    assert response.status_code == 200
+    assert payload["historicalImport"]["status"] == "idle"
+    assert broker["status"] == "stored"
+    assert broker["counts"]["orders"] == 1
+    assert broker["counts"]["fills"] == 1
+    assert broker["counts"]["positions"] == 1
+    assert broker["counts"]["accountSnapshots"] == 1
+    assert broker["counts"]["bars"] == 1
+    assert broker["counts"]["pnlSnapshots"] == 1
+    assert broker["checkpoints"][0]["source"] == "alpaca_broker_history:paper"
+    assert broker["lastUpdatedAt"] == observed.isoformat()
+
+
 def test_req_ui_010_03_model_summary_reads_provider_schema_rows() -> None:
     """TST-REQ-UI-010-03: Validates REQ-UI-010
 

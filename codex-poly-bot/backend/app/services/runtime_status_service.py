@@ -619,6 +619,7 @@ class RuntimeStatusService:
             "orderEvents": order_items,
             "pipelineRuns": self.pipeline_runs(environment),
             "historicalImport": self.historical_import_summary(environment),
+            "brokerHistory": self.broker_history_summary(environment),
         }
 
     def historical_import_summary(self, environment: Environment) -> dict[str, Any]:
@@ -640,6 +641,9 @@ class RuntimeStatusService:
             checkpoints = self.registry.shared().historical_import_checkpoints(
                 environment=environment
             )
+            checkpoints = [
+                row for row in checkpoints if _polymarket_history_checkpoint(row.get("source"))
+            ]
             wallet_positions = [
                 row
                 for row in self.registry.state.rows(f"{SHARED_SCHEMA}.polymarket_wallet_positions")
@@ -669,6 +673,73 @@ class RuntimeStatusService:
         return {
             "status": status,
             "message": _historical_import_message(status=status, counts=counts, latest=latest),
+            "counts": counts,
+            "checkpoints": [
+                {
+                    "id": row["id"],
+                    "source": row["source"],
+                    "cursorType": row["cursor_type"],
+                    "cursorValue": row["cursor_value"],
+                    "status": row["status"],
+                    "lastSuccessAt": _isoformat_or_none(row.get("last_success_at")),
+                    "updatedAt": _isoformat_or_none(row.get("updated_at")),
+                    "metadata": row.get("metadata", {}),
+                }
+                for row in checkpoints[:10]
+            ],
+            "lastUpdatedAt": _isoformat_or_none(
+                latest.get("updated_at") if latest else None
+            ),
+        }
+
+    def broker_history_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return Alpaca broker history import status for operations UI.
+
+        REQ: REQ-ALP-017, REQ-DAT-008, REQ-UI-004, REQ-OBS-005
+        """
+
+        try:
+            orders = self.registry.shared().alpaca_historical_orders(environment=environment)
+            fills = self.registry.shared().alpaca_historical_fills(environment=environment)
+            positions = self.registry.shared().alpaca_historical_positions(environment=environment)
+            account_snapshots = self.registry.shared().alpaca_broker_account_snapshots(
+                environment=environment
+            )
+            bars = self.registry.shared().stock_bars(environment=environment)
+            pnl_snapshots = self.registry.shared().alpaca_symbol_pnl_snapshots(
+                environment=environment
+            )
+            checkpoints = [
+                row
+                for row in self.registry.shared().historical_import_checkpoints(
+                    environment=environment
+                )
+                if _alpaca_history_checkpoint(row.get("source"))
+            ]
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Broker history status is unavailable because persistence is offline.",
+                "counts": _empty_broker_history_counts(),
+                "checkpoints": [],
+                "lastUpdatedAt": None,
+            }
+
+        checkpoints.sort(key=_historical_checkpoint_sort_key, reverse=True)
+        counts = {
+            "orders": len(orders),
+            "fills": len(fills),
+            "positions": len(positions),
+            "accountSnapshots": len(account_snapshots),
+            "bars": len(bars),
+            "pnlSnapshots": len(pnl_snapshots),
+            "checkpoints": len(checkpoints),
+        }
+        status = _historical_import_status(checkpoints=checkpoints, counts=counts)
+        latest = checkpoints[0] if checkpoints else None
+        return {
+            "status": status,
+            "message": _broker_history_message(status=status, counts=counts, latest=latest),
             "counts": counts,
             "checkpoints": [
                 {
@@ -2150,6 +2221,28 @@ def _empty_historical_import_counts() -> dict[str, int]:
     }
 
 
+def _empty_broker_history_counts() -> dict[str, int]:
+    return {
+        "orders": 0,
+        "fills": 0,
+        "positions": 0,
+        "accountSnapshots": 0,
+        "bars": 0,
+        "pnlSnapshots": 0,
+        "checkpoints": 0,
+    }
+
+
+def _polymarket_history_checkpoint(source: Any) -> bool:
+    text = str(source or "")
+    return text.startswith("polymarket_") or text.startswith("polygon_")
+
+
+def _alpaca_history_checkpoint(source: Any) -> bool:
+    text = str(source or "")
+    return text.startswith("alpaca_broker_history") or text.startswith("alpaca_stock_bars")
+
+
 def _historical_checkpoint_sort_key(row: dict[str, Any]) -> datetime:
     for key in ("updated_at", "last_success_at"):
         value = row.get(key)
@@ -2190,6 +2283,27 @@ def _historical_import_message(
         f"{'' if counts['gammaMarkets'] == 1 else 's'}, {counts['chainFills']} chain fill"
         f"{'' if counts['chainFills'] == 1 else 's'}, and {counts['walletStats']} wallet stat"
         f"{'' if counts['walletStats'] == 1 else 's'} stored."
+    )
+
+
+def _broker_history_message(
+    *,
+    status: str,
+    counts: dict[str, int],
+    latest: dict[str, Any] | None,
+) -> str:
+    if status == "idle":
+        return "No Alpaca broker history import records have been stored yet."
+    if status == "failed" and latest is not None:
+        return f"Latest broker history import failed for {latest.get('source', 'unknown source')}."
+    if status == "rate_limited" and latest is not None:
+        return f"Latest broker history import was rate limited for {latest.get('source', 'unknown source')}."
+    return (
+        f"Broker history has {counts['orders']} order"
+        f"{'' if counts['orders'] == 1 else 's'}, {counts['fills']} fill"
+        f"{'' if counts['fills'] == 1 else 's'}, {counts['positions']} position"
+        f"{'' if counts['positions'] == 1 else 's'}, and {counts['bars']} stock bar"
+        f"{'' if counts['bars'] == 1 else 's'} stored."
     )
 
 

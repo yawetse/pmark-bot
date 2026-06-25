@@ -143,6 +143,12 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.polymarket_wallet_performance_stats" in plan.table_names
     assert "shared.polymarket_target_wallet_snapshots" in plan.table_names
     assert "shared.historical_import_checkpoints" in plan.table_names
+    assert "shared.alpaca_historical_orders" in plan.table_names
+    assert "shared.alpaca_historical_fills" in plan.table_names
+    assert "shared.alpaca_historical_positions" in plan.table_names
+    assert "shared.alpaca_broker_account_snapshots" in plan.table_names
+    assert "shared.stock_bars" in plan.table_names
+    assert "shared.alpaca_symbol_pnl_snapshots" in plan.table_names
     assert "openai.order_intents" in plan.table_names
     assert "openai.strategy_signals" in plan.table_names
     assert all("..." not in statement for statement in plan.sql)
@@ -354,6 +360,111 @@ def test_req_db_003_04_shared_polymarket_history_records_persist_for_step_zero()
     assert len(shared.polymarket_wallet_performance_stats(environment=Environment.DEVELOPMENT)) == 1
     assert snapshot["wallet_count"] == 1
     assert checkpoint["cursor_value"] == "123"
+
+def test_req_db_003_05_shared_alpaca_history_records_persist_for_step_zero() -> None:
+    """TST-REQ-DB-003-05: Validates REQ-DB-003, REQ-ALP-017, and REQ-DAT-008
+
+    Given: Alpaca order, fill, position, account, bar, P&L, and checkpoint rows
+    When: the shared repositories persist the stock broker history
+    Then: Step 0 stock data can be read back for scanner and profitability work
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    observed = datetime(2026, 6, 25, 14, 0, tzinfo=UTC)
+
+    order = shared.record_alpaca_historical_order(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        order_id="order-1",
+        symbol="spy",
+        side="buy",
+        order_type="market",
+        status="filled",
+        quantity=Decimal("2"),
+        filled_quantity=Decimal("2"),
+        filled_avg_price=Decimal("500"),
+        raw_payload={"id": "order-1"},
+        submitted_at=observed,
+    )
+    fill = shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-1",
+        order_id=order["order_id"],
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("2"),
+        price=Decimal("500"),
+        filled_at=observed,
+        raw_payload={"id": "fill-1"},
+    )
+    position = shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("500"),
+        market_value=Decimal("505"),
+        current_price=Decimal("505"),
+        unrealized_pnl_usd=Decimal("5"),
+        raw_payload={"symbol": "SPY"},
+        observed_at=observed,
+    )
+    shared.record_alpaca_broker_account_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        account_status="ACTIVE",
+        buying_power=Decimal("1000"),
+        raw_payload={"id": "acct-1"},
+        observed_at=observed,
+    )
+    shared.record_stock_bar(
+        environment=Environment.DEVELOPMENT,
+        symbol="SPY",
+        timeframe="1Day",
+        bar_start_at=observed,
+        open_price=Decimal("500"),
+        high_price=Decimal("506"),
+        low_price=Decimal("499"),
+        close_price=Decimal("505"),
+        volume=Decimal("1000000"),
+        source="alpaca market data api",
+        raw_payload={"t": observed.isoformat()},
+    )
+    pnl = shared.record_alpaca_symbol_pnl_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        open_quantity=Decimal("1"),
+        average_entry_price=Decimal("500"),
+        realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("5"),
+        total_pnl_usd=Decimal("5"),
+        cost_basis=Decimal("500"),
+        market_value=Decimal("505"),
+        fill_ids=[fill["id"]],
+        position_id=position["id"],
+        calculated_at=observed,
+    )
+    shared.upsert_historical_import_checkpoint(
+        environment=Environment.DEVELOPMENT,
+        source="alpaca_broker_history:paper",
+        cursor_type="timestamp",
+        cursor_value=observed.isoformat(),
+        status="stored",
+    )
+
+    assert len(shared.alpaca_historical_orders(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.alpaca_historical_fills(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.alpaca_historical_positions(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.alpaca_broker_account_snapshots(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.stock_bars(environment=Environment.DEVELOPMENT)) == 1
+    assert shared.alpaca_symbol_pnl_snapshots(environment=Environment.DEVELOPMENT)[0]["id"] == pnl["id"]
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003

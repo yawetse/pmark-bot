@@ -64,6 +64,22 @@ export type HistoricalImportView = {
   lastUpdatedAt?: string | null;
 };
 
+export type BrokerHistoryView = {
+  status: string;
+  message: string;
+  counts: {
+    orders: number;
+    fills: number;
+    positions: number;
+    accountSnapshots: number;
+    bars: number;
+    pnlSnapshots: number;
+    checkpoints: number;
+  };
+  checkpoints: HistoricalImportCheckpointView[];
+  lastUpdatedAt?: string | null;
+};
+
 export type OperationsSummaryView = {
   killSwitch: string;
   openOrders: number;
@@ -74,6 +90,7 @@ export type OperationsSummaryView = {
   orderEvents: OrderEventView[];
   pipelineRuns: PipelineRunView[];
   historicalImport?: HistoricalImportView;
+  brokerHistory?: BrokerHistoryView;
 };
 
 const FALLBACK_HISTORICAL_IMPORT: HistoricalImportView = {
@@ -92,6 +109,22 @@ const FALLBACK_HISTORICAL_IMPORT: HistoricalImportView = {
   lastUpdatedAt: null,
 };
 
+const FALLBACK_BROKER_HISTORY: BrokerHistoryView = {
+  status: "idle",
+  message: "No Alpaca broker history import records have been stored yet.",
+  counts: {
+    orders: 0,
+    fills: 0,
+    positions: 0,
+    accountSnapshots: 0,
+    bars: 0,
+    pnlSnapshots: 0,
+    checkpoints: 0,
+  },
+  checkpoints: [],
+  lastUpdatedAt: null,
+};
+
 const FALLBACK_OPERATIONS: OperationsSummaryView = {
   killSwitch: "unknown",
   openOrders: 0,
@@ -102,6 +135,7 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   orderEvents: [],
   pipelineRuns: [],
   historicalImport: FALLBACK_HISTORICAL_IMPORT,
+  brokerHistory: FALLBACK_BROKER_HISTORY,
 };
 
 export function OperationsView({
@@ -172,6 +206,11 @@ export function OperationsView({
 
       <HistoricalImportPanel
         historicalImport={summary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
+        timeZone={displayTimeZone}
+      />
+
+      <BrokerHistoryPanel
+        brokerHistory={summary.brokerHistory ?? FALLBACK_BROKER_HISTORY}
         timeZone={displayTimeZone}
       />
 
@@ -416,6 +455,68 @@ function HistoricalImportPanel({
         emptyBody="Historical import checkpoints will appear after Gamma or Polygon backfills run."
         getRowId={(checkpoint) => checkpoint.id}
         searchPlaceholder="Filter checkpoints"
+      />
+    </section>
+  );
+}
+
+function BrokerHistoryPanel({
+  brokerHistory,
+  timeZone,
+}: {
+  brokerHistory: BrokerHistoryView;
+  timeZone: string;
+}) {
+  const columns: DashboardGridColumn<HistoricalImportCheckpointView>[] = [
+    { field: "source", headerName: "Source", minWidth: 220 },
+    { field: "status", headerName: "Status", minWidth: 130 },
+    { field: "cursorType", headerName: "Cursor", minWidth: 130 },
+    { field: "cursorValue", headerName: "Value", minWidth: 140 },
+    {
+      field: "lastSuccessAt",
+      headerName: "Last success",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+    {
+      field: "updatedAt",
+      headerName: "Updated",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="broker-history-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Broker history</p>
+          <h2 id="broker-history-title">Alpaca history</h2>
+        </div>
+        <span className={`status ${statusClass(brokerHistory.status)}`}>
+          {brokerHistory.status}
+        </span>
+      </div>
+      <p className="panel-note">{brokerHistory.message}</p>
+      <div className="metric-grid">
+        <Metric label="Orders" value={String(brokerHistory.counts.orders)} />
+        <Metric label="Fills" value={String(brokerHistory.counts.fills)} />
+        <Metric label="Positions" value={String(brokerHistory.counts.positions)} />
+        <Metric label="Account snapshots" value={String(brokerHistory.counts.accountSnapshots)} />
+      </div>
+      <div className="metric-grid">
+        <Metric label="Stock bars" value={String(brokerHistory.counts.bars)} />
+        <Metric label="P&L snapshots" value={String(brokerHistory.counts.pnlSnapshots)} />
+        <Metric label="Checkpoints" value={String(brokerHistory.counts.checkpoints)} />
+        <Metric label="Updated" value={formatDateTime(brokerHistory.lastUpdatedAt, timeZone)} />
+      </div>
+      <DashboardDataGrid
+        rows={brokerHistory.checkpoints}
+        columns={columns}
+        emptyTitle="No broker checkpoints"
+        emptyBody="Alpaca broker history checkpoints will appear after order, fill, position, or bar imports run."
+        getRowId={(checkpoint) => checkpoint.id}
+        searchPlaceholder="Filter broker checkpoints"
       />
     </section>
   );
