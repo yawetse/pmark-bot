@@ -23,6 +23,11 @@ from app.services.market_data_provider import (
     MarketDataProvider,
     ProviderBackedMarketDataFetcher,
 )
+from app.services.scanner_service import (
+    DEFAULT_SCANNER_CONFIG,
+    ScannerService,
+    scanner_run_payload,
+)
 from app.services.stock_universe import DEFAULT_ALPACA_SYMBOL_PRESETS
 
 
@@ -80,6 +85,8 @@ class RuntimeStatusService:
     MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.dashboard_market_data_pulls"
     PIPELINE_RUNS_TABLE = f"{SHARED_SCHEMA}.pipeline_runs"
     PIPELINE_STEPS_TABLE = f"{SHARED_SCHEMA}.pipeline_steps"
+    SCANNER_RUNS_TABLE = f"{SHARED_SCHEMA}.scanner_runs"
+    SCANNER_CANDIDATES_TABLE = f"{SHARED_SCHEMA}.scanner_candidates"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
     ECONOMICS_SNAPSHOTS_TABLE = f"{SHARED_SCHEMA}.economics_snapshots"
     PIPELINE_STAGES = (
@@ -106,6 +113,7 @@ class RuntimeStatusService:
         self.market_data_fetcher = market_data_fetcher or ProviderBackedMarketDataFetcher(
             environ=getattr(settings, "runtime_env", {})
         )
+        self.scanner = ScannerService(self.registry)
 
     def runtime_config_payload(self) -> dict[str, Any]:
         """Return config defaults aligned to deployed runtime flags.
@@ -168,6 +176,7 @@ class RuntimeStatusService:
                     "market_order_slippage_threshold": self.settings.alpaca_slippage_threshold,
                 },
             },
+            "scanner": DEFAULT_SCANNER_CONFIG,
             "alpaca": alpaca_payload,
             "notifications": {
                 "recipients": self.settings.notification_recipients,
@@ -309,6 +318,15 @@ class RuntimeStatusService:
             config_payload=config_payload,
         )
         market_data_pull_ids = [pull["id"] for pull in market_data_pulls]
+        scanner_run = self.scanner.run(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="manual",
+            market_data_pulls=market_data_pulls,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
         self.registry.state.insert(
             f"{SHARED_SCHEMA}.job_runs",
             {
@@ -322,6 +340,9 @@ class RuntimeStatusService:
                     "triggered_by": username,
                     "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
                     "market_data_pull_ids": market_data_pull_ids,
+                    "scanner_run_id": scanner_run.payload.get("id"),
+                    "scanner_accepted": scanner_run.payload["acceptedCount"],
+                    "scanner_rejected": scanner_run.payload["rejectedCount"],
                 },
                 "created_at": now,
             },
@@ -354,6 +375,9 @@ class RuntimeStatusService:
                 "venues": [pull["venue"] for pull in market_data_pulls],
                 "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
                 "market_data_pull_ids": market_data_pull_ids,
+                "scanner_run_id": scanner_run.payload.get("id"),
+                "scanner_accepted": scanner_run.payload["acceptedCount"],
+                "scanner_rejected": scanner_run.payload["rejectedCount"],
             },
         )
         pipeline_run = self._record_pipeline_run(
@@ -363,6 +387,7 @@ class RuntimeStatusService:
             started_at=now,
             completed_at=now,
             market_data_pulls=market_data_pulls,
+            scanner_run=scanner_run.payload,
             actor=username,
         )
         return {
@@ -375,6 +400,7 @@ class RuntimeStatusService:
             "message": "Manual run accepted. Live order submission still depends on all configured gates.",
             "marketDataPull": market_data_pull,
             "marketDataPulls": market_data_pulls,
+            "scannerRun": scanner_run.payload,
             "pipelineRun": pipeline_run,
         }
 
@@ -399,6 +425,15 @@ class RuntimeStatusService:
             )
             for venue in self._market_data_venues(config_payload)
         ]
+        scanner_run = self.scanner.run(
+            environment=environment,
+            pipeline_run_id=run_id,
+            trigger="scheduled",
+            market_data_pulls=market_data_pulls,
+            config_payload=config_payload,
+            started_at=now,
+            completed_at=now,
+        )
         status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
         try:
             self.registry.state.insert(
@@ -413,6 +448,9 @@ class RuntimeStatusService:
                         "scheduled": True,
                         "market_data_pull_ids": [pull["id"] for pull in market_data_pulls],
                         "venues": [pull["venue"] for pull in market_data_pulls],
+                        "scanner_run_id": scanner_run.payload.get("id"),
+                        "scanner_accepted": scanner_run.payload["acceptedCount"],
+                        "scanner_rejected": scanner_run.payload["rejectedCount"],
                     },
                     "created_at": now,
                 },
@@ -426,6 +464,7 @@ class RuntimeStatusService:
             started_at=now,
             completed_at=now,
             market_data_pulls=market_data_pulls,
+            scanner_run=scanner_run.payload,
             actor="scheduler",
         )
         return {
@@ -438,6 +477,7 @@ class RuntimeStatusService:
                 config_payload=config_payload,
             ),
             "marketDataPulls": market_data_pulls,
+            "scannerRun": scanner_run.payload,
             "pipelineRun": pipeline_run,
         }
 
@@ -618,8 +658,55 @@ class RuntimeStatusService:
             "manualReviewState": "clear",
             "orderEvents": order_items,
             "pipelineRuns": self.pipeline_runs(environment),
+            "scanner": self.scanner_summary(environment),
             "historicalImport": self.historical_import_summary(environment),
             "brokerHistory": self.broker_history_summary(environment),
+        }
+
+    def scanner_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return latest scanner status and candidate rows for operations UI.
+
+        REQ: REQ-STR-003, REQ-UI-004, REQ-OBS-005
+        """
+
+        try:
+            runs = self.registry.shared().scanner_runs(environment=environment)
+            candidates = self.registry.shared().scanner_candidates(environment=environment)
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Scanner status is unavailable because persistence is offline.",
+                "latestRun": None,
+                "candidateCount": 0,
+                "acceptedCount": 0,
+                "rejectedCount": 0,
+                "candidates": [],
+            }
+        if not runs:
+            return {
+                "status": "idle",
+                "message": "No scanner run has been recorded yet.",
+                "latestRun": None,
+                "candidateCount": 0,
+                "acceptedCount": 0,
+                "rejectedCount": 0,
+                "candidates": [],
+            }
+        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
+        latest = runs[0]
+        latest_candidates = [
+            candidate for candidate in candidates if candidate["scanner_run_id"] == latest["id"]
+        ]
+        latest_candidates.sort(key=lambda row: row.get("created_at"), reverse=True)
+        payload = scanner_run_payload(latest, latest_candidates[:100])
+        return {
+            "status": payload["status"],
+            "message": _scanner_summary_message(payload),
+            "latestRun": payload,
+            "candidateCount": payload["candidateCount"],
+            "acceptedCount": payload["acceptedCount"],
+            "rejectedCount": payload["rejectedCount"],
+            "candidates": payload["candidates"],
         }
 
     def historical_import_summary(self, environment: Environment) -> dict[str, Any]:
@@ -1335,6 +1422,7 @@ class RuntimeStatusService:
         started_at: datetime,
         completed_at: datetime,
         market_data_pulls: list[dict[str, Any]],
+        scanner_run: dict[str, Any],
         actor: str,
     ) -> dict[str, Any]:
         pull_status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
@@ -1352,6 +1440,8 @@ class RuntimeStatusService:
                 "actor": actor,
                 "marketDataStatus": pull_status,
                 "candidateCount": candidate_count,
+                "scannerAcceptedCount": scanner_run["acceptedCount"],
+                "scannerRejectedCount": scanner_run["rejectedCount"],
                 "venues": venue_names,
             },
             "created_at": completed_at,
@@ -1362,6 +1452,7 @@ class RuntimeStatusService:
             started_at=started_at,
             completed_at=completed_at,
             market_data_pulls=market_data_pulls,
+            scanner_run=scanner_run,
             candidate_count=candidate_count,
             market_data_status=pull_status,
         )
@@ -1381,6 +1472,7 @@ class RuntimeStatusService:
         started_at: datetime,
         completed_at: datetime,
         market_data_pulls: list[dict[str, Any]],
+        scanner_run: dict[str, Any],
         candidate_count: int,
         market_data_status: str,
     ) -> list[dict[str, Any]]:
@@ -1394,13 +1486,20 @@ class RuntimeStatusService:
             if candidate_count
             else first_message or "No enabled provider venues were selected for this run."
         )
-        scanner_status = "completed" if candidate_count else (
-            "blocked" if market_data_status in {"failed", "rate_limited"} else "waiting"
-        )
+        scanner_status = _pipeline_scanner_status(str(scanner_run.get("status", "empty")))
+        scanner_record_ids = [
+            value
+            for value in (
+                [scanner_run.get("id")]
+                + [candidate.get("id") for candidate in scanner_run.get("candidates", [])]
+            )
+            if value
+        ]
         scanner_message = (
-            f"Scanner has {candidate_count} priced candidate"
-            f"{'' if candidate_count == 1 else 's'} ready for downstream filters."
-            if candidate_count
+            f"Scanner accepted {scanner_run['acceptedCount']} and rejected "
+            f"{scanner_run['rejectedCount']} candidate"
+            f"{'' if scanner_run['rejectedCount'] == 1 else 's'}."
+            if scanner_run.get("candidateCount")
             else "No priced candidates reached the scanner from provider data."
         )
         stage_payloads = {
@@ -1417,8 +1516,12 @@ class RuntimeStatusService:
             "scanner": {
                 "status": scanner_status,
                 "message": scanner_message,
-                "metrics": {"candidateCount": candidate_count},
-                "record_ids": pull_ids,
+                "metrics": {
+                    "candidateCount": scanner_run.get("candidateCount", candidate_count),
+                    "acceptedCount": scanner_run["acceptedCount"],
+                    "rejectedCount": scanner_run["rejectedCount"],
+                },
+                "record_ids": scanner_record_ids,
             },
             "brain": {
                 "status": "waiting",
@@ -2172,8 +2275,27 @@ def _safe_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
         "dataSource": _optional_text(candidate.get("dataSource")),
         "historyBarCount": _as_int(candidate.get("historyBarCount")),
         "previousClose": _optional_text(candidate.get("previousClose")),
+        "latestOpen": _optional_text(candidate.get("latestOpen")),
+        "latestHigh": _optional_text(candidate.get("latestHigh")),
+        "latestLow": _optional_text(candidate.get("latestLow")),
+        "latestClose": _optional_text(candidate.get("latestClose")),
+        "latestVolume": _optional_text(candidate.get("latestVolume")),
+        "averageVolume": _optional_text(candidate.get("averageVolume")),
         "historyStart": _optional_text(candidate.get("historyStart")),
         "historyEnd": _optional_text(candidate.get("historyEnd")),
+        "tokenId": _optional_text(candidate.get("tokenId")),
+        "outcome": _optional_text(candidate.get("outcome")),
+        "marketId": _optional_text(candidate.get("marketId")),
+        "midpoint": _optional_text(candidate.get("midpoint")),
+        "bestBid": _optional_text(candidate.get("bestBid")),
+        "bestAsk": _optional_text(candidate.get("bestAsk")),
+        "bidDepth": _optional_text(candidate.get("bidDepth")),
+        "askDepth": _optional_text(candidate.get("askDepth")),
+        "category": _optional_text(candidate.get("category")),
+        "endDate": _optional_text(candidate.get("endDate")),
+        "volume": _optional_text(candidate.get("volume")),
+        "active": bool(candidate.get("active", True)),
+        "closed": bool(candidate.get("closed", False)),
     }
 
 
@@ -2307,6 +2429,21 @@ def _broker_history_message(
     )
 
 
+def _scanner_summary_message(payload: dict[str, Any]) -> str:
+    status = str(payload.get("status", "idle"))
+    if status == "idle":
+        return "No scanner run has been recorded yet."
+    if status == "blocked":
+        return "Latest scanner run was blocked before candidate evaluation completed."
+    if status == "empty":
+        return "Latest scanner run had no provider candidates to evaluate."
+    return (
+        f"Latest scanner run accepted {payload.get('acceptedCount', 0)} and rejected "
+        f"{payload.get('rejectedCount', 0)} candidate"
+        f"{'' if payload.get('rejectedCount', 0) == 1 else 's'}."
+    )
+
+
 def _pipeline_data_fetch_status(market_data_status: str) -> str:
     if market_data_status == "pulled":
         return "completed"
@@ -2324,6 +2461,16 @@ def _pipeline_run_status(market_data_status: str) -> str:
         return "partial"
     if market_data_status in {"failed", "rate_limited"}:
         return "blocked"
+    return "waiting"
+
+
+def _pipeline_scanner_status(scanner_status: str) -> str:
+    if scanner_status == "completed":
+        return "completed"
+    if scanner_status in {"blocked", "failed", "rate_limited"}:
+        return "blocked"
+    if scanner_status == "no_candidates_passed":
+        return "waiting"
     return "waiting"
 
 

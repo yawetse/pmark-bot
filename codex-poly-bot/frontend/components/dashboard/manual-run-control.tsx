@@ -17,6 +17,14 @@ export type ManualRunResult = {
   message: string;
   marketDataPull: MarketDataPullView;
   marketDataPulls?: MarketDataPullView[];
+  scannerRun?: {
+    id?: string | null;
+    status?: string;
+    acceptedCount?: number;
+    rejectedCount?: number;
+    candidateCount?: number;
+    candidates?: unknown[];
+  };
   pipelineRun?: PipelineRunView;
 };
 

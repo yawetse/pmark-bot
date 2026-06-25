@@ -136,6 +136,8 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.economics_snapshots" in plan.table_names
     assert "shared.pipeline_runs" in plan.table_names
     assert "shared.pipeline_steps" in plan.table_names
+    assert "shared.scanner_runs" in plan.table_names
+    assert "shared.scanner_candidates" in plan.table_names
     assert "shared.polymarket_gamma_markets" in plan.table_names
     assert "shared.polymarket_chain_fill_events" in plan.table_names
     assert "shared.polymarket_trades" in plan.table_names
@@ -465,6 +467,70 @@ def test_req_db_003_05_shared_alpaca_history_records_persist_for_step_zero() -> 
     assert len(shared.alpaca_broker_account_snapshots(environment=Environment.DEVELOPMENT)) == 1
     assert len(shared.stock_bars(environment=Environment.DEVELOPMENT)) == 1
     assert shared.alpaca_symbol_pnl_snapshots(environment=Environment.DEVELOPMENT)[0]["id"] == pnl["id"]
+
+def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
+    """TST-REQ-DB-003-06: Validates REQ-DB-003 and REQ-STR-003
+
+    Given: a scanner run and accepted/rejected candidates
+    When: the shared repositories persist scanner records
+    Then: Phase 2 scanner output can be read back separately from raw market pulls
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    observed = datetime(2026, 6, 25, 18, 0, tzinfo=UTC)
+    run = shared.record_scanner_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-1",
+        trigger="manual",
+        status="completed",
+        config={"polymarket": {"min_depth": "500"}},
+        source_pull_ids=["pull-1"],
+        accepted_count=1,
+        rejected_count=1,
+        started_at=observed,
+        completed_at=observed,
+    )
+    accepted = shared.record_scanner_candidate(
+        environment=Environment.DEVELOPMENT,
+        scanner_run_id=run["id"],
+        venue=Venue.POLYMARKET_US.value,
+        instrument_id="condition-1:yes-token",
+        display_name="Will rates fall? - Yes",
+        market_id="condition-1",
+        outcome_id="yes-token",
+        status="accepted",
+        strategy_names=["order_book_depth"],
+        price=Decimal("0.45"),
+        liquidity=Decimal("1250"),
+        spread=Decimal("0.02"),
+        hours_to_resolution=Decimal("24"),
+        metrics={"bidDepth": "600"},
+        source_payload={"id": "candidate-1"},
+        created_at=observed,
+    )
+    shared.record_scanner_candidate(
+        environment=Environment.DEVELOPMENT,
+        scanner_run_id=run["id"],
+        venue=Venue.ALPACA.value,
+        instrument_id="alpaca:XYZ",
+        display_name="XYZ",
+        symbol="XYZ",
+        status="rejected",
+        refusal_reason="symbol outside universe",
+        strategy_names=[],
+        metrics={},
+        source_payload={"symbol": "XYZ"},
+        created_at=observed,
+    )
+
+    assert shared.scanner_runs(environment=Environment.DEVELOPMENT)[0]["id"] == run["id"]
+    candidates = shared.scanner_candidates(environment=Environment.DEVELOPMENT)
+    assert len(candidates) == 2
+    assert shared.scanner_candidates(
+        environment=Environment.DEVELOPMENT,
+        scanner_run_id=run["id"],
+        status="accepted",
+    )[0]["id"] == accepted["id"]
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003

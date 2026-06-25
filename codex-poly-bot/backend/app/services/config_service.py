@@ -21,6 +21,7 @@ from app.services.stock_universe import (
     normalize_symbol_list,
     resolve_alpaca_symbol_universe,
 )
+from app.services.scanner_service import DEFAULT_SCANNER_CONFIG
 
 
 class ConfigConflictError(ValueError):
@@ -274,6 +275,8 @@ class ConfigService:
                 return self._bool(value, patch.path)
             if len(parts) >= 4 and parts[2] == "settings":
                 return value
+        if parts[:1] == ["scanner"] and len(parts) >= 3:
+            return self._validated_scanner_patch_value(parts, value, patch.path)
         if parts[:1] == ["llm"] and len(parts) >= 3:
             self._require_model_provider(parts[1])
             if len(parts) == 3 and parts[2] == "budget_usd":
@@ -342,6 +345,42 @@ class ConfigService:
                 raise ConfigValidationError("digest schedule must be HH:MM UTC")
             return value
         raise ConfigValidationError(f"unsupported config path: {patch.path}")
+
+    def _validated_scanner_patch_value(self, parts: list[str], value: Any, path: str) -> Any:
+        if parts[1] not in {"polymarket", "alpaca"}:
+            raise ConfigValidationError("unsupported scanner venue")
+        if len(parts) == 3 and parts[2] in {"allowed_categories", "blocked_categories"}:
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ConfigValidationError(f"{path} must be a string list")
+            return [item.strip() for item in value if item.strip()]
+        if len(parts) >= 4 and parts[2] == "strategies":
+            if parts[3] not in {
+                "momentum",
+                "mean_reversion",
+                "gap",
+                "liquidity",
+                "volatility",
+                "unusual_volume",
+            }:
+                raise ConfigValidationError("unsupported stock scanner strategy")
+            if len(parts) == 5 and parts[4] == "enabled":
+                return self._bool(value, path)
+            if len(parts) == 5:
+                return str(self._positive_decimal(value, path))
+            raise ConfigValidationError(f"unsupported config path: {path}")
+        if parts[-1] in {"min_history_bars", "target_wallet_recent_hours"}:
+            return self._positive_int(value, path)
+        if parts[-1] in {
+            "min_depth",
+            "min_liquidity",
+            "max_spread",
+            "min_volume",
+            "min_hours_to_resolution",
+            "max_hours_to_resolution",
+            "min_quote_liquidity",
+        }:
+            return str(self._positive_decimal(value, path))
+        raise ConfigValidationError(f"unsupported config path: {path}")
 
     def _apply_patch(self, payload: dict[str, Any], patch: ConfigPatchOperation, value: Any) -> None:
         parts = patch.path.split(".")
@@ -475,6 +514,7 @@ def default_config_payload() -> dict[str, Any]:
                 "market_order_slippage_threshold": "0.005",
             },
         },
+        "scanner": DEFAULT_SCANNER_CONFIG,
         "alpaca": {
             "account_mode": "paper",
             "symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS),

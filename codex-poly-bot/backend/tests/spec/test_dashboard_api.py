@@ -405,6 +405,8 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     job_rows = client.app.state.services.registry.state.rows("shared.job_runs")
     audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
     pull_rows = client.app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
+    scanner_rows = client.app.state.services.registry.state.rows("shared.scanner_runs")
+    scanner_candidate_rows = client.app.state.services.registry.state.rows("shared.scanner_candidates")
     pipeline_rows = client.app.state.services.registry.state.rows("shared.pipeline_runs")
     pipeline_step_rows = client.app.state.services.registry.state.rows("shared.pipeline_steps")
 
@@ -420,6 +422,10 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "Exit",
     ]
     assert payload["pipelineRun"]["steps"][0]["metrics"]["candidateCount"] == 2
+    assert payload["pipelineRun"]["steps"][1]["metrics"]["acceptedCount"] == 0
+    assert payload["pipelineRun"]["steps"][1]["metrics"]["rejectedCount"] == 2
+    assert payload["scannerRun"]["candidateCount"] == 2
+    assert payload["scannerRun"]["rejectedCount"] == 2
     assert payload["marketDataPull"]["trigger"] == "manual"
     assert payload["marketDataPull"]["status"] == "pulled"
     assert {pull["venue"] for pull in payload["marketDataPulls"]} == {
@@ -442,6 +448,9 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "polymarket gamma and clob api",
         "alpaca market data api",
     }
+    assert scanner_rows[0]["pipeline_run_id"] == payload["runId"]
+    assert scanner_rows[0]["rejected_count"] == 2
+    assert {row["status"] for row in scanner_candidate_rows} == {"rejected"}
     assert pipeline_rows[0]["id"] == payload["runId"]
     assert len(pipeline_step_rows) == 5
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
@@ -1088,6 +1097,49 @@ def test_req_alp_014_03_config_api_saves_presets_and_additive_symbols() -> None:
     assert "AAPL" in alpaca["symbol_universe"]
     assert "CRCL" in alpaca["symbol_universe"]
     assert "FIG" in alpaca["symbol_universe"]
+
+
+def test_req_str_003_05_config_api_saves_scanner_thresholds() -> None:
+    """TST-REQ-STR-003-05: Validates REQ-STR-003 and REQ-UI-005
+
+    Given: scanner thresholds are editable config
+    When: an operator saves Polymarket and stock scanner settings
+    Then: the saved config is available to the next loop
+    """
+    client, token = _client()
+
+    response = client.put(
+        "/api/config",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "environment": "development",
+            "version": "scanner-v1",
+            "patches": [
+                {"op": "replace", "path": "scanner.polymarket.min_depth", "value": "750"},
+                {
+                    "op": "replace",
+                    "path": "scanner.alpaca.strategies.unusual_volume.min_ratio",
+                    "value": "2.25",
+                },
+                {
+                    "op": "replace",
+                    "path": "scanner.alpaca.strategies.momentum.enabled",
+                    "value": False,
+                },
+            ],
+        },
+    )
+    current = client.get("/api/config/current", headers={"Authorization": f"Bearer {token}"})
+    scanner = current.json()["settings"]["scanner"]
+
+    assert response.status_code == 200
+    assert scanner["polymarket"]["min_depth"] == "750"
+    assert scanner["alpaca"]["strategies"]["unusual_volume"]["min_ratio"] == "2.25"
+    assert scanner["alpaca"]["strategies"]["momentum"]["enabled"] is False
 
 
 def test_req_ui_008_03_kill_switch_api_disables_live_and_returns_progress() -> None:

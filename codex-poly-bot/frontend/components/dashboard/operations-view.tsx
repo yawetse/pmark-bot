@@ -80,6 +80,51 @@ export type BrokerHistoryView = {
   lastUpdatedAt?: string | null;
 };
 
+export type ScannerCandidateView = {
+  id: string;
+  scannerRunId?: string | null;
+  venue: string;
+  instrumentId: string;
+  displayName: string;
+  symbol?: string | null;
+  marketId?: string | null;
+  outcomeId?: string | null;
+  status: string;
+  refusalReason?: string | null;
+  strategyNames?: string[];
+  price?: string | null;
+  liquidity?: string | null;
+  spread?: string | null;
+  hoursToResolution?: string | null;
+  metrics?: Record<string, unknown>;
+  createdAt?: string | null;
+};
+
+export type ScannerRunView = {
+  id?: string | null;
+  environment?: string;
+  pipelineRunId?: string | null;
+  trigger?: string;
+  status: string;
+  acceptedCount: number;
+  rejectedCount: number;
+  candidateCount: number;
+  sourcePullIds?: string[];
+  startedAt?: string | null;
+  completedAt?: string | null;
+  candidates: ScannerCandidateView[];
+};
+
+export type ScannerSummaryView = {
+  status: string;
+  message: string;
+  latestRun?: ScannerRunView | null;
+  candidateCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  candidates: ScannerCandidateView[];
+};
+
 export type OperationsSummaryView = {
   killSwitch: string;
   openOrders: number;
@@ -89,6 +134,7 @@ export type OperationsSummaryView = {
   manualReviewState: string;
   orderEvents: OrderEventView[];
   pipelineRuns: PipelineRunView[];
+  scanner?: ScannerSummaryView;
   historicalImport?: HistoricalImportView;
   brokerHistory?: BrokerHistoryView;
 };
@@ -125,6 +171,16 @@ const FALLBACK_BROKER_HISTORY: BrokerHistoryView = {
   lastUpdatedAt: null,
 };
 
+const FALLBACK_SCANNER: ScannerSummaryView = {
+  status: "idle",
+  message: "No scanner run has been recorded yet.",
+  latestRun: null,
+  candidateCount: 0,
+  acceptedCount: 0,
+  rejectedCount: 0,
+  candidates: [],
+};
+
 const FALLBACK_OPERATIONS: OperationsSummaryView = {
   killSwitch: "unknown",
   openOrders: 0,
@@ -134,6 +190,7 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   manualReviewState: "unknown",
   orderEvents: [],
   pipelineRuns: [],
+  scanner: FALLBACK_SCANNER,
   historicalImport: FALLBACK_HISTORICAL_IMPORT,
   brokerHistory: FALLBACK_BROKER_HISTORY,
 };
@@ -153,6 +210,7 @@ export function OperationsView({
 }) {
   const [latestMarketData, setLatestMarketData] = useState(marketData);
   const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
+  const [scanner, setScanner] = useState(summary.scanner ?? FALLBACK_SCANNER);
   const displayTimeZone = useResolvedTimeZone(timeZone);
   const pendingEvents = summary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
@@ -204,6 +262,8 @@ export function OperationsView({
 
       <PipelineRunsPanel runs={pipelineRuns} timeZone={displayTimeZone} />
 
+      <ScannerPanel scanner={scanner} timeZone={displayTimeZone} />
+
       <HistoricalImportPanel
         historicalImport={summary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
         timeZone={displayTimeZone}
@@ -249,6 +309,18 @@ export function OperationsView({
         result.pipelineRun as PipelineRunView,
         ...currentRuns.filter((run) => run.id !== result.pipelineRun?.id),
       ]);
+    }
+    if (result.scannerRun) {
+      const scannerRun = result.scannerRun as ScannerRunView;
+      setScanner({
+        status: scannerRun.status ?? "idle",
+        message: `Latest scanner run accepted ${scannerRun.acceptedCount ?? 0} and rejected ${scannerRun.rejectedCount ?? 0} candidates.`,
+        latestRun: scannerRun,
+        candidateCount: scannerRun.candidateCount ?? 0,
+        acceptedCount: scannerRun.acceptedCount ?? 0,
+        rejectedCount: scannerRun.rejectedCount ?? 0,
+        candidates: scannerRun.candidates ?? [],
+      });
     }
   }
 }
@@ -460,6 +532,73 @@ function HistoricalImportPanel({
   );
 }
 
+function ScannerPanel({
+  scanner,
+  timeZone,
+}: {
+  scanner: ScannerSummaryView;
+  timeZone: string;
+}) {
+  const columns: DashboardGridColumn<ScannerCandidateView>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "displayName", headerName: "Candidate", minWidth: 260 },
+    { field: "status", headerName: "State", minWidth: 130 },
+    { field: "refusalReason", headerName: "Refusal", minWidth: 220 },
+    {
+      field: "strategyNames",
+      headerName: "Strategies",
+      minWidth: 220,
+      valueGetter: (params) => (params.data?.strategyNames ?? []).join(", "),
+    },
+    { field: "price", headerName: "Price", minWidth: 110 },
+    { field: "liquidity", headerName: "Liquidity", minWidth: 130 },
+    { field: "spread", headerName: "Spread", minWidth: 110 },
+    { field: "hoursToResolution", headerName: "Hours", minWidth: 110 },
+    {
+      field: "metrics",
+      headerName: "Signal details",
+      minWidth: 260,
+      valueGetter: (params) => scannerMetricSummary(params.data?.metrics),
+    },
+    {
+      field: "createdAt",
+      headerName: "Scanned",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="scanner-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Scanner</p>
+          <h2 id="scanner-title">Candidate filters</h2>
+        </div>
+        <span className={`status ${statusClass(scanner.status)}`}>{scanner.status}</span>
+      </div>
+      <p className="panel-note">{scanner.message}</p>
+      <div className="metric-grid">
+        <Metric label="Candidates" value={String(scanner.candidateCount)} />
+        <Metric label="Accepted" value={String(scanner.acceptedCount)} />
+        <Metric label="Rejected" value={String(scanner.rejectedCount)} />
+        <Metric
+          label="Completed"
+          value={formatDateTime(scanner.latestRun?.completedAt, timeZone)}
+        />
+      </div>
+      <DashboardDataGrid
+        rows={scanner.candidates}
+        columns={columns}
+        emptyTitle="No scanner candidates"
+        emptyBody="Scanner output will appear after a manual or scheduled run evaluates provider candidates."
+        getRowId={(candidate) => candidate.id}
+        searchPlaceholder="Filter scanner candidates"
+      />
+    </section>
+  );
+}
+
 function BrokerHistoryPanel({
   brokerHistory,
   timeZone,
@@ -522,6 +661,28 @@ function BrokerHistoryPanel({
   );
 }
 
+function scannerMetricSummary(metrics: Record<string, unknown> | undefined): string {
+  if (!metrics) {
+    return "";
+  }
+  const parts = [
+    metricPart(metrics, "targetWalletOverlap", "wallets"),
+    metricPart(metrics, "momentumPct", "momentum"),
+    metricPart(metrics, "gapPct", "gap"),
+    metricPart(metrics, "unusualVolumeRatio", "volume"),
+    metricPart(metrics, "hoursToResolution", "hours"),
+  ].filter(Boolean);
+  return parts.join("; ");
+}
+
+function metricPart(metrics: Record<string, unknown>, key: string, label: string): string {
+  const value = metrics[key];
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  return `${label}: ${String(value)}`;
+}
+
 function formatDateTime(value: string | null | undefined, timeZone: string): string {
   if (!value) {
     return "not recorded";
@@ -541,7 +702,7 @@ function statusClass(status: string): "ok" | "idle" | "blocked" {
   if (["blocked", "failed", "rate_limited"].includes(status)) {
     return "blocked";
   }
-  if (["waiting", "idle", "empty"].includes(status)) {
+  if (["waiting", "idle", "empty", "no_candidates_passed"].includes(status)) {
     return "idle";
   }
   return "ok";

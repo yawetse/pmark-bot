@@ -94,6 +94,13 @@ from app.services.market_data_provider import (
     MarketDataProviderResult,
     ProviderBackedMarketDataFetcher,
 )
+from app.services.scanner_service import (
+    DEFAULT_SCANNER_CONFIG,
+    ScannerRunResult,
+    ScannerService,
+    scanner_config_from_payload,
+    scanner_run_payload,
+)
 from app.services.stock_universe import (
     BUILT_IN_ALPACA_PRESETS,
     DEFAULT_ALPACA_SYMBOL_PRESETS,
@@ -237,6 +244,7 @@ __all__ = [
     "ConfigValidationError",
     "DEFAULT_ALPACA_SYMBOL_UNIVERSE",
     "DEFAULT_ALPACA_SYMBOL_PRESETS",
+    "DEFAULT_SCANNER_CONFIG",
     "ComparisonGroup",
     "ComparisonDashboardView",
     "ComparisonSummary",
@@ -315,6 +323,8 @@ __all__ = [
     "ScoringFailure",
     "ScoringQueueResult",
     "ScoringRunResult",
+    "ScannerRunResult",
+    "ScannerService",
     "TokenPricing",
     "TraceabilityScanResult",
     "WalletGenerationRequest",
@@ -363,6 +373,8 @@ __all__ = [
     "resolve_alpaca_account_mode",
     "run_llm_scoring",
     "scan_traceability",
+    "scanner_config_from_payload",
+    "scanner_run_payload",
     "send_large_movement_alert",
     "send_scheduled_daily_digest",
     "validate_unique_credential_refs",
