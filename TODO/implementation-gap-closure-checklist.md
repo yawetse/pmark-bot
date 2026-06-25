@@ -91,40 +91,47 @@ Stocks:
 
 ## Phase 3: Reasoning / Brain
 
+Phase 3 complete means accepted scanner candidates are scored, persisted, normalized, and visible per run. Checks that need data not attached yet, such as recent news, sector enrichment, and live target-wallet holdings, are recorded as `needs_provider_data` in the prompt/check payload.
+
 Polymarket:
 
-- [ ] Wire scanner survivors into LLM scoring in each manual and scheduled run.
-- [ ] Build the four `pmbot.md` checks: base rate, news, whale check, and disposition.
-- [ ] Persist the prompt payload, model provider, response, probability estimate, confidence, thesis, and token usage.
-- [ ] Convert LLM output into normalized directional signals.
-- [ ] Add budget and rate-limit gates before each scoring request.
-- [ ] Show reasoning status and scored candidates per pipeline run.
+- [x] Wire scanner survivors into LLM scoring in each manual and scheduled run.
+- [x] Build the four `pmbot.md` checks: base rate, news, whale check, and disposition.
+- [x] Persist the prompt payload, model provider, response, probability estimate, confidence, thesis, and token usage.
+- [x] Convert LLM output into normalized directional signals.
+- [x] Add budget and rate-limit gates before each scoring request.
+- [x] Show reasoning status and scored candidates per pipeline run.
 
 Stocks:
 
-- [ ] Define stock-specific reasoning inputs: price action, historical bars, volume, sector, index membership, event/news context, risk, and liquidity.
-- [ ] Add stock LLM prompt templates separate from Polymarket prompts.
-- [ ] Persist stock scoring output with the same normalized signal shape.
-- [ ] Show stock reasoning output per pipeline run.
+- [x] Define stock-specific reasoning inputs: price action, historical bars, volume, sector, index membership, event/news context, risk, and liquidity.
+- [x] Add stock LLM prompt templates separate from Polymarket prompts.
+- [x] Persist stock scoring output with the same normalized signal shape.
+- [x] Show stock reasoning output per pipeline run.
 
 ## Phase 4: Strategy Consensus
 
 Polymarket:
 
-- [ ] Implement arbitrage strategy signals.
-- [ ] Implement convergence strategy signals.
-- [ ] Implement whale-copy strategy signals using target wallet history.
-- [ ] Persist per-strategy votes.
-- [ ] Implement consensus rules: two or more aligned votes for full position, one aligned vote for half position, disagreement means no trade.
-- [ ] Add tests for conflicting, single-vote, and multi-vote outcomes.
+- [x] Implement arbitrage strategy signals.
+- [x] Implement convergence strategy signals.
+- [x] Implement whale-copy strategy signals using target wallet history.
+- [x] Persist per-strategy votes.
+- [x] Implement consensus rules: two or more aligned votes for full position, one aligned vote for half position, disagreement means no trade.
+- [x] Add tests for conflicting, single-vote, and multi-vote outcomes.
 
 Stocks:
 
-- [ ] Implement stock momentum strategy votes.
-- [ ] Implement stock mean-reversion strategy votes.
-- [ ] Implement stock event or unusual-volume strategy votes.
-- [ ] Persist per-strategy stock votes.
-- [ ] Apply a stock-specific consensus rule before risk sizing.
+- [x] Implement stock momentum strategy votes.
+- [x] Implement stock mean-reversion strategy votes.
+- [x] Implement stock event or unusual-volume strategy votes.
+- [x] Persist per-strategy stock votes.
+- [x] Apply a stock-specific consensus rule before risk sizing.
+
+Implementation note: Phase 4 now persists `shared.strategy_consensus_runs`,
+`shared.strategy_votes`, and `shared.strategy_consensus_outputs`. Execution step 4
+shows strategy consensus and still stops before risk sizing and order intents, which
+remain Phase 5.
 
 ## Phase 5: Risk and Execution
 

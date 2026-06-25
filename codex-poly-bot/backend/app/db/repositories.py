@@ -19,6 +19,7 @@ from app.domain import (
     OrderEvent,
     OrderEventType,
     PositionTransition,
+    StrategySignal,
     TradeDecision,
 )
 from app.db.schema import MODEL_SCHEMAS, SHARED_SCHEMA, provider_schema
@@ -1170,6 +1171,306 @@ class SharedRepositories:
             rows = [row for row in rows if row["status"] == status]
         return rows
 
+    def record_reasoning_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        scanner_run_id: str | None,
+        trigger: str,
+        status: str,
+        config: dict,
+        provider_count: int,
+        prompt_count: int,
+        scored_count: int,
+        skipped_count: int,
+        failed_count: int,
+        started_at: datetime,
+        completed_at: datetime,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.reasoning_runs",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "pipeline_run_id": pipeline_run_id,
+                "scanner_run_id": scanner_run_id,
+                "trigger": trigger,
+                "status": status,
+                "config": _json_ready(config),
+                "provider_count": max(0, int(provider_count)),
+                "prompt_count": max(0, int(prompt_count)),
+                "scored_count": max(0, int(scored_count)),
+                "skipped_count": max(0, int(skipped_count)),
+                "failed_count": max(0, int(failed_count)),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "created_at": created_at or completed_at,
+            },
+        )
+
+    def record_reasoning_output(
+        self,
+        *,
+        environment: Environment,
+        reasoning_run_id: str,
+        scanner_candidate_id: str | None,
+        venue: str,
+        instrument_id: str,
+        model_provider: ModelProvider,
+        prompt_version: str,
+        status: str,
+        directional_signal: str,
+        signal_strength: Decimal,
+        prompt_payload: dict,
+        response_payload: dict,
+        check_results: list | tuple,
+        cost_usd: Decimal,
+        prompt_tokens: int,
+        completion_tokens: int,
+        confidence: Decimal | None = None,
+        estimated_probability: Decimal | None = None,
+        output_thesis: str | None = None,
+        refusal_reason: str | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        prompt_token_count = max(0, int(prompt_tokens))
+        completion_token_count = max(0, int(completion_tokens))
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.reasoning_outputs",
+            {
+                "id": str(uuid4()),
+                "reasoning_run_id": reasoning_run_id,
+                "scanner_candidate_id": scanner_candidate_id,
+                "environment": environment.value,
+                "venue": venue,
+                "instrument_id": instrument_id,
+                "model_provider": model_provider.value,
+                "prompt_version": prompt_version,
+                "status": status,
+                "refusal_reason": refusal_reason,
+                "directional_signal": directional_signal,
+                "signal_strength": Decimal(str(signal_strength)),
+                "confidence": None if confidence is None else Decimal(str(confidence)),
+                "estimated_probability": (
+                    None if estimated_probability is None else Decimal(str(estimated_probability))
+                ),
+                "cost_usd": Decimal(str(cost_usd)),
+                "prompt_tokens": prompt_token_count,
+                "completion_tokens": completion_token_count,
+                "total_tokens": prompt_token_count + completion_token_count,
+                "prompt_payload": _json_ready(prompt_payload),
+                "response_payload": _json_ready(response_payload),
+                "check_results": _json_ready(list(check_results)),
+                "output_thesis": output_thesis,
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def reasoning_runs(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.reasoning_runs")
+            if row["environment"] == environment.value
+        ]
+
+    def reasoning_outputs(
+        self,
+        *,
+        environment: Environment,
+        reasoning_run_id: str | None = None,
+        venue: str | None = None,
+        model_provider: ModelProvider | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.reasoning_outputs")
+            if row["environment"] == environment.value
+        ]
+        if reasoning_run_id is not None:
+            rows = [row for row in rows if row["reasoning_run_id"] == reasoning_run_id]
+        if venue is not None:
+            rows = [row for row in rows if row["venue"] == venue]
+        if model_provider is not None:
+            rows = [row for row in rows if row["model_provider"] == model_provider.value]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
+    def record_strategy_consensus_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        reasoning_run_id: str | None,
+        trigger: str,
+        status: str,
+        config: dict,
+        vote_count: int,
+        approved_count: int,
+        refused_count: int,
+        started_at: datetime,
+        completed_at: datetime,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.strategy_consensus_runs",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "pipeline_run_id": pipeline_run_id,
+                "reasoning_run_id": reasoning_run_id,
+                "trigger": trigger,
+                "status": status,
+                "config": _json_ready(config),
+                "vote_count": max(0, int(vote_count)),
+                "approved_count": max(0, int(approved_count)),
+                "refused_count": max(0, int(refused_count)),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "created_at": created_at or completed_at,
+            },
+        )
+
+    def record_strategy_vote(
+        self,
+        *,
+        environment: Environment,
+        consensus_run_id: str,
+        reasoning_output_id: str | None,
+        scanner_candidate_id: str | None,
+        venue: str,
+        instrument_id: str,
+        model_provider: ModelProvider,
+        strategy_name: str,
+        status: str,
+        source_payload: dict,
+        direction: str | None = None,
+        confidence: Decimal | None = None,
+        refusal_reason: str | None = None,
+        inputs_hash: str | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.strategy_votes",
+            {
+                "id": str(uuid4()),
+                "consensus_run_id": consensus_run_id,
+                "reasoning_output_id": reasoning_output_id,
+                "scanner_candidate_id": scanner_candidate_id,
+                "environment": environment.value,
+                "venue": venue,
+                "instrument_id": instrument_id,
+                "model_provider": model_provider.value,
+                "strategy_name": strategy_name,
+                "direction": direction,
+                "confidence": None if confidence is None else Decimal(str(confidence)),
+                "status": status,
+                "refusal_reason": refusal_reason,
+                "inputs_hash": inputs_hash,
+                "source_payload": _json_ready(source_payload),
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def record_strategy_consensus_output(
+        self,
+        *,
+        environment: Environment,
+        consensus_run_id: str,
+        venue: str,
+        instrument_id: str,
+        model_provider: ModelProvider,
+        status: str,
+        size_multiplier: Decimal,
+        signal_count: int,
+        strategy_names: list | tuple,
+        source_payload: dict,
+        side: str | None = None,
+        refusal_reason: str | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.strategy_consensus_outputs",
+            {
+                "id": str(uuid4()),
+                "consensus_run_id": consensus_run_id,
+                "environment": environment.value,
+                "venue": venue,
+                "instrument_id": instrument_id,
+                "model_provider": model_provider.value,
+                "status": status,
+                "side": side,
+                "size_multiplier": Decimal(str(size_multiplier)),
+                "signal_count": max(0, int(signal_count)),
+                "strategy_names": _json_ready(list(strategy_names)),
+                "refusal_reason": refusal_reason,
+                "source_payload": _json_ready(source_payload),
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def strategy_consensus_runs(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.strategy_consensus_runs")
+            if row["environment"] == environment.value
+        ]
+
+    def strategy_votes(
+        self,
+        *,
+        environment: Environment,
+        consensus_run_id: str | None = None,
+        model_provider: ModelProvider | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.strategy_votes")
+            if row["environment"] == environment.value
+        ]
+        if consensus_run_id is not None:
+            rows = [row for row in rows if row["consensus_run_id"] == consensus_run_id]
+        if model_provider is not None:
+            rows = [row for row in rows if row["model_provider"] == model_provider.value]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
+    def strategy_consensus_outputs(
+        self,
+        *,
+        environment: Environment,
+        consensus_run_id: str | None = None,
+        model_provider: ModelProvider | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.strategy_consensus_outputs")
+            if row["environment"] == environment.value
+        ]
+        if consensus_run_id is not None:
+            rows = [row for row in rows if row["consensus_run_id"] == consensus_run_id]
+        if model_provider is not None:
+            rows = [row for row in rows if row["model_provider"] == model_provider.value]
+        if status is not None:
+            rows = [row for row in rows if row["status"] == status]
+        return rows
+
     def record_audit_event(
         self,
         *,
@@ -1275,6 +1576,19 @@ class ModelRepositories:
             "created_at": decision.created_at,
         }
         return self.state.insert(f"{self.schema_name}.trade_decisions", row)
+
+    def record_strategy_signal(self, signal: StrategySignal) -> dict:
+        self.ensure_schema(provider_schema(signal.model_provider))
+        return self.state.insert(
+            f"{self.schema_name}.strategy_signals",
+            {
+                "id": str(uuid4()),
+                "strategy_name": signal.strategy_name,
+                "direction": signal.direction.value,
+                "inputs_hash": signal.inputs_hash,
+                "created_at": signal.created_at,
+            },
+        )
 
     def record_position_event(
         self,
