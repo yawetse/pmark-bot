@@ -353,6 +353,331 @@ class SharedRepositories:
             rows = [row for row in rows if row["month_key"] == month_key]
         return rows
 
+    def record_polymarket_gamma_market(
+        self,
+        *,
+        environment: Environment,
+        market_id: str,
+        question: str,
+        active: bool,
+        closed: bool,
+        raw_payload: dict,
+        condition_id: str | None = None,
+        slug: str | None = None,
+        category: str | None = None,
+        end_date: datetime | None = None,
+        tokens: list | tuple = (),
+        tags: list | tuple = (),
+        fetched_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.polymarket_gamma_markets",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "market_id": market_id,
+                "condition_id": condition_id,
+                "slug": slug,
+                "question": question,
+                "active": bool(active),
+                "closed": bool(closed),
+                "category": category,
+                "end_date": end_date,
+                "tokens": _json_ready(list(tokens)),
+                "tags": _json_ready(list(tags)),
+                "raw_payload": _json_ready(raw_payload),
+                "fetched_at": fetched_at or now,
+                "created_at": now,
+            },
+        )
+
+    def polymarket_gamma_markets(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.polymarket_gamma_markets")
+            if row["environment"] == environment.value
+        ]
+
+    def record_polymarket_chain_fill_event(
+        self,
+        *,
+        environment: Environment,
+        exchange_contract: str,
+        block_number: int,
+        log_index: int,
+        transaction_hash: str,
+        raw_event: dict,
+        block_hash: str | None = None,
+        maker_address: str | None = None,
+        taker_address: str | None = None,
+        asset_id: str | None = None,
+        market_id: str | None = None,
+        block_timestamp: datetime | None = None,
+        decoded_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.polymarket_chain_fill_events",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "exchange_contract": exchange_contract,
+                "block_number": max(0, int(block_number)),
+                "block_hash": block_hash,
+                "log_index": max(0, int(log_index)),
+                "transaction_hash": transaction_hash,
+                "maker_address": maker_address,
+                "taker_address": taker_address,
+                "asset_id": asset_id,
+                "market_id": market_id,
+                "raw_event": _json_ready(raw_event),
+                "block_timestamp": block_timestamp,
+                "decoded_at": decoded_at or now,
+                "created_at": now,
+            },
+        )
+
+    def polymarket_chain_fill_events(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.polymarket_chain_fill_events")
+            if row["environment"] == environment.value
+        ]
+
+    def record_polymarket_trade(
+        self,
+        *,
+        environment: Environment,
+        market_id: str,
+        asset_id: str,
+        wallet_address: str,
+        side: str,
+        price: Decimal,
+        size: Decimal,
+        notional_usd: Decimal,
+        transaction_hash: str,
+        block_number: int,
+        traded_at: datetime,
+        condition_id: str | None = None,
+        realized_pnl_usd: Decimal | None = None,
+        outcome: str | None = None,
+        role: str | None = None,
+        raw_event_id: str | None = None,
+        market_record_id: str | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.polymarket_trades",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "market_id": market_id,
+                "condition_id": condition_id,
+                "asset_id": asset_id,
+                "wallet_address": wallet_address.lower(),
+                "side": side.lower(),
+                "price": Decimal(str(price)),
+                "size": Decimal(str(size)),
+                "notional_usd": Decimal(str(notional_usd)),
+                "realized_pnl_usd": (
+                    None if realized_pnl_usd is None else Decimal(str(realized_pnl_usd))
+                ),
+                "outcome": outcome,
+                "role": role,
+                "transaction_hash": transaction_hash,
+                "block_number": max(0, int(block_number)),
+                "raw_event_id": raw_event_id,
+                "market_record_id": market_record_id,
+                "traded_at": traded_at,
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def polymarket_trades(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.polymarket_trades")
+            if row["environment"] == environment.value
+        ]
+
+    def record_polymarket_wallet_position(
+        self,
+        *,
+        environment: Environment,
+        wallet_address: str,
+        market_id: str,
+        asset_id: str,
+        state: str,
+        size: Decimal,
+        realized_pnl_usd: Decimal,
+        outcome: str | None = None,
+        entry_price: Decimal | None = None,
+        exit_price: Decimal | None = None,
+        opened_at: datetime | None = None,
+        closed_at: datetime | None = None,
+        trade_ids: list | tuple = (),
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.polymarket_wallet_positions",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "wallet_address": wallet_address.lower(),
+                "market_id": market_id,
+                "asset_id": asset_id,
+                "outcome": outcome,
+                "state": state,
+                "entry_price": None if entry_price is None else Decimal(str(entry_price)),
+                "exit_price": None if exit_price is None else Decimal(str(exit_price)),
+                "size": Decimal(str(size)),
+                "realized_pnl_usd": Decimal(str(realized_pnl_usd)),
+                "opened_at": opened_at,
+                "closed_at": closed_at,
+                "trade_ids": list(trade_ids),
+                "created_at": now,
+                "updated_at": updated_at or now,
+            },
+        )
+
+    def record_polymarket_wallet_performance_stat(
+        self,
+        *,
+        environment: Environment,
+        wallet_address: str,
+        trade_count: int,
+        win_rate: Decimal,
+        total_realized_pnl_usd: Decimal,
+        source: str,
+        average_hold_seconds: int | None = None,
+        calculated_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.polymarket_wallet_performance_stats",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "wallet_address": wallet_address.lower(),
+                "trade_count": max(0, int(trade_count)),
+                "win_rate": Decimal(str(win_rate)),
+                "total_realized_pnl_usd": Decimal(str(total_realized_pnl_usd)),
+                "average_hold_seconds": (
+                    None if average_hold_seconds is None else max(0, int(average_hold_seconds))
+                ),
+                "source": source,
+                "calculated_at": calculated_at or now,
+                "created_at": now,
+            },
+        )
+
+    def polymarket_wallet_performance_stats(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.polymarket_wallet_performance_stats")
+            if row["environment"] == environment.value
+        ]
+
+    def record_polymarket_target_wallet_snapshot(
+        self,
+        *,
+        environment: Environment,
+        min_trade_count: int,
+        min_win_rate: Decimal,
+        wallets: list,
+        source_stat_ids: list,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.polymarket_target_wallet_snapshots",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "min_trade_count": max(0, int(min_trade_count)),
+                "min_win_rate": Decimal(str(min_win_rate)),
+                "wallet_count": len(wallets),
+                "wallets": _json_ready(wallets),
+                "source_stat_ids": list(source_stat_ids),
+                "created_at": created_at or datetime.now(UTC),
+            },
+        )
+
+    def polymarket_target_wallet_snapshots(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.polymarket_target_wallet_snapshots")
+            if row["environment"] == environment.value
+        ]
+
+    def upsert_historical_import_checkpoint(
+        self,
+        *,
+        environment: Environment,
+        source: str,
+        cursor_type: str,
+        cursor_value: str,
+        status: str,
+        metadata: dict | None = None,
+        last_success_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        table = f"{SHARED_SCHEMA}.historical_import_checkpoints"
+        rows = self.state.rows(table)
+        now = updated_at or datetime.now(UTC)
+        for row in rows:
+            if row["environment"] == environment.value and row["source"] == source:
+                row.update(
+                    {
+                        "cursor_type": cursor_type,
+                        "cursor_value": cursor_value,
+                        "status": status,
+                        "metadata": _json_ready(metadata or {}),
+                        "last_success_at": last_success_at,
+                        "updated_at": now,
+                    }
+                )
+                return row
+        return self.state.insert(
+            table,
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "source": source,
+                "cursor_type": cursor_type,
+                "cursor_value": cursor_value,
+                "status": status,
+                "metadata": _json_ready(metadata or {}),
+                "last_success_at": last_success_at,
+                "updated_at": now,
+            },
+        )
+
+    def historical_import_checkpoints(self, *, environment: Environment) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        return [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.historical_import_checkpoints")
+            if row["environment"] == environment.value
+        ]
+
     def record_audit_event(
         self,
         *,
