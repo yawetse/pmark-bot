@@ -58,7 +58,7 @@ Polymarket:
 - [x] Implement event decoding tests using fixture logs.
 - [ ] Implement market metadata join tests using fixture markets.
 - [x] Implement wallet performance ranking tests, including the 100-trade and 70% win-rate thresholds.
-- [ ] Show historical import status in the dashboard.
+- [x] Show historical import status in the dashboard.
 
 Stocks:
 
@@ -202,4 +202,4 @@ Start with Phase 1 Polymarket data foundation:
 - [x] Implement Gamma market metadata backfill first.
 - [x] Implement Polygon `OrderFilled` backfill second.
 - [x] Implement wallet ranking third.
-- [ ] Add a dashboard import status card after the backend records exist.
+- [x] Add a dashboard import status card after the backend records exist.

@@ -38,6 +38,32 @@ export type OrderEventView = {
   message?: string | null;
 };
 
+export type HistoricalImportCheckpointView = {
+  id: string;
+  source: string;
+  cursorType: string;
+  cursorValue: string;
+  status: string;
+  lastSuccessAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type HistoricalImportView = {
+  status: string;
+  message: string;
+  counts: {
+    gammaMarkets: number;
+    chainFills: number;
+    trades: number;
+    walletPositions: number;
+    walletStats: number;
+    targetWalletSnapshots: number;
+    checkpoints: number;
+  };
+  checkpoints: HistoricalImportCheckpointView[];
+  lastUpdatedAt?: string | null;
+};
+
 export type OperationsSummaryView = {
   killSwitch: string;
   openOrders: number;
@@ -47,6 +73,23 @@ export type OperationsSummaryView = {
   manualReviewState: string;
   orderEvents: OrderEventView[];
   pipelineRuns: PipelineRunView[];
+  historicalImport?: HistoricalImportView;
+};
+
+const FALLBACK_HISTORICAL_IMPORT: HistoricalImportView = {
+  status: "idle",
+  message: "No historical Polymarket import records have been stored yet.",
+  counts: {
+    gammaMarkets: 0,
+    chainFills: 0,
+    trades: 0,
+    walletPositions: 0,
+    walletStats: 0,
+    targetWalletSnapshots: 0,
+    checkpoints: 0,
+  },
+  checkpoints: [],
+  lastUpdatedAt: null,
 };
 
 const FALLBACK_OPERATIONS: OperationsSummaryView = {
@@ -58,6 +101,7 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   manualReviewState: "unknown",
   orderEvents: [],
   pipelineRuns: [],
+  historicalImport: FALLBACK_HISTORICAL_IMPORT,
 };
 
 export function OperationsView({
@@ -125,6 +169,11 @@ export function OperationsView({
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
 
       <PipelineRunsPanel runs={pipelineRuns} timeZone={displayTimeZone} />
+
+      <HistoricalImportPanel
+        historicalImport={summary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
+        timeZone={displayTimeZone}
+      />
 
       {latestMarketData ? <MarketDataPanel marketData={latestMarketData} timeZone={displayTimeZone} /> : null}
 
@@ -302,6 +351,71 @@ function PipelineRunsPanel({
         emptyBody="Manual and scheduled runs will appear here after they start."
         getRowId={(run) => run.id}
         searchPlaceholder="Filter runs"
+      />
+    </section>
+  );
+}
+
+function HistoricalImportPanel({
+  historicalImport,
+  timeZone,
+}: {
+  historicalImport: HistoricalImportView;
+  timeZone: string;
+}) {
+  const columns: DashboardGridColumn<HistoricalImportCheckpointView>[] = [
+    { field: "source", headerName: "Source", minWidth: 220 },
+    { field: "status", headerName: "Status", minWidth: 130 },
+    { field: "cursorType", headerName: "Cursor", minWidth: 130 },
+    { field: "cursorValue", headerName: "Value", minWidth: 140 },
+    {
+      field: "lastSuccessAt",
+      headerName: "Last success",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+    {
+      field: "updatedAt",
+      headerName: "Updated",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
+
+  return (
+    <section className="operator-panel span-2" aria-labelledby="historical-import-title">
+      <div className="panel-heading">
+        <div>
+          <p className="section-label">Historical import</p>
+          <h2 id="historical-import-title">Polymarket history</h2>
+        </div>
+        <span className={`status ${statusClass(historicalImport.status)}`}>
+          {historicalImport.status}
+        </span>
+      </div>
+      <p className="panel-note">{historicalImport.message}</p>
+      <div className="metric-grid">
+        <Metric label="Gamma markets" value={String(historicalImport.counts.gammaMarkets)} />
+        <Metric label="Chain fills" value={String(historicalImport.counts.chainFills)} />
+        <Metric label="Trades" value={String(historicalImport.counts.trades)} />
+        <Metric label="Wallet stats" value={String(historicalImport.counts.walletStats)} />
+      </div>
+      <div className="metric-grid">
+        <Metric label="Wallet positions" value={String(historicalImport.counts.walletPositions)} />
+        <Metric
+          label="Target snapshots"
+          value={String(historicalImport.counts.targetWalletSnapshots)}
+        />
+        <Metric label="Checkpoints" value={String(historicalImport.counts.checkpoints)} />
+        <Metric label="Updated" value={formatDateTime(historicalImport.lastUpdatedAt, timeZone)} />
+      </div>
+      <DashboardDataGrid
+        rows={historicalImport.checkpoints}
+        columns={columns}
+        emptyTitle="No import checkpoints"
+        emptyBody="Historical import checkpoints will appear after Gamma or Polygon backfills run."
+        getRowId={(checkpoint) => checkpoint.id}
+        searchPlaceholder="Filter checkpoints"
       />
     </section>
   );
