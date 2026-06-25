@@ -944,6 +944,41 @@ a {
   margin: 0;
 }
 
+.preset-refresh-summary,
+.preset-metadata-list {
+  display: grid;
+  gap: 8px;
+}
+
+.preset-refresh-summary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.preset-metadata-list > div {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1.1fr repeat(4, minmax(0, 1fr));
+  min-height: 44px;
+  padding: 9px 10px;
+}
+
+.preset-metadata-list strong,
+.preset-metadata-list span {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.preset-metadata-list span {
+  color: var(--muted);
+}
+
 .setting-help {
   display: grid;
   gap: 10px;
@@ -1225,6 +1260,8 @@ th {
   .operator-hero,
   .operator-grid,
   .status-card-grid,
+  .preset-refresh-summary,
+  .preset-metadata-list > div,
   .metric-strip,
   .loop-schedule-grid,
   .loop-stage-list,

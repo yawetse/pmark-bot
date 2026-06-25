@@ -130,46 +130,61 @@ Stocks:
 
 Implementation note: Phase 4 now persists `shared.strategy_consensus_runs`,
 `shared.strategy_votes`, and `shared.strategy_consensus_outputs`. Execution step 4
-shows strategy consensus and still stops before risk sizing and order intents, which
-remain Phase 5.
+shows strategy consensus records before risk sizing and order intents.
 
 ## Phase 5: Risk and Execution
 
-- [ ] Persist order intents before any venue submission.
-- [ ] Add idempotency keys for all live order intents.
-- [ ] Run market-data freshness, slippage, max position, max daily loss, max open positions, and kill-switch gates before order submission.
-- [ ] Support dry-run order recording for Polymarket and Alpaca.
-- [ ] Wire approved Polymarket intents into the Polymarket execution adapter.
-- [ ] Wire approved Alpaca intents into the Alpaca execution adapter.
-- [ ] Reconcile unknown or partially filled order states before retrying.
-- [ ] Show order intents, submitted orders, refusals, and reconciliation status in the dashboard.
+- [x] Persist order intents before any venue submission.
+- [x] Add idempotency keys for all live order intents.
+- [x] Run market-data freshness, slippage, max position, max daily loss, max open positions, and kill-switch gates before order submission.
+- [x] Support dry-run order recording for Polymarket and Alpaca.
+- [x] Wire approved Polymarket intents into the Polymarket execution adapter.
+- [x] Wire approved Alpaca intents into the Alpaca execution adapter.
+- [x] Reconcile unknown or partially filled order states before retrying.
+- [x] Show order intents, submitted orders, refusals, and reconciliation status in the dashboard.
+
+Implementation note: Phase 5 now persists `shared.execution_runs` and
+`shared.order_intents` from manual and scheduled runs. Dry-run records simulated
+orders. Live runs still require configured venue submitters and credentials; without
+them, the lifecycle records a refusal before venue submission.
 
 ## Phase 6: Exit
 
 Polymarket:
 
-- [ ] Sync open Polymarket positions for target venues.
-- [ ] Apply profit-target exit logic.
-- [ ] Apply volume-spike exit logic.
-- [ ] Apply stale-thesis exit logic.
-- [ ] Persist exit intents and exit orders.
-- [ ] Compare exit behavior against target wallet exit patterns where history is available.
+- [x] Sync open Polymarket positions for target venues.
+- [x] Apply profit-target exit logic.
+- [x] Apply volume-spike exit logic.
+- [x] Apply stale-thesis exit logic.
+- [x] Persist exit intents and exit orders.
+- [x] Compare exit behavior against target wallet exit patterns where history is available.
 
 Stocks:
 
-- [ ] Sync open Alpaca positions.
-- [ ] Apply stock profit-target, stop-loss, trailing-stop, stale-position, and market-hours exit logic.
-- [ ] Persist stock exit intents and exit orders.
-- [ ] Show exit status per open position in the dashboard.
+- [x] Sync open Alpaca positions.
+- [x] Apply stock profit-target, stop-loss, trailing-stop, stale-position, and market-hours exit logic.
+- [x] Persist stock exit intents and exit orders.
+- [x] Show exit status per open position in the dashboard.
+
+Implementation note: Phase 6 now persists `shared.exit_runs` and
+`shared.exit_intents` from manual and scheduled runs. The monitor reads the existing
+shared Polymarket wallet positions and Alpaca historical positions as the open-position
+source, then records simulated or refused exits with the configured trigger details.
 
 ## Phase 7: Stock Universe Refresh
 
-- [ ] Replace static S&P 500 and Nasdaq 100 constituent lists with a refreshable source.
-- [ ] Store preset membership snapshots with effective dates.
-- [ ] Add a scheduled refresh job.
-- [ ] Keep user custom symbols additive to presets.
-- [ ] Show preset age and symbol count in the config UI.
-- [ ] Add tests that a new custom IPO symbol can be added without replacing preset membership.
+- [x] Replace static S&P 500 and Nasdaq 100 constituent lists with a refreshable source.
+- [x] Store preset membership snapshots with effective dates.
+- [x] Add a scheduled refresh job.
+- [x] Keep user custom symbols additive to presets.
+- [x] Show preset age and symbol count in the config UI.
+- [x] Add tests that a new custom IPO symbol can be added without replacing preset membership.
+
+Implementation note: Phase 7 now persists `shared.alpaca_symbol_preset_snapshots`.
+Scheduled runs refresh active presets from configurable constituent-table URLs before
+Alpaca pulls. The static S&P 500 and Nasdaq 100 lists remain as seed fallback data,
+not the primary runtime source after successful refresh. Config still keeps custom
+presets and individual symbols additive to the refreshed preset members.
 
 ## Phase 8: AI and Infrastructure Cost Backfill
 
