@@ -449,6 +449,215 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert set(audit_rows[-1]["metadata"]["venues"]) == {"polymarket_us", "alpaca"}
 
 
+def test_req_dat_009_11_operations_summary_exposes_historical_import_status() -> None:
+    """TST-REQ-DAT-009-11: Validates REQ-DAT-009 and REQ-UI-004
+
+    Given: historical Polymarket import rows and checkpoints exist
+    When: the operations summary endpoint is requested
+    Then: the dashboard receives counts, checkpoint state, and freshness metadata
+    """
+    client, token = _client()
+    shared = client.app.state.services.registry.shared()
+    observed = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    market = shared.record_polymarket_gamma_market(
+        environment=Environment.DEVELOPMENT,
+        market_id="market-1",
+        question="Will BTC close above 100k?",
+        condition_id="0xcondition",
+        active=False,
+        closed=True,
+        tokens=[{"token_id": "yes-token", "outcome": "YES"}],
+        raw_payload={"id": "market-1"},
+        fetched_at=observed,
+    )
+    fill = shared.record_polymarket_chain_fill_event(
+        environment=Environment.DEVELOPMENT,
+        exchange_contract="0xe111180000d2663c0091e4f400237545b87b996b",
+        block_number=100,
+        log_index=2,
+        transaction_hash="0xtx",
+        raw_event={"event": "OrderFilled"},
+        maker_address="0x1111111111111111111111111111111111111111",
+        taker_address="0x2222222222222222222222222222222222222222",
+        asset_id="yes-token",
+        block_timestamp=observed,
+    )
+    shared.record_polymarket_trade(
+        environment=Environment.DEVELOPMENT,
+        market_id="market-1",
+        asset_id="yes-token",
+        wallet_address="0x1111111111111111111111111111111111111111",
+        side="buy",
+        price=Decimal("0.42"),
+        size=Decimal("10"),
+        notional_usd=Decimal("4.20"),
+        realized_pnl_usd=Decimal("1.00"),
+        transaction_hash="0xtx",
+        block_number=100,
+        raw_event_id=fill["id"],
+        market_record_id=market["id"],
+        traded_at=observed,
+    )
+    stat = shared.record_polymarket_wallet_performance_stat(
+        environment=Environment.DEVELOPMENT,
+        wallet_address="0x1111111111111111111111111111111111111111",
+        trade_count=125,
+        win_rate=Decimal("0.74"),
+        total_realized_pnl_usd=Decimal("220"),
+        source="polymarket_trades",
+        calculated_at=observed,
+    )
+    shared.record_polymarket_target_wallet_snapshot(
+        environment=Environment.DEVELOPMENT,
+        min_trade_count=100,
+        min_win_rate=Decimal("0.70"),
+        wallets=[{"walletAddress": stat["wallet_address"]}],
+        source_stat_ids=[stat["id"]],
+        created_at=observed,
+    )
+    shared.upsert_historical_import_checkpoint(
+        environment=Environment.DEVELOPMENT,
+        source="polygon_order_filled",
+        cursor_type="block_number",
+        cursor_value="100",
+        status="complete",
+        metadata={"windows": 1},
+        last_success_at=observed,
+        updated_at=observed,
+    )
+
+    response = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    historical = response.json()["historicalImport"]
+
+    assert response.status_code == 200
+    assert historical["status"] == "complete"
+    assert historical["counts"]["gammaMarkets"] == 1
+    assert historical["counts"]["chainFills"] == 1
+    assert historical["counts"]["trades"] == 1
+    assert historical["counts"]["walletStats"] == 1
+    assert historical["counts"]["targetWalletSnapshots"] == 1
+    assert historical["checkpoints"][0]["source"] == "polygon_order_filled"
+    assert historical["checkpoints"][0]["cursorValue"] == "100"
+    assert historical["lastUpdatedAt"] == observed.isoformat()
+
+
+def test_req_alp_017_06_operations_summary_exposes_broker_history_status() -> None:
+    """TST-REQ-ALP-017-06: Validates REQ-ALP-017, REQ-DAT-008, and REQ-UI-004
+
+    Given: Alpaca broker history rows and checkpoints exist
+    When: the operations summary endpoint is requested
+    Then: the dashboard receives broker counts separate from Polymarket import status
+    """
+    client, token = _client()
+    shared = client.app.state.services.registry.shared()
+    observed = datetime(2026, 6, 25, 16, 0, tzinfo=UTC)
+    shared.record_alpaca_historical_order(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        order_id="order-1",
+        symbol="SPY",
+        side="buy",
+        status="filled",
+        raw_payload={"id": "order-1"},
+        submitted_at=observed,
+    )
+    fill = shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-1",
+        order_id="order-1",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("500"),
+        filled_at=observed,
+        raw_payload={"id": "fill-1"},
+    )
+    position = shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("500"),
+        market_value=Decimal("505"),
+        unrealized_pnl_usd=Decimal("5"),
+        raw_payload={"symbol": "SPY"},
+        observed_at=observed,
+    )
+    shared.record_alpaca_broker_account_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        account_status="ACTIVE",
+        buying_power=Decimal("1000"),
+        raw_payload={"id": "acct-1"},
+        observed_at=observed,
+    )
+    shared.record_stock_bar(
+        environment=Environment.DEVELOPMENT,
+        symbol="SPY",
+        timeframe="1Day",
+        bar_start_at=observed,
+        open_price=Decimal("500"),
+        high_price=Decimal("506"),
+        low_price=Decimal("499"),
+        close_price=Decimal("505"),
+        volume=Decimal("1000000"),
+        source="alpaca market data api",
+        raw_payload={"t": observed.isoformat()},
+    )
+    shared.record_alpaca_symbol_pnl_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        open_quantity=Decimal("1"),
+        realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("5"),
+        total_pnl_usd=Decimal("5"),
+        cost_basis=Decimal("500"),
+        market_value=Decimal("505"),
+        fill_ids=[fill["id"]],
+        position_id=position["id"],
+        calculated_at=observed,
+    )
+    shared.upsert_historical_import_checkpoint(
+        environment=Environment.DEVELOPMENT,
+        source="alpaca_broker_history:paper",
+        cursor_type="timestamp",
+        cursor_value=observed.isoformat(),
+        status="stored",
+        metadata={"fills": 1},
+        last_success_at=observed,
+        updated_at=observed,
+    )
+
+    response = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+    broker = payload["brokerHistory"]
+
+    assert response.status_code == 200
+    assert payload["historicalImport"]["status"] == "idle"
+    assert broker["status"] == "stored"
+    assert broker["counts"]["orders"] == 1
+    assert broker["counts"]["fills"] == 1
+    assert broker["counts"]["positions"] == 1
+    assert broker["counts"]["accountSnapshots"] == 1
+    assert broker["counts"]["bars"] == 1
+    assert broker["counts"]["pnlSnapshots"] == 1
+    assert broker["checkpoints"][0]["source"] == "alpaca_broker_history:paper"
+    assert broker["lastUpdatedAt"] == observed.isoformat()
+
+
 def test_req_ui_010_03_model_summary_reads_provider_schema_rows() -> None:
     """TST-REQ-UI-010-03: Validates REQ-UI-010
 

@@ -678,6 +678,384 @@ class SharedRepositories:
             if row["environment"] == environment.value
         ]
 
+    def record_alpaca_historical_order(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        account_id: str,
+        order_id: str,
+        symbol: str,
+        side: str,
+        status: str,
+        raw_payload: dict,
+        client_order_id: str | None = None,
+        order_type: str | None = None,
+        quantity: Decimal | None = None,
+        filled_quantity: Decimal | None = None,
+        filled_avg_price: Decimal | None = None,
+        notional: Decimal | None = None,
+        submitted_at: datetime | None = None,
+        filled_at: datetime | None = None,
+        canceled_at: datetime | None = None,
+        imported_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.alpaca_historical_orders",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "account_mode": account_mode,
+                "account_id": account_id,
+                "order_id": order_id,
+                "client_order_id": client_order_id,
+                "symbol": symbol.upper(),
+                "side": side.lower(),
+                "order_type": order_type,
+                "status": status.lower(),
+                "quantity": None if quantity is None else Decimal(str(quantity)),
+                "filled_quantity": (
+                    None if filled_quantity is None else Decimal(str(filled_quantity))
+                ),
+                "filled_avg_price": (
+                    None if filled_avg_price is None else Decimal(str(filled_avg_price))
+                ),
+                "notional": None if notional is None else Decimal(str(notional)),
+                "submitted_at": submitted_at,
+                "filled_at": filled_at,
+                "canceled_at": canceled_at,
+                "raw_payload": _json_ready(raw_payload),
+                "imported_at": imported_at or now,
+                "created_at": now,
+            },
+        )
+
+    def alpaca_historical_orders(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str | None = None,
+        account_id: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_historical_orders")
+            if row["environment"] == environment.value
+        ]
+        if account_mode is not None:
+            rows = [row for row in rows if row["account_mode"] == account_mode]
+        if account_id is not None:
+            rows = [row for row in rows if row["account_id"] == account_id]
+        return rows
+
+    def record_alpaca_historical_fill(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        account_id: str,
+        activity_id: str,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        price: Decimal,
+        filled_at: datetime,
+        raw_payload: dict,
+        order_id: str | None = None,
+        imported_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        notional = Decimal(str(quantity)) * Decimal(str(price))
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.alpaca_historical_fills",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "account_mode": account_mode,
+                "account_id": account_id,
+                "activity_id": activity_id,
+                "order_id": order_id,
+                "symbol": symbol.upper(),
+                "side": side.lower(),
+                "quantity": Decimal(str(quantity)),
+                "price": Decimal(str(price)),
+                "notional": notional,
+                "filled_at": filled_at,
+                "raw_payload": _json_ready(raw_payload),
+                "imported_at": imported_at or now,
+                "created_at": now,
+            },
+        )
+
+    def alpaca_historical_fills(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str | None = None,
+        account_id: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_historical_fills")
+            if row["environment"] == environment.value
+        ]
+        if account_mode is not None:
+            rows = [row for row in rows if row["account_mode"] == account_mode]
+        if account_id is not None:
+            rows = [row for row in rows if row["account_id"] == account_id]
+        return rows
+
+    def record_alpaca_historical_position(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        account_id: str,
+        symbol: str,
+        quantity: Decimal,
+        raw_payload: dict,
+        average_entry_price: Decimal | None = None,
+        cost_basis: Decimal | None = None,
+        market_value: Decimal | None = None,
+        current_price: Decimal | None = None,
+        unrealized_pnl_usd: Decimal | None = None,
+        observed_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.alpaca_historical_positions",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "account_mode": account_mode,
+                "account_id": account_id,
+                "symbol": symbol.upper(),
+                "quantity": Decimal(str(quantity)),
+                "average_entry_price": (
+                    None if average_entry_price is None else Decimal(str(average_entry_price))
+                ),
+                "cost_basis": None if cost_basis is None else Decimal(str(cost_basis)),
+                "market_value": None if market_value is None else Decimal(str(market_value)),
+                "current_price": None if current_price is None else Decimal(str(current_price)),
+                "unrealized_pnl_usd": (
+                    None if unrealized_pnl_usd is None else Decimal(str(unrealized_pnl_usd))
+                ),
+                "raw_payload": _json_ready(raw_payload),
+                "observed_at": observed_at or now,
+                "created_at": now,
+            },
+        )
+
+    def alpaca_historical_positions(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str | None = None,
+        account_id: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_historical_positions")
+            if row["environment"] == environment.value
+        ]
+        if account_mode is not None:
+            rows = [row for row in rows if row["account_mode"] == account_mode]
+        if account_id is not None:
+            rows = [row for row in rows if row["account_id"] == account_id]
+        return rows
+
+    def record_alpaca_broker_account_snapshot(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        account_id: str,
+        account_status: str,
+        raw_payload: dict,
+        buying_power: Decimal | None = None,
+        cash: Decimal | None = None,
+        portfolio_value: Decimal | None = None,
+        equity: Decimal | None = None,
+        observed_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.alpaca_broker_account_snapshots",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "account_mode": account_mode,
+                "account_id": account_id,
+                "account_status": account_status,
+                "buying_power": None if buying_power is None else Decimal(str(buying_power)),
+                "cash": None if cash is None else Decimal(str(cash)),
+                "portfolio_value": (
+                    None if portfolio_value is None else Decimal(str(portfolio_value))
+                ),
+                "equity": None if equity is None else Decimal(str(equity)),
+                "raw_payload": _json_ready(raw_payload),
+                "observed_at": observed_at or now,
+                "created_at": now,
+            },
+        )
+
+    def alpaca_broker_account_snapshots(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str | None = None,
+        account_id: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_broker_account_snapshots")
+            if row["environment"] == environment.value
+        ]
+        if account_mode is not None:
+            rows = [row for row in rows if row["account_mode"] == account_mode]
+        if account_id is not None:
+            rows = [row for row in rows if row["account_id"] == account_id]
+        return rows
+
+    def record_stock_bar(
+        self,
+        *,
+        environment: Environment,
+        symbol: str,
+        timeframe: str,
+        bar_start_at: datetime,
+        open_price: Decimal,
+        high_price: Decimal,
+        low_price: Decimal,
+        close_price: Decimal,
+        volume: Decimal,
+        source: str,
+        raw_payload: dict,
+        trade_count: int | None = None,
+        vwap: Decimal | None = None,
+        imported_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.stock_bars",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "symbol": symbol.upper(),
+                "timeframe": timeframe,
+                "bar_start_at": bar_start_at,
+                "open_price": Decimal(str(open_price)),
+                "high_price": Decimal(str(high_price)),
+                "low_price": Decimal(str(low_price)),
+                "close_price": Decimal(str(close_price)),
+                "volume": Decimal(str(volume)),
+                "trade_count": None if trade_count is None else max(0, int(trade_count)),
+                "vwap": None if vwap is None else Decimal(str(vwap)),
+                "source": source,
+                "raw_payload": _json_ready(raw_payload),
+                "imported_at": imported_at or now,
+                "created_at": now,
+            },
+        )
+
+    def stock_bars(
+        self,
+        *,
+        environment: Environment,
+        symbol: str | None = None,
+        timeframe: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.stock_bars")
+            if row["environment"] == environment.value
+        ]
+        if symbol is not None:
+            rows = [row for row in rows if row["symbol"] == symbol.upper()]
+        if timeframe is not None:
+            rows = [row for row in rows if row["timeframe"] == timeframe]
+        return rows
+
+    def record_alpaca_symbol_pnl_snapshot(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        account_id: str,
+        symbol: str,
+        open_quantity: Decimal,
+        realized_pnl_usd: Decimal,
+        unrealized_pnl_usd: Decimal,
+        total_pnl_usd: Decimal,
+        cost_basis: Decimal,
+        fill_ids: list | tuple,
+        average_entry_price: Decimal | None = None,
+        market_value: Decimal | None = None,
+        position_id: str | None = None,
+        calculated_at: datetime | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.alpaca_symbol_pnl_snapshots",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "account_mode": account_mode,
+                "account_id": account_id,
+                "symbol": symbol.upper(),
+                "open_quantity": Decimal(str(open_quantity)),
+                "average_entry_price": (
+                    None if average_entry_price is None else Decimal(str(average_entry_price))
+                ),
+                "realized_pnl_usd": Decimal(str(realized_pnl_usd)),
+                "unrealized_pnl_usd": Decimal(str(unrealized_pnl_usd)),
+                "total_pnl_usd": Decimal(str(total_pnl_usd)),
+                "cost_basis": Decimal(str(cost_basis)),
+                "market_value": None if market_value is None else Decimal(str(market_value)),
+                "fill_ids": list(fill_ids),
+                "position_id": position_id,
+                "calculated_at": calculated_at or now,
+                "created_at": now,
+            },
+        )
+
+    def alpaca_symbol_pnl_snapshots(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str | None = None,
+        account_id: str | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_symbol_pnl_snapshots")
+            if row["environment"] == environment.value
+        ]
+        if account_mode is not None:
+            rows = [row for row in rows if row["account_mode"] == account_mode]
+        if account_id is not None:
+            rows = [row for row in rows if row["account_id"] == account_id]
+        return rows
+
     def record_audit_event(
         self,
         *,
