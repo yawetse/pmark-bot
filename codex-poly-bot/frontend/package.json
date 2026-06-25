@@ -12,6 +12,8 @@
     "test:dashboard-operations": "node scripts/check-dashboard-operations.mjs"
   },
   "dependencies": {
+    "ag-grid-community": "^36.0.0",
+    "ag-grid-react": "^36.0.0",
     "next": "^16.2.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

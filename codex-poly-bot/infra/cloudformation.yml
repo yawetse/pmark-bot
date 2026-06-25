@@ -84,6 +84,21 @@ Parameters:
       - reviewing
       - pending
       - disabled
+  AlpacaSymbolPresets:
+    Type: String
+    Default: "sp500,nasdaq100"
+  AlpacaCustomSymbols:
+    Type: String
+    Default: ""
+  AlpacaSymbolUniverse:
+    Type: String
+    Default: ""
+  AlpacaSymbolChunkSize:
+    Type: String
+    Default: "100"
+  AlpacaHistoricalBarLimit:
+    Type: String
+    Default: "30"
   SesIdentityEmail:
     Type: String
   NotificationRecipients:
@@ -549,6 +564,16 @@ Resources:
               Value: !Ref AlpacaDataFeed
             - Name: ALPACA_ACCOUNT_STATUS
               Value: !Ref AlpacaAccountStatus
+            - Name: ALPACA_SYMBOL_PRESETS
+              Value: !Ref AlpacaSymbolPresets
+            - Name: ALPACA_CUSTOM_SYMBOLS
+              Value: !Ref AlpacaCustomSymbols
+            - Name: ALPACA_SYMBOL_UNIVERSE
+              Value: !Ref AlpacaSymbolUniverse
+            - Name: ALPACA_SYMBOL_CHUNK_SIZE
+              Value: !Ref AlpacaSymbolChunkSize
+            - Name: ALPACA_HISTORICAL_BAR_LIMIT
+              Value: !Ref AlpacaHistoricalBarLimit
             - Name: SES_IDENTITY_EMAIL
               Value: !Ref SesIdentityEmail
             - Name: NOTIFICATION_RECIPIENTS

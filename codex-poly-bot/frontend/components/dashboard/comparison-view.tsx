@@ -1,5 +1,10 @@
 // REQ: REQ-UI-011, REQ-CMP-002, REQ-CMP-003, REQ-CMP-004
 
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
+
 export type ComparisonMetricView = {
   group: string;
   metric: string;
@@ -19,6 +24,18 @@ export function ComparisonView({
   summary?: ComparisonSummaryView;
   loadError?: string;
 }) {
+  const columns: DashboardGridColumn<ComparisonMetricView>[] = [
+    { field: "group", headerName: "Group", minWidth: 180 },
+    { field: "metric", headerName: "Metric", minWidth: 180 },
+    {
+      field: "value",
+      headerName: "Value",
+      minWidth: 140,
+      valueFormatter: (params) => params.value ?? "Unavailable",
+    },
+    { field: "caveat", headerName: "Caveat", minWidth: 240 },
+  ];
+
   return (
     <section className="panel wide-panel">
       <div className="panel-heading">
@@ -33,38 +50,14 @@ export function ComparisonView({
         and drawdown records exist.
       </p>
       {loadError ? <p className="status-message">{loadError}</p> : null}
-      {summary.metrics.length === 0 ? (
-        <div className="empty-state">
-          <strong>No comparison metrics yet</strong>
-          <p>
-            The app needs recorded decisions, orders, position changes, and model
-            costs before it can calculate P&L, win rate, drawdown, or return to risk.
-          </p>
-        </div>
-      ) : (
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Group</th>
-              <th>Metric</th>
-              <th>Value</th>
-              <th>Caveat</th>
-            </tr>
-          </thead>
-          <tbody>
-              {summary.metrics.map((metric) => (
-              <tr key={`${metric.group}-${metric.metric}`}>
-                <td>{metric.group}</td>
-                <td>{metric.metric}</td>
-                <td>{metric.value ?? "Unavailable"}</td>
-                <td>{metric.caveat ?? ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      )}
+      <DashboardDataGrid
+        rows={summary.metrics}
+        columns={columns}
+        emptyTitle="No comparison metrics yet"
+        emptyBody="The app needs recorded decisions, orders, position changes, and model costs before it can calculate P&L, win rate, drawdown, or return to risk."
+        getRowId={(metric) => `${metric.group}-${metric.metric}`}
+        searchPlaceholder="Filter metrics"
+      />
     </section>
   );
 }

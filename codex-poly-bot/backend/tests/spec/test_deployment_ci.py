@@ -347,6 +347,11 @@ def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injectio
     assert "ALPACA_SECRET_KEY" in text
     assert "AlpacaSecretKeySecretArn" in text
     assert "ALPACA_ACCOUNT_STATUS" in text
+    assert "ALPACA_SYMBOL_PRESETS" in text
+    assert "ALPACA_CUSTOM_SYMBOLS" in text
+    assert "ALPACA_SYMBOL_UNIVERSE" in text
+    assert "ALPACA_SYMBOL_CHUNK_SIZE" in text
+    assert "ALPACA_HISTORICAL_BAR_LIMIT" in text
     assert "NOTIFICATION_RECIPIENTS" in text
     assert "ENABLE_BACKGROUND_WORKER" in text
     assert "TaskExecutionSecretAccessPolicy" in text
@@ -368,8 +373,15 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "/codex-poly-bot/${environment}/alpaca/key-id" in text
     assert "/codex-poly-bot/${environment}/alpaca/secret-key" in text
     assert "AlpacaAccountStatus=${alpaca_account_status}" in text
+    assert "AlpacaSymbolPresets=${alpaca_symbol_presets}" in text
+    assert "AlpacaCustomSymbols=${alpaca_custom_symbols}" in text
+    assert "AlpacaSymbolUniverse=${alpaca_symbol_universe}" in text
+    assert "AlpacaSymbolChunkSize=${alpaca_symbol_chunk_size}" in text
+    assert "AlpacaHistoricalBarLimit=${alpaca_historical_bar_limit}" in text
     assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-paper_ready}\"" in text
     assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-reviewing}\"" in text
+    assert "alpaca_symbol_presets=\"${ALPACA_SYMBOL_PRESETS:-sp500,nasdaq100}\"" in text
+    assert "alpaca_symbol_universe=\"${ALPACA_SYMBOL_UNIVERSE:-}\"" in text
     assert "NOTIFICATION_RECIPIENT_EMAIL:-yaw.etse@gmail.com" in text
     assert "NotificationRecipients=${notification_recipients}" in text
     assert "EnableBackgroundWorker=${enable_background_worker}" in text
@@ -411,6 +423,11 @@ def test_req_dep_006_04_workflow_deploys_infrastructure_before_ecr_publish() -> 
         assert "Deploy CloudFormation stack" in text
         assert "./codex-poly-bot/scripts/deploy-stack.sh" in text
         assert "ALPACA_ACCOUNT_STATUS: ${{ vars.ALPACA_ACCOUNT_STATUS }}" in text
+        assert "ALPACA_SYMBOL_PRESETS: ${{ vars.ALPACA_SYMBOL_PRESETS }}" in text
+        assert "ALPACA_CUSTOM_SYMBOLS: ${{ vars.ALPACA_CUSTOM_SYMBOLS }}" in text
+        assert "ALPACA_SYMBOL_UNIVERSE: ${{ vars.ALPACA_SYMBOL_UNIVERSE }}" in text
+        assert "ALPACA_SYMBOL_CHUNK_SIZE: ${{ vars.ALPACA_SYMBOL_CHUNK_SIZE }}" in text
+        assert "ALPACA_HISTORICAL_BAR_LIMIT: ${{ vars.ALPACA_HISTORICAL_BAR_LIMIT }}" in text
         assert "environment: production" in text
         assert "environment: development" in text
         assert "aws ecs wait services-stable" in text

@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { ReactNode } from "react";
+import Script from "next/script";
 
 export const metadata = {
   title: "codex-poly-bot",
@@ -14,7 +15,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <script
+        <Script
+          id="dashboard-theme-init"
+          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `try{var theme=localStorage.getItem("codex-poly-bot-theme");if(theme==="light"||theme==="dark"){document.documentElement.dataset.theme=theme}}catch(e){}`,
           }}

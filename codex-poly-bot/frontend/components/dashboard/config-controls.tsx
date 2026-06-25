@@ -18,6 +18,13 @@ type ConfigUpdateResponse = {
   applies_on_next_loop?: boolean;
 };
 
+type ConfigPatchDraft = {
+  path: AllowedConfigPath;
+  value: ConfigValue;
+};
+
+type ConfigValue = string | boolean | number | string[] | Record<string, unknown>;
+
 export type ConfigSnapshot = {
   environment: string;
   version: string;
@@ -42,6 +49,15 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const [value, setValue] = useState(() =>
     formatValueForInput(valueAtPath(initialSnapshot?.settings, ALLOWED_CONFIG_PATHS[0])),
   );
+  const [presetDraft, setPresetDraft] = useState(() =>
+    formatPresetList(valueAtPath(initialSnapshot?.settings, "alpaca.symbol_presets")),
+  );
+  const [customSymbolDraft, setCustomSymbolDraft] = useState(() =>
+    formatSymbolList(valueAtPath(initialSnapshot?.settings, "alpaca.custom_symbols")),
+  );
+  const [customPresetDraft, setCustomPresetDraft] = useState(() =>
+    formatValueForInput(valueAtPath(initialSnapshot?.settings, "alpaca.custom_presets") ?? {}),
+  );
   const [expectedVersion, setExpectedVersion] = useState(() =>
     expectedVersionFromSnapshot(initialSnapshot),
   );
@@ -49,6 +65,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const selectedDetail = CONFIG_PATH_DETAILS[path];
   const currentValue = valueAtPath(settings, path);
+  const resolvedSymbols = symbolsFromValue(valueAtPath(settings, "alpaca.symbol_universe"));
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,6 +80,38 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       return;
     }
 
+    await saveConfigPatch(path, parsedValue.value);
+  }
+
+  async function onStockUniverseSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const parsedPresets = parsePresetList(presetDraft);
+    if (!parsedPresets.ok) {
+      setSaveState({ status: "error", message: parsedPresets.message });
+      return;
+    }
+    const parsedCustomSymbols = parseSymbols(customSymbolDraft, { allowEmpty: true });
+    if (!parsedCustomSymbols.ok) {
+      setSaveState({ status: "error", message: parsedCustomSymbols.message });
+      return;
+    }
+    const parsedCustomPresets = parseCustomPresets(customPresetDraft);
+    if (!parsedCustomPresets.ok) {
+      setSaveState({ status: "error", message: parsedCustomPresets.message });
+      return;
+    }
+    await saveConfigPatches([
+      { path: "alpaca.symbol_presets", value: parsedPresets.value },
+      { path: "alpaca.custom_symbols", value: parsedCustomSymbols.value },
+      { path: "alpaca.custom_presets", value: parsedCustomPresets.value },
+    ]);
+  }
+
+  async function saveConfigPatch(patchPath: AllowedConfigPath, nextValue: ConfigValue) {
+    await saveConfigPatches([{ path: patchPath, value: nextValue }]);
+  }
+
+  async function saveConfigPatches(patches: ConfigPatchDraft[]) {
     const nextVersion = nextConfigVersion(currentVersion);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "PUT",
@@ -70,7 +119,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         environment: initialSnapshot?.environment ?? process.env.NEXT_PUBLIC_APP_ENV ?? "local",
         version: nextVersion,
         expected_version: expectedVersion || null,
-        patches: [{ op: "replace", path, value: parsedValue.value }],
+        patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
       }),
     });
 
@@ -85,10 +134,31 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     }
 
     const savedVersion = result.data.new_version ?? nextVersion;
-    setSettings((currentSettings) => valueAtUpdatedPath(currentSettings, path, parsedValue.value));
+    const refreshed = await dashboardApi<ConfigSnapshot>("config/current");
+    if (refreshed.ok) {
+      setSettings(refreshed.data.settings);
+      setCurrentVersion(refreshed.data.version);
+      setExpectedVersion(expectedVersionFromSnapshot(refreshed.data));
+      syncStockUniverseDrafts(refreshed.data.settings);
+      setValue(formatValueForInput(valueAtPath(refreshed.data.settings, path)));
+      setSaveState({ status: "saved", version: refreshed.data.version });
+      return;
+    }
+    setSettings((currentSettings) =>
+      patches.reduce(
+        (nextSettings, patch) => valueAtUpdatedPath(nextSettings, patch.path, patch.value),
+        currentSettings,
+      ),
+    );
     setCurrentVersion(savedVersion);
     setExpectedVersion(savedVersion);
     setSaveState({ status: "saved", version: savedVersion });
+  }
+
+  function syncStockUniverseDrafts(nextSettings: Record<string, unknown>) {
+    setPresetDraft(formatPresetList(valueAtPath(nextSettings, "alpaca.symbol_presets")));
+    setCustomSymbolDraft(formatSymbolList(valueAtPath(nextSettings, "alpaca.custom_symbols")));
+    setCustomPresetDraft(formatValueForInput(valueAtPath(nextSettings, "alpaca.custom_presets") ?? {}));
   }
 
   function onPathChange(nextPath: string) {
@@ -116,6 +186,49 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         </p>
       ) : null}
       {loadError ? <p className="status-message">{loadError}</p> : null}
+      <form className="symbol-editor" onSubmit={onStockUniverseSubmit}>
+        <div>
+          <h3>Alpaca stock universe</h3>
+          <p>
+            Manual and scheduled Alpaca pulls combine built-in presets, custom preset groups, and
+            individual symbols.
+          </p>
+        </div>
+        <label>
+          Active presets
+          <textarea
+            rows={3}
+            value={presetDraft}
+            onChange={(event) => setPresetDraft(event.target.value)}
+            placeholder="sp500, nasdaq100"
+          />
+        </label>
+        <label>
+          Additional symbols
+          <textarea
+            rows={3}
+            value={customSymbolDraft}
+            onChange={(event) => setCustomSymbolDraft(event.target.value)}
+            placeholder="CRCL, FIG"
+          />
+        </label>
+        <label>
+          Custom presets
+          <textarea
+            rows={5}
+            value={customPresetDraft}
+            onChange={(event) => setCustomPresetDraft(event.target.value)}
+            placeholder='{"new_ipos":["CRCL","FIG"]}'
+          />
+        </label>
+        <p className="panel-note">
+          Resolved symbols: {resolvedSymbols.length}. First symbols:{" "}
+          {resolvedSymbols.slice(0, 12).join(", ") || "none"}.
+        </p>
+        <button className="button primary" type="submit">
+          Save stock universe
+        </button>
+      </form>
       <form className="form-stack" onSubmit={onSubmit}>
         <label>
           Path
@@ -188,7 +301,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
 
 function parseValue(
   value: string,
-): { ok: true; value: string | boolean | number | string[] | Record<string, unknown> } | { ok: false; message: string } {
+): { ok: true; value: ConfigValue } | { ok: false; message: string } {
   const trimmed = value.trim();
   if (trimmed === "true") {
     return { ok: true, value: true };
@@ -212,6 +325,91 @@ function parseValue(
     return { ok: true, value: numericValue };
   }
   return { ok: true, value };
+}
+
+function parsePresetList(value: string): { ok: true; value: string[] } | { ok: false; message: string } {
+  const parsed = parseListInput(value, { allowEmpty: true, uppercase: false });
+  if (!parsed.ok) {
+    return parsed;
+  }
+  return {
+    ok: true,
+    value: parsed.value.map((preset) => preset.toLowerCase().replace(/\s+/g, "_")),
+  };
+}
+
+function parseSymbols(
+  value: string,
+  options: { allowEmpty: boolean } = { allowEmpty: false },
+): { ok: true; value: string[] } | { ok: false; message: string } {
+  return parseListInput(value, { allowEmpty: options.allowEmpty, uppercase: true });
+}
+
+function parseListInput(
+  value: string,
+  options: { allowEmpty: boolean; uppercase: boolean },
+): { ok: true; value: string[] } | { ok: false; message: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return options.allowEmpty ? { ok: true, value: [] } : { ok: false, message: "At least one value is required" };
+  }
+  let values: string[];
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!Array.isArray(parsed)) {
+        return { ok: false, message: "JSON input must be an array" };
+      }
+      values = parsed.map((item) => String(item));
+    } catch {
+      return { ok: false, message: "JSON input is not valid" };
+    }
+  } else {
+    values = trimmed.split(/[\s,]+/);
+  }
+  const normalized = Array.from(
+    new Set(
+      values
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => (options.uppercase ? item.toUpperCase() : item.toLowerCase())),
+    ),
+  );
+  if (normalized.length === 0 && !options.allowEmpty) {
+    return { ok: false, message: "At least one value is required" };
+  }
+  return { ok: true, value: normalized };
+}
+
+function parseCustomPresets(
+  value: string,
+): { ok: true; value: Record<string, string[]> } | { ok: false; message: string } {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return { ok: true, value: {} };
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!isPlainObject(parsed)) {
+      return { ok: false, message: "Custom presets must be a JSON object" };
+    }
+    const normalized: Record<string, string[]> = {};
+    for (const [name, symbols] of Object.entries(parsed)) {
+      if (!Array.isArray(symbols)) {
+        return { ok: false, message: "Each custom preset must be a symbol array" };
+      }
+      const presetName = name.trim().toLowerCase().replace(/\s+/g, "_");
+      if (!presetName) {
+        return { ok: false, message: "Custom preset names cannot be empty" };
+      }
+      normalized[presetName] = Array.from(
+        new Set(symbols.map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean)),
+      );
+    }
+    return { ok: true, value: normalized };
+  } catch {
+    return { ok: false, message: "Custom presets JSON is not valid" };
+  }
 }
 
 function parseCurrentVersion(message: string): string | null {
@@ -281,8 +479,35 @@ function formatValueForInput(value: unknown): string {
   return String(value);
 }
 
+function formatSymbolList(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value.map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean).join(", ");
+}
+
+function formatPresetList(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value.map((preset) => String(preset).trim().toLowerCase()).filter(Boolean).join(", ");
+}
+
+function symbolsFromValue(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean);
+}
+
 function pathRequiresJson(path: AllowedConfigPath): boolean {
-  return path === "alpaca.symbol_universe" || path === "notifications.recipients";
+  return (
+    path === "alpaca.symbol_universe" ||
+    path === "alpaca.symbol_presets" ||
+    path === "alpaca.custom_symbols" ||
+    path === "alpaca.custom_presets" ||
+    path === "notifications.recipients"
+  );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
