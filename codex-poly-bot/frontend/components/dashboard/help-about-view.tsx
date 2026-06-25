@@ -1,5 +1,10 @@
 // REQ: REQ-UI-004, REQ-DEP-001, REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-WAL-003
 
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
+
 const COMPONENTS = [
   {
     name: "Next.js dashboard",
@@ -83,6 +88,22 @@ const ENVIRONMENTS = [
 ] as const;
 
 export function HelpAboutView() {
+  const componentColumns: DashboardGridColumn<(typeof COMPONENTS)[number]>[] = [
+    { field: "name", headerName: "Component", minWidth: 180 },
+    { field: "role", headerName: "What it does", minWidth: 320 },
+    { field: "runs", headerName: "How it runs", minWidth: 240 },
+  ];
+  const storageColumns: DashboardGridColumn<(typeof STORAGE)[number]>[] = [
+    { field: "area", headerName: "Storage area", minWidth: 220 },
+    { field: "stores", headerName: "Information stored", minWidth: 420 },
+  ];
+  const environmentColumns: DashboardGridColumn<(typeof ENVIRONMENTS)[number]>[] = [
+    { field: "name", headerName: "Environment", minWidth: 150 },
+    { field: "purpose", headerName: "Purpose", minWidth: 220 },
+    { field: "runtime", headerName: "Runtime", minWidth: 260 },
+    { field: "trading", headerName: "Trading posture", minWidth: 320 },
+  ];
+
   return (
     <div className="page-stack">
       <section className="panel wide-panel">
@@ -122,26 +143,14 @@ export function HelpAboutView() {
       <section className="panel wide-panel">
         <p className="section-label">Components</p>
         <h2>Main Components</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Component</th>
-                <th>What it does</th>
-                <th>How it runs</th>
-              </tr>
-            </thead>
-            <tbody>
-              {COMPONENTS.map((component) => (
-                <tr key={component.name}>
-                  <td>{component.name}</td>
-                  <td>{component.role}</td>
-                  <td>{component.runs}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DashboardDataGrid
+          rows={[...COMPONENTS]}
+          columns={componentColumns}
+          emptyTitle="No components"
+          emptyBody="No component reference rows are available."
+          getRowId={(component) => component.name}
+          searchPlaceholder="Filter components"
+        />
       </section>
 
       <section className="panel wide-panel">
@@ -188,24 +197,14 @@ export function HelpAboutView() {
       <section className="panel wide-panel">
         <p className="section-label">Storage</p>
         <h2>How Information Is Stored</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Storage area</th>
-                <th>Information stored</th>
-              </tr>
-            </thead>
-            <tbody>
-              {STORAGE.map((item) => (
-                <tr key={item.area}>
-                  <td>{item.area}</td>
-                  <td>{item.stores}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DashboardDataGrid
+          rows={[...STORAGE]}
+          columns={storageColumns}
+          emptyTitle="No storage rows"
+          emptyBody="No storage reference rows are available."
+          getRowId={(item) => item.area}
+          searchPlaceholder="Filter storage"
+        />
       </section>
 
       <section className="panel wide-panel">
@@ -229,28 +228,14 @@ export function HelpAboutView() {
       <section className="panel wide-panel">
         <p className="section-label">Environments</p>
         <h2>Where It Runs</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Environment</th>
-                <th>Purpose</th>
-                <th>Runtime</th>
-                <th>Trading posture</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ENVIRONMENTS.map((environment) => (
-                <tr key={environment.name}>
-                  <td>{environment.name}</td>
-                  <td>{environment.purpose}</td>
-                  <td>{environment.runtime}</td>
-                  <td>{environment.trading}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DashboardDataGrid
+          rows={[...ENVIRONMENTS]}
+          columns={environmentColumns}
+          emptyTitle="No environments"
+          emptyBody="No environment reference rows are available."
+          getRowId={(environment) => environment.name}
+          searchPlaceholder="Filter environments"
+        />
       </section>
 
       <section className="panel wide-panel">

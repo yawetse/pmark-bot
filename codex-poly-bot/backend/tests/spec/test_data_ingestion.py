@@ -282,30 +282,53 @@ def test_req_dat_008_01_ingestion_job_fails_after_prior_checkpoint_retry_policy(
 def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates() -> None:
     """TST-REQ-DAT-008-04: Validates REQ-DAT-008
 
-    Given: Alpaca latest quote and bar endpoints return market data
+    Given: Alpaca batch snapshot and historical bar endpoints return market data
     When: provider-backed ingestion runs for configured symbols
-    Then: priced dashboard candidates include price, spread, liquidity, and timestamp
+    Then: priced dashboard candidates include price, spread, liquidity, timestamp, and history metadata
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/quotes/latest"):
+        if request.url.path == "/v2/stocks/snapshots":
             return httpx.Response(
                 200,
                 json={
-                    "symbol": "SPY",
-                    "quote": {
-                        "t": "2026-06-24T18:00:00Z",
-                        "bp": 500,
-                        "ap": 500.02,
-                        "bs": 1,
-                        "as": 2,
+                    "snapshots": {
+                        "SPY": {
+                            "latestQuote": {
+                                "t": "2026-06-24T18:00:00Z",
+                                "bp": 500,
+                                "ap": 500.02,
+                                "bs": 1,
+                                "as": 2,
+                            }
+                        },
+                        "QQQ": {
+                            "latestQuote": {
+                                "t": "2026-06-24T18:00:10Z",
+                                "bp": 380,
+                                "ap": 380.04,
+                                "bs": 4,
+                                "as": 5,
+                            }
+                        },
                     },
                 },
             )
-        if request.url.path.endswith("/bars/latest"):
+        if request.url.path == "/v2/stocks/bars":
             return httpx.Response(
                 200,
-                json={"symbol": "SPY", "bar": {"t": "2026-06-24T17:59:00Z", "c": 499.9, "v": 1000}},
+                json={
+                    "bars": {
+                        "SPY": [
+                            {"t": "2026-06-23T20:00:00Z", "c": 498.25, "v": 900},
+                            {"t": "2026-06-24T20:00:00Z", "c": 499.9, "v": 1000},
+                        ],
+                        "QQQ": [
+                            {"t": "2026-06-23T20:00:00Z", "c": 379.25, "v": 800},
+                            {"t": "2026-06-24T20:00:00Z", "c": 380.1, "v": 850},
+                        ],
+                    }
+                },
             )
         return httpx.Response(404)
 
@@ -314,23 +337,30 @@ def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates(
             "ALPACA_KEY_ID": "key",
             "ALPACA_SECRET_KEY": "secret",
             "ALPACA_DATA_BASE_URL": "https://data.alpaca.test/v2",
+            "ALPACA_SYMBOL_CHUNK_SIZE": "100",
+            "ALPACA_HISTORICAL_BAR_LIMIT": "30",
         },
         transport=httpx.MockTransport(handler),
     )
 
     result = fetcher.fetch(
         venue=Venue.ALPACA.value,
-        config_payload={"alpaca": {"symbol_universe": ["SPY"]}},
+        config_payload={"alpaca": {"symbol_universe": ["SPY", "QQQ"]}},
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
 
     assert result.status == "pulled"
     assert result.source == "alpaca market data api"
+    assert [candidate["symbol"] for candidate in result.candidates] == ["SPY", "QQQ"]
     assert result.candidates[0]["symbol"] == "SPY"
     assert result.candidates[0]["price"] == "500.01"
     assert result.candidates[0]["spread"] == "0.02"
     assert result.candidates[0]["liquidity"] == "3"
     assert result.candidates[0]["pulledAt"] == "2026-06-24T18:00:00Z"
+    assert result.candidates[0]["dataSource"] == "snapshot+historical_bars"
+    assert result.candidates[0]["historyBarCount"] == 2
+    assert result.candidates[0]["previousClose"] == "498.25"
+    assert result.candidates[1]["price"] == "380.02"
 
 
 def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() -> None:

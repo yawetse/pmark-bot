@@ -46,8 +46,14 @@ ORDERED_KEYS = (
     "POLYMARKET_MARKET_ORDER_SLIPPAGE",
     "ALPACA_MARKET_ORDER_SLIPPAGE",
     "ALPACA_ACCOUNT_STATUS",
+    "ALPACA_SYMBOL_PRESETS",
+    "ALPACA_CUSTOM_SYMBOLS",
+    "ALPACA_SYMBOL_UNIVERSE",
     "POLYMARKET_API_BASE_URL",
     "POLYMARKET_GATEWAY_BASE_URL",
+    "POLYMARKET_GAMMA_BASE_URL",
+    "POLYMARKET_CLOB_BASE_URL",
+    "POLYMARKET_MARKET_DATA_LIMIT",
     "POSTGRES_HOST",
     "POSTGRES_PORT",
     "POSTGRES_DB",
@@ -75,7 +81,10 @@ ORDERED_KEYS = (
     "ALPACA_KEY_ID",
     "ALPACA_SECRET_KEY",
     "ALPACA_BASE_URL",
+    "ALPACA_DATA_BASE_URL",
     "ALPACA_DATA_FEED",
+    "ALPACA_SYMBOL_CHUNK_SIZE",
+    "ALPACA_HISTORICAL_BAR_LIMIT",
 )
 
 PROFILE_KEYS = {
@@ -111,6 +120,9 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("POLYMARKET_MARKET_ORDER_SLIPPAGE", "0.02"),
             ("ALPACA_MARKET_ORDER_SLIPPAGE", "0.005"),
             ("ALPACA_ACCOUNT_STATUS", "active"),
+            ("ALPACA_SYMBOL_PRESETS", "sp500,nasdaq100"),
+            ("ALPACA_CUSTOM_SYMBOLS", ""),
+            ("ALPACA_SYMBOL_UNIVERSE", ""),
             ("POLYMARKET_API_BASE_URL", "https://api.polymarket.us"),
             ("POLYMARKET_GATEWAY_BASE_URL", "https://gateway.polymarket.us"),
             ("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com"),
@@ -148,6 +160,8 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
             ("ALPACA_DATA_BASE_URL", "https://data.alpaca.markets/v2"),
             ("ALPACA_DATA_FEED", "iex"),
+            ("ALPACA_SYMBOL_CHUNK_SIZE", "100"),
+            ("ALPACA_HISTORICAL_BAR_LIMIT", "30"),
         )
     ),
     "development": OrderedDict(
@@ -168,6 +182,9 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("POLYMARKET_MARKET_ORDER_SLIPPAGE", "0.02"),
             ("ALPACA_MARKET_ORDER_SLIPPAGE", "0.005"),
             ("ALPACA_ACCOUNT_STATUS", "paper_ready"),
+            ("ALPACA_SYMBOL_PRESETS", "sp500,nasdaq100"),
+            ("ALPACA_CUSTOM_SYMBOLS", ""),
+            ("ALPACA_SYMBOL_UNIVERSE", ""),
             ("POLYMARKET_API_BASE_URL", "https://api.polymarket.us"),
             ("POLYMARKET_GATEWAY_BASE_URL", "https://gateway.polymarket.us"),
             ("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com"),
@@ -202,6 +219,8 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
             ("ALPACA_DATA_BASE_URL", "https://data.alpaca.markets/v2"),
             ("ALPACA_DATA_FEED", "iex"),
+            ("ALPACA_SYMBOL_CHUNK_SIZE", "100"),
+            ("ALPACA_HISTORICAL_BAR_LIMIT", "30"),
         )
     ),
     "production": OrderedDict(
@@ -222,6 +241,9 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("POLYMARKET_MARKET_ORDER_SLIPPAGE", "0.02"),
             ("ALPACA_MARKET_ORDER_SLIPPAGE", "0.005"),
             ("ALPACA_ACCOUNT_STATUS", "reviewing"),
+            ("ALPACA_SYMBOL_PRESETS", "sp500,nasdaq100"),
+            ("ALPACA_CUSTOM_SYMBOLS", ""),
+            ("ALPACA_SYMBOL_UNIVERSE", ""),
             ("POLYMARKET_API_BASE_URL", "https://api.polymarket.us"),
             ("POLYMARKET_GATEWAY_BASE_URL", "https://gateway.polymarket.us"),
             ("POLYMARKET_GAMMA_BASE_URL", "https://gamma-api.polymarket.com"),
@@ -256,6 +278,8 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("ALPACA_BASE_URL", "https://api.alpaca.markets"),
             ("ALPACA_DATA_BASE_URL", "https://data.alpaca.markets/v2"),
             ("ALPACA_DATA_FEED", "iex"),
+            ("ALPACA_SYMBOL_CHUNK_SIZE", "100"),
+            ("ALPACA_HISTORICAL_BAR_LIMIT", "30"),
         )
     ),
 }

@@ -19,6 +19,12 @@ from app.api import build_dashboard_router
 from app.db import RepositoryRegistry
 from app.domain import Environment, Venue
 from app.services import AuthService, ConfigService, KillSwitchService
+from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
+from app.services.stock_universe import (
+    DEFAULT_ALPACA_SYMBOL_PRESETS,
+    normalize_symbol_list,
+    resolve_alpaca_symbol_universe,
+)
 from app.services.runtime_status_service import RuntimeStatusService
 
 
@@ -44,6 +50,9 @@ class AppSettings:
     polymarket_slippage_threshold: str = "0.02"
     alpaca_slippage_threshold: str = "0.005"
     alpaca_account_status: str = "active"
+    alpaca_symbol_presets: tuple[str, ...] = DEFAULT_ALPACA_SYMBOL_PRESETS
+    alpaca_custom_symbols: tuple[str, ...] = ()
+    alpaca_symbol_universe: tuple[str, ...] = DEFAULT_ALPACA_SYMBOL_UNIVERSE
     ses_identity_email: str = ""
     notification_recipients: dict[str, str] = field(default_factory=dict)
     background_worker_enabled: bool = False
@@ -73,6 +82,9 @@ class AppSettings:
             polymarket_slippage_threshold=os.environ.get("POLYMARKET_MARKET_ORDER_SLIPPAGE", "0.02"),
             alpaca_slippage_threshold=os.environ.get("ALPACA_MARKET_ORDER_SLIPPAGE", "0.005"),
             alpaca_account_status=os.environ.get("ALPACA_ACCOUNT_STATUS", "active").strip().lower() or "active",
+            alpaca_symbol_presets=_symbol_presets_from_env(),
+            alpaca_custom_symbols=_custom_symbols_from_env(),
+            alpaca_symbol_universe=_symbol_universe_from_env(),
             ses_identity_email=os.environ.get("SES_IDENTITY_EMAIL", "").strip(),
             notification_recipients=_notification_recipients_from_env(),
             background_worker_enabled=_bool_env("ENABLE_BACKGROUND_WORKER", False),
@@ -195,6 +207,35 @@ def _venue_from_env() -> Venue:
         return Venue(raw_value)
     except ValueError:
         return Venue.POLYMARKET_US
+
+
+def _symbol_universe_from_env() -> tuple[str, ...]:
+    configured = _csv_env("ALPACA_SYMBOL_UNIVERSE", ())
+    normalized = tuple(normalize_symbol_list(configured))
+    if normalized:
+        return normalized
+    return tuple(
+        resolve_alpaca_symbol_universe(
+            {
+                "alpaca": {
+                    "symbol_presets": list(_csv_env("ALPACA_SYMBOL_PRESETS", DEFAULT_ALPACA_SYMBOL_PRESETS)),
+                    "custom_symbols": list(_csv_env("ALPACA_CUSTOM_SYMBOLS", ())),
+                }
+            }
+        )
+    ) or DEFAULT_ALPACA_SYMBOL_UNIVERSE
+
+
+def _symbol_presets_from_env() -> tuple[str, ...]:
+    if os.environ.get("ALPACA_SYMBOL_UNIVERSE", "").strip():
+        return ()
+    return _csv_env("ALPACA_SYMBOL_PRESETS", DEFAULT_ALPACA_SYMBOL_PRESETS)
+
+
+def _custom_symbols_from_env() -> tuple[str, ...]:
+    if os.environ.get("ALPACA_SYMBOL_UNIVERSE", "").strip():
+        return ()
+    return tuple(normalize_symbol_list(_csv_env("ALPACA_CUSTOM_SYMBOLS", ())))
 
 
 def _bool_env(name: str, default: bool) -> bool:

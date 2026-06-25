@@ -17,11 +17,13 @@ from app.adapters.aws import BillingUnavailableError, billing_adapter_from_env
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
+from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
 from app.services.llm_service import SCORING_SYSTEM_PROMPT
 from app.services.market_data_provider import (
     MarketDataProvider,
     ProviderBackedMarketDataFetcher,
 )
+from app.services.stock_universe import DEFAULT_ALPACA_SYMBOL_PRESETS
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
@@ -76,7 +78,16 @@ class RuntimeStatusService:
     USER_PREFERENCES_TABLE = f"{SHARED_SCHEMA}.user_preferences"
     LEGACY_MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.market_data_pulls"
     MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.dashboard_market_data_pulls"
+    PIPELINE_RUNS_TABLE = f"{SHARED_SCHEMA}.pipeline_runs"
+    PIPELINE_STEPS_TABLE = f"{SHARED_SCHEMA}.pipeline_steps"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
+    PIPELINE_STAGES = (
+        ("data_fetch", 1, "Data Fetch"),
+        ("scanner", 2, "Scanner"),
+        ("brain", 3, "Reasoning / Brain"),
+        ("execution", 4, "Execution"),
+        ("exit", 5, "Exit"),
+    )
 
     def __init__(
         self,
@@ -100,6 +111,26 @@ class RuntimeStatusService:
 
         REQ: REQ-UI-004, REQ-UI-005, REQ-EXE-001
         """
+
+        alpaca_symbol_presets = list(
+            getattr(self.settings, "alpaca_symbol_presets", DEFAULT_ALPACA_SYMBOL_PRESETS)
+        )
+        alpaca_custom_symbols = list(getattr(self.settings, "alpaca_custom_symbols", ()))
+        alpaca_payload = {
+            "account_mode": self.settings.trading_account_mode,
+            "account_status": self.settings.alpaca_account_status,
+            "symbol_universe": list(
+                getattr(self.settings, "alpaca_symbol_universe", DEFAULT_ALPACA_SYMBOL_UNIVERSE)
+            ),
+        }
+        if alpaca_symbol_presets or alpaca_custom_symbols:
+            alpaca_payload.update(
+                {
+                    "symbol_presets": alpaca_symbol_presets,
+                    "custom_symbols": alpaca_custom_symbols,
+                    "custom_presets": {},
+                }
+            )
 
         return {
             "default_selected_venue": self.settings.default_selected_venue.value,
@@ -136,11 +167,7 @@ class RuntimeStatusService:
                     "market_order_slippage_threshold": self.settings.alpaca_slippage_threshold,
                 },
             },
-            "alpaca": {
-                "account_mode": self.settings.trading_account_mode,
-                "account_status": self.settings.alpaca_account_status,
-                "symbol_universe": ["SPY"],
-            },
+            "alpaca": alpaca_payload,
             "notifications": {
                 "recipients": self.settings.notification_recipients,
                 "thresholds": {},
@@ -328,6 +355,15 @@ class RuntimeStatusService:
                 "market_data_pull_ids": market_data_pull_ids,
             },
         )
+        pipeline_run = self._record_pipeline_run(
+            environment=environment,
+            run_id=run_id,
+            trigger="manual",
+            started_at=now,
+            completed_at=now,
+            market_data_pulls=market_data_pulls,
+            actor=username,
+        )
         return {
             "environment": environment.value,
             "runId": run_id,
@@ -338,6 +374,7 @@ class RuntimeStatusService:
             "message": "Manual run accepted. Live order submission still depends on all configured gates.",
             "marketDataPull": market_data_pull,
             "marketDataPulls": market_data_pulls,
+            "pipelineRun": pipeline_run,
         }
 
     def trigger_scheduled_run(
@@ -381,6 +418,15 @@ class RuntimeStatusService:
             )
         except PersistenceUnavailableError:
             pass
+        pipeline_run = self._record_pipeline_run(
+            environment=environment,
+            run_id=run_id,
+            trigger="scheduled",
+            started_at=now,
+            completed_at=now,
+            market_data_pulls=market_data_pulls,
+            actor="scheduler",
+        )
         return {
             "environment": environment.value,
             "runId": run_id,
@@ -391,6 +437,7 @@ class RuntimeStatusService:
                 config_payload=config_payload,
             ),
             "marketDataPulls": market_data_pulls,
+            "pipelineRun": pipeline_run,
         }
 
     def worker_status(self) -> dict[str, Any]:
@@ -569,7 +616,39 @@ class RuntimeStatusService:
             "degradedVenueStatus": "none",
             "manualReviewState": "clear",
             "orderEvents": order_items,
+            "pipelineRuns": self.pipeline_runs(environment),
         }
+
+    def pipeline_runs(self, environment: Environment, *, limit: int = 10) -> list[dict[str, Any]]:
+        """Return recent loop runs with the user-visible processing stages.
+
+        REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-005
+        """
+
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows(self.PIPELINE_RUNS_TABLE)
+                if row["environment"] == environment.value
+            ]
+            step_rows = [
+                row
+                for row in self.registry.state.rows(self.PIPELINE_STEPS_TABLE)
+                if row["environment"] == environment.value
+            ]
+        except PersistenceUnavailableError:
+            return []
+        rows.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
+        payloads = []
+        for row in rows[: max(1, limit)]:
+            steps = [
+                step
+                for step in step_rows
+                if step.get("run_id") == row["id"]
+            ]
+            steps.sort(key=lambda step: step.get("step_order", 0))
+            payloads.append(self._pipeline_run_payload(row, steps))
+        return payloads
 
     def market_data_pull(
         self,
@@ -1059,6 +1138,171 @@ class RuntimeStatusService:
         except PersistenceUnavailableError:
             return 0
 
+    def _record_pipeline_run(
+        self,
+        *,
+        environment: Environment,
+        run_id: str,
+        trigger: str,
+        started_at: datetime,
+        completed_at: datetime,
+        market_data_pulls: list[dict[str, Any]],
+        actor: str,
+    ) -> dict[str, Any]:
+        pull_status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
+        candidate_count = sum(_as_int(pull.get("candidateCount")) for pull in market_data_pulls)
+        pipeline_status = _pipeline_run_status(pull_status)
+        venue_names = [pull["venue"] for pull in market_data_pulls]
+        run_row = {
+            "id": run_id,
+            "environment": environment.value,
+            "trigger": trigger,
+            "status": pipeline_status,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "metadata": {
+                "actor": actor,
+                "marketDataStatus": pull_status,
+                "candidateCount": candidate_count,
+                "venues": venue_names,
+            },
+            "created_at": completed_at,
+        }
+        step_rows = self._pipeline_step_rows(
+            environment=environment,
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            market_data_pulls=market_data_pulls,
+            candidate_count=candidate_count,
+            market_data_status=pull_status,
+        )
+        try:
+            self.registry.state.insert(self.PIPELINE_RUNS_TABLE, run_row)
+            for step_row in step_rows:
+                self.registry.state.insert(self.PIPELINE_STEPS_TABLE, step_row)
+        except PersistenceUnavailableError:
+            return self._pipeline_run_payload(run_row, step_rows)
+        return self._pipeline_run_payload(run_row, step_rows)
+
+    def _pipeline_step_rows(
+        self,
+        *,
+        environment: Environment,
+        run_id: str,
+        started_at: datetime,
+        completed_at: datetime,
+        market_data_pulls: list[dict[str, Any]],
+        candidate_count: int,
+        market_data_status: str,
+    ) -> list[dict[str, Any]]:
+        pull_ids = [pull["id"] for pull in market_data_pulls if pull.get("id")]
+        venue_names = [pull["venue"] for pull in market_data_pulls]
+        first_message = next((pull["message"] for pull in market_data_pulls if pull.get("message")), "")
+        data_fetch_message = (
+            f"Fetched {candidate_count} priced candidate"
+            f"{'' if candidate_count == 1 else 's'} across {len(venue_names)} venue"
+            f"{'' if len(venue_names) == 1 else 's'}."
+            if candidate_count
+            else first_message or "No enabled provider venues were selected for this run."
+        )
+        scanner_status = "completed" if candidate_count else (
+            "blocked" if market_data_status in {"failed", "rate_limited"} else "waiting"
+        )
+        scanner_message = (
+            f"Scanner has {candidate_count} priced candidate"
+            f"{'' if candidate_count == 1 else 's'} ready for downstream filters."
+            if candidate_count
+            else "No priced candidates reached the scanner from provider data."
+        )
+        stage_payloads = {
+            "data_fetch": {
+                "status": _pipeline_data_fetch_status(market_data_status),
+                "message": data_fetch_message,
+                "metrics": {
+                    "candidateCount": candidate_count,
+                    "venueCount": len(venue_names),
+                    "marketDataStatus": market_data_status,
+                },
+                "record_ids": pull_ids,
+            },
+            "scanner": {
+                "status": scanner_status,
+                "message": scanner_message,
+                "metrics": {"candidateCount": candidate_count},
+                "record_ids": pull_ids,
+            },
+            "brain": {
+                "status": "waiting",
+                "message": "Reasoning is waiting for scanner-to-LLM orchestration.",
+                "metrics": {"promptCount": 0},
+                "record_ids": [],
+            },
+            "execution": {
+                "status": "waiting",
+                "message": "Execution is waiting for scored strategy decisions and risk approval.",
+                "metrics": {"orderIntentCount": 0},
+                "record_ids": [],
+            },
+            "exit": {
+                "status": "waiting",
+                "message": "Exit checks are waiting for open-position monitoring.",
+                "metrics": {"openPositionCount": 0},
+                "record_ids": [],
+            },
+        }
+        rows = []
+        for key, order, label in self.PIPELINE_STAGES:
+            payload = stage_payloads[key]
+            rows.append(
+                {
+                    "id": f"{run_id}:{key}",
+                    "run_id": run_id,
+                    "environment": environment.value,
+                    "step_key": key,
+                    "step_order": order,
+                    "label": label,
+                    "status": payload["status"],
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                    "message": payload["message"],
+                    "metrics": payload["metrics"],
+                    "record_ids": payload["record_ids"],
+                    "created_at": completed_at,
+                }
+            )
+        return rows
+
+    def _pipeline_run_payload(
+        self,
+        row: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "environment": row["environment"],
+            "trigger": row["trigger"],
+            "status": row["status"],
+            "startedAt": _isoformat_or_none(row.get("started_at")),
+            "completedAt": _isoformat_or_none(row.get("completed_at")),
+            "metadata": row.get("metadata", {}),
+            "steps": [
+                {
+                    "id": step["id"],
+                    "key": step["step_key"],
+                    "order": step["step_order"],
+                    "label": step["label"],
+                    "status": step["status"],
+                    "startedAt": _isoformat_or_none(step.get("started_at")),
+                    "completedAt": _isoformat_or_none(step.get("completed_at")),
+                    "message": step.get("message"),
+                    "metrics": step.get("metrics", {}),
+                    "recordIds": step.get("record_ids", []),
+                }
+                for step in steps
+            ],
+        }
+
     def _fetch_and_record_market_data_pull(
         self,
         *,
@@ -1397,6 +1641,104 @@ class RuntimeStatusService:
         items.sort(key=lambda item: item["createdAt"], reverse=True)
         return items
 
+    def model_summary(
+        self,
+        *,
+        provider: ModelProvider,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return provider schema rows for dashboard data grids."""
+
+        positions = self._model_positions(provider)
+        decisions = self._model_trade_decisions(provider, environment)
+        orders = self._model_order_events(provider)
+        usage_rows = self._ai_usage_rows(environment, provider)
+        used = sum((_as_money(row.get("cost_usd", "0")) for row in usage_rows), Decimal("0"))
+        budget = config_payload.get("llm", {}).get(provider.value, {}).get("budget_usd", "0.00")
+        pnl = sum(
+            (
+                _as_money(row.get("realizedPnlUsd", "0"))
+                + _as_money(row.get("unrealizedPnlUsd", "0"))
+                for row in positions
+            ),
+            Decimal("0"),
+        )
+        return {
+            "provider": provider.value,
+            "positions": positions,
+            "decisions": decisions,
+            "orders": orders,
+            "budget": {"used_usd": _money(used), "limit_usd": _money(_as_money(budget))},
+            "pnl": _money(pnl),
+            "degraded_sections": [],
+        }
+
+    def _model_positions(self, provider: ModelProvider) -> list[dict[str, Any]]:
+        try:
+            rows = self.registry.state.rows(f"{provider.value}.positions")
+        except PersistenceUnavailableError:
+            return []
+        items = [
+            {
+                "positionId": str(row.get("position_id", "")),
+                "state": str(row.get("state", "unknown")),
+                "realizedPnlUsd": _money(_as_money(row.get("realized_pnl", "0"))),
+                "unrealizedPnlUsd": _money(_as_money(row.get("unrealized_pnl", "0"))),
+                "updatedAt": _isoformat_or_none(row.get("updated_at")),
+            }
+            for row in rows[-50:]
+        ]
+        items.sort(key=lambda item: item.get("updatedAt") or "", reverse=True)
+        return items
+
+    def _model_trade_decisions(
+        self,
+        provider: ModelProvider,
+        environment: Environment,
+    ) -> list[dict[str, Any]]:
+        try:
+            rows = self.registry.state.rows(f"{provider.value}.trade_decisions")
+        except PersistenceUnavailableError:
+            return []
+        items = []
+        for row in rows[-50:]:
+            if row.get("environment", environment.value) != environment.value:
+                continue
+            items.append(
+                {
+                    "id": str(row.get("id", "")),
+                    "venue": str(row.get("venue", "")),
+                    "instrument": str(row.get("instrument_identifier", "")),
+                    "instrumentType": str(row.get("instrument_type", "")),
+                    "decision": str(row.get("decision", "")),
+                    "orderType": str(row.get("order_type", "")),
+                    "size": str(row.get("size", "")),
+                    "createdAt": _isoformat_or_none(row.get("created_at")),
+                }
+            )
+        items.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
+        return items
+
+    def _model_order_events(self, provider: ModelProvider) -> list[dict[str, Any]]:
+        try:
+            rows = self.registry.state.rows(f"{provider.value}.order_events")
+        except PersistenceUnavailableError:
+            return []
+        items = [
+            {
+                "id": str(row.get("order_id", row.get("id", ""))),
+                "state": str(row.get("event_type", "unknown")),
+                "venue": str(row.get("venue", "")),
+                "provider": str(row.get("model_provider", provider.value)),
+                "message": str(row.get("message", "")),
+                "createdAt": _isoformat_or_none(row.get("created_at")),
+            }
+            for row in rows[-50:]
+        ]
+        items.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
+        return items
+
     def _credential_row(
         self,
         *,
@@ -1557,10 +1899,23 @@ def _safe_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
         "spread": _optional_text(candidate.get("spread")),
         "state": str(candidate.get("state", "unknown")),
         "pulledAt": _optional_text(pulled_at),
+        "dataSource": _optional_text(candidate.get("dataSource")),
+        "historyBarCount": _as_int(candidate.get("historyBarCount")),
+        "previousClose": _optional_text(candidate.get("previousClose")),
+        "historyStart": _optional_text(candidate.get("historyStart")),
+        "historyEnd": _optional_text(candidate.get("historyEnd")),
     }
 
 
 def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _isoformat_or_none(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
     if value is None:
         return None
     return str(value)
@@ -1582,6 +1937,26 @@ def _aggregate_market_data_pull_status(statuses: list[str]) -> str:
     if pulled:
         return "pulled"
     return "empty"
+
+
+def _pipeline_data_fetch_status(market_data_status: str) -> str:
+    if market_data_status == "pulled":
+        return "completed"
+    if market_data_status == "partial":
+        return "partial"
+    if market_data_status in {"failed", "rate_limited"}:
+        return "blocked"
+    return "waiting"
+
+
+def _pipeline_run_status(market_data_status: str) -> str:
+    if market_data_status == "pulled":
+        return "accepted"
+    if market_data_status == "partial":
+        return "partial"
+    if market_data_status in {"failed", "rate_limited"}:
+        return "blocked"
+    return "waiting"
 
 
 def _as_money(value: Any) -> Decimal:

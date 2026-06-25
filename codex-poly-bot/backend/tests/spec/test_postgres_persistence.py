@@ -132,6 +132,8 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "openai.alpaca_reconciliation_mismatches" in plan.table_names
     assert "shared.job_runs" in plan.table_names
     assert "shared.comparison_metric_snapshots" in plan.table_names
+    assert "shared.pipeline_runs" in plan.table_names
+    assert "shared.pipeline_steps" in plan.table_names
     assert "openai.order_intents" in plan.table_names
     assert "openai.strategy_signals" in plan.table_names
     assert all("..." not in statement for statement in plan.sql)

@@ -14,6 +14,7 @@ from typing import Any, Protocol, Sequence
 import httpx
 
 from app.domain import Venue
+from app.services.stock_universe import resolve_alpaca_symbol_universe
 
 
 ALPACA_DATA_BASE_URL = "https://data.alpaca.markets/v2"
@@ -88,6 +89,18 @@ class ProviderBackedMarketDataFetcher:
             minimum=1,
             maximum=25,
         )
+        self.alpaca_symbol_chunk_size = _int_setting(
+            source.get("ALPACA_SYMBOL_CHUNK_SIZE"),
+            100,
+            minimum=1,
+            maximum=200,
+        )
+        self.alpaca_historical_bar_limit = _int_setting(
+            source.get("ALPACA_HISTORICAL_BAR_LIMIT"),
+            30,
+            minimum=1,
+            maximum=100,
+        )
 
     def fetch(
         self,
@@ -145,9 +158,72 @@ class ProviderBackedMarketDataFetcher:
         candidates: list[dict[str, Any]] = []
         errors: list[ProviderHttpError] = []
         with self._client() as client:
+            for chunk in _chunks(symbols, self.alpaca_symbol_chunk_size):
+                chunk_candidates, chunk_errors = self._fetch_alpaca_chunk(
+                    client=client,
+                    symbols=chunk,
+                    headers=headers,
+                    params=params,
+                    pulled_at=pulled_at,
+                )
+                candidates.extend(chunk_candidates)
+                errors.extend(chunk_errors)
+
+        return _venue_result(
+            venue=Venue.ALPACA.value,
+            provider_label="Alpaca",
+            source="alpaca market data api",
+            candidates=candidates,
+            errors=errors,
+        )
+
+    def _fetch_alpaca_chunk(
+        self,
+        *,
+        client: httpx.Client,
+        symbols: list[str],
+        headers: dict[str, str],
+        params: dict[str, str],
+        pulled_at: datetime,
+    ) -> tuple[list[dict[str, Any]], list[ProviderHttpError]]:
+        request_params = {**params, "symbols": ",".join(symbols)}
+        history_params = {
+            **request_params,
+            "timeframe": "1Day",
+            "limit": str(self.alpaca_historical_bar_limit),
+        }
+        errors: list[ProviderHttpError] = []
+        snapshot_payload: dict[str, Any] | list[Any] | None = None
+        bars_payload: dict[str, Any] | list[Any] | None = None
+        try:
+            snapshot_payload = self._get_json(
+                client,
+                f"{self.alpaca_data_base_url}/stocks/snapshots",
+                headers=headers,
+                params=request_params,
+                operation="alpaca batch snapshots",
+            )
+        except ProviderHttpError as exc:
+            errors.append(exc)
+        try:
+            bars_payload = self._get_json(
+                client,
+                f"{self.alpaca_data_base_url}/stocks/bars",
+                headers=headers,
+                params=history_params,
+                operation="alpaca historical daily bars",
+            )
+        except ProviderHttpError as exc:
+            errors.append(exc)
+
+        snapshots = _snapshot_by_symbol(snapshot_payload)
+        bars_by_symbol = _bars_by_symbol(bars_payload)
+        if not snapshots and not bars_by_symbol and errors:
+            fallback_candidates: list[dict[str, Any]] = []
+            fallback_errors: list[ProviderHttpError] = []
             for symbol in symbols:
                 try:
-                    candidates.append(
+                    fallback_candidates.append(
                         self._fetch_alpaca_symbol(
                             client=client,
                             symbol=symbol,
@@ -157,15 +233,22 @@ class ProviderBackedMarketDataFetcher:
                         )
                     )
                 except ProviderHttpError as exc:
-                    errors.append(exc)
+                    fallback_errors.append(exc)
+            if fallback_candidates:
+                return fallback_candidates, fallback_errors
+            return [], errors
 
-        return _venue_result(
-            venue=Venue.ALPACA.value,
-            provider_label="Alpaca",
-            source="alpaca market data api",
-            candidates=candidates,
-            errors=errors,
-        )
+        candidates = []
+        for symbol in symbols:
+            candidate = _alpaca_candidate_from_snapshot(
+                symbol=symbol,
+                snapshot=snapshots.get(symbol),
+                bars=bars_by_symbol.get(symbol, []),
+                pulled_at=pulled_at,
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+        return candidates, errors
 
     def _fetch_alpaca_symbol(
         self,
@@ -395,9 +478,102 @@ def _dominant_error(errors: Sequence[ProviderHttpError]) -> ProviderHttpError:
 
 
 def _alpaca_symbols(config_payload: dict[str, Any]) -> list[str]:
-    alpaca_config = config_payload.get("alpaca", {})
-    raw_symbols = alpaca_config.get("symbol_universe") if isinstance(alpaca_config, dict) else []
-    return [str(symbol).strip().upper() for symbol in (raw_symbols or []) if str(symbol).strip()]
+    return resolve_alpaca_symbol_universe(config_payload)
+
+
+def _chunks(values: list[str], size: int) -> list[list[str]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _snapshot_by_symbol(payload: dict[str, Any] | list[Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return {}
+    raw = payload.get("snapshots") if isinstance(payload.get("snapshots"), dict) else payload
+    return {
+        str(symbol).strip().upper(): snapshot
+        for symbol, snapshot in raw.items()
+        if str(symbol).strip() and isinstance(snapshot, dict)
+    }
+
+
+def _bars_by_symbol(payload: dict[str, Any] | list[Any] | None) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(payload, dict):
+        return {}
+    raw = payload.get("bars") if isinstance(payload.get("bars"), dict) else payload
+    parsed: dict[str, list[dict[str, Any]]] = {}
+    for symbol, bars in raw.items():
+        if not isinstance(bars, list):
+            continue
+        parsed[str(symbol).strip().upper()] = [bar for bar in bars if isinstance(bar, dict)]
+    return parsed
+
+
+def _alpaca_candidate_from_snapshot(
+    *,
+    symbol: str,
+    snapshot: dict[str, Any] | None,
+    bars: list[dict[str, Any]],
+    pulled_at: datetime,
+) -> dict[str, Any] | None:
+    snapshot = snapshot or {}
+    quote = _first_mapping(
+        snapshot.get("latestQuote"),
+        snapshot.get("latest_quote"),
+        snapshot.get("quote"),
+    )
+    trade = _first_mapping(
+        snapshot.get("latestTrade"),
+        snapshot.get("latest_trade"),
+        snapshot.get("trade"),
+    )
+    snapshot_bar = _first_mapping(
+        snapshot.get("dailyBar"),
+        snapshot.get("daily_bar"),
+        snapshot.get("minuteBar"),
+        snapshot.get("minute_bar"),
+        snapshot.get("latestBar"),
+        snapshot.get("latest_bar"),
+        snapshot.get("bar"),
+    )
+    history_bars = bars
+    latest_bar = history_bars[-1] if history_bars else snapshot_bar
+    previous_bar = (
+        history_bars[-2]
+        if len(history_bars) >= 2
+        else _first_mapping(snapshot.get("prevDailyBar"), snapshot.get("previousDailyBar"))
+    )
+
+    bid = _decimal_or_none(quote.get("bp"))
+    ask = _decimal_or_none(quote.get("ap"))
+    trade_price = _decimal_or_none(trade.get("p"))
+    bar_close = _bar_close(latest_bar)
+    previous_close = _bar_close(previous_bar)
+    price = _midpoint(bid, ask) or ask or bid or trade_price or bar_close
+    if price is None:
+        return None
+
+    bid_size = _decimal_or_none(quote.get("bs"))
+    ask_size = _decimal_or_none(quote.get("as"))
+    bar_volume = _decimal_or_none(latest_bar.get("v"))
+    spread = ask - bid if ask is not None and bid is not None else None
+    liquidity = _sum_decimal([bid_size, ask_size]) or bar_volume
+    history_start = _timestamp(history_bars[0].get("t"), pulled_at) if history_bars else None
+    history_end = _timestamp(history_bars[-1].get("t"), pulled_at) if history_bars else None
+    return {
+        "id": f"{Venue.ALPACA.value}:{symbol}",
+        "venue": Venue.ALPACA.value,
+        "symbol": symbol,
+        "price": _display_decimal(price),
+        "liquidity": _display_decimal(liquidity),
+        "spread": _display_decimal(spread),
+        "state": "priced",
+        "pulledAt": _timestamp(quote.get("t") or trade.get("t") or latest_bar.get("t"), pulled_at),
+        "dataSource": _alpaca_data_source(bool(snapshot), bool(history_bars)),
+        "historyBarCount": len(history_bars),
+        "previousClose": _display_decimal(previous_close),
+        "historyStart": history_start,
+        "historyEnd": history_end,
+    }
 
 
 def _market_items(payload: dict[str, Any] | list[Any]) -> list[dict[str, Any]]:
@@ -603,6 +779,27 @@ def _first_string(*values: Any) -> str | None:
         if text:
             return text
     return None
+
+
+def _first_mapping(*values: Any) -> dict[str, Any]:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _bar_close(bar: dict[str, Any]) -> Decimal | None:
+    return _decimal_or_none(bar.get("c") or bar.get("close"))
+
+
+def _alpaca_data_source(has_snapshot: bool, has_history: bool) -> str:
+    if has_snapshot and has_history:
+        return "snapshot+historical_bars"
+    if has_snapshot:
+        return "snapshot"
+    if has_history:
+        return "historical_bars"
+    return "unknown"
 
 
 def _base_url(raw: str | None, default: str) -> str:
