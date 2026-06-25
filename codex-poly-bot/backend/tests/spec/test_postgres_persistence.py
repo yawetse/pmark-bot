@@ -136,6 +136,13 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.economics_snapshots" in plan.table_names
     assert "shared.pipeline_runs" in plan.table_names
     assert "shared.pipeline_steps" in plan.table_names
+    assert "shared.polymarket_gamma_markets" in plan.table_names
+    assert "shared.polymarket_chain_fill_events" in plan.table_names
+    assert "shared.polymarket_trades" in plan.table_names
+    assert "shared.polymarket_wallet_positions" in plan.table_names
+    assert "shared.polymarket_wallet_performance_stats" in plan.table_names
+    assert "shared.polymarket_target_wallet_snapshots" in plan.table_names
+    assert "shared.historical_import_checkpoints" in plan.table_names
     assert "openai.order_intents" in plan.table_names
     assert "openai.strategy_signals" in plan.table_names
     assert all("..." not in statement for statement in plan.sql)
@@ -244,6 +251,109 @@ def test_req_db_003_03_shared_economics_snapshots_persist_monthly_history() -> N
     assert rows[0]["ai_total_tokens"] == 1500
     assert rows[0]["aws_month_to_date_cost_usd"] == Decimal("30.00")
     assert rows[0]["net_after_costs_usd"] == Decimal("12.30")
+
+def test_req_db_003_04_shared_polymarket_history_records_persist_for_step_zero() -> None:
+    """TST-REQ-DB-003-04: Validates REQ-DB-003 and REQ-DAT-009
+
+    Given: Polymarket historical market, fill, trade, wallet, and checkpoint rows
+    When: the shared repositories persist the records
+    Then: Step 0 historical data can be read back for downstream scanner work
+    """
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    observed = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+
+    market = shared.record_polymarket_gamma_market(
+        environment=Environment.DEVELOPMENT,
+        market_id="market-1",
+        condition_id="0xcondition",
+        question="Will BTC close above 100k?",
+        active=False,
+        closed=True,
+        tokens=[{"token_id": "yes-token", "outcome": "YES"}],
+        tags=["crypto"],
+        raw_payload={"id": "market-1"},
+        fetched_at=observed,
+    )
+    fill = shared.record_polymarket_chain_fill_event(
+        environment=Environment.DEVELOPMENT,
+        exchange_contract="0xexchange",
+        block_number=123,
+        log_index=4,
+        transaction_hash="0xtx",
+        maker_address="0xABCDEF0000000000000000000000000000000001",
+        asset_id="yes-token",
+        market_id="market-1",
+        raw_event={"event": "OrderFilled"},
+        block_timestamp=observed,
+    )
+    trade = shared.record_polymarket_trade(
+        environment=Environment.DEVELOPMENT,
+        market_id="market-1",
+        condition_id="0xcondition",
+        asset_id="yes-token",
+        wallet_address="0xABCDEF0000000000000000000000000000000001",
+        side="BUY",
+        price=Decimal("0.42"),
+        size=Decimal("10"),
+        notional_usd=Decimal("4.20"),
+        realized_pnl_usd=Decimal("1.25"),
+        outcome="YES",
+        role="maker",
+        transaction_hash="0xtx",
+        block_number=123,
+        raw_event_id=fill["id"],
+        market_record_id=market["id"],
+        traded_at=observed,
+    )
+    shared.record_polymarket_wallet_position(
+        environment=Environment.DEVELOPMENT,
+        wallet_address=trade["wallet_address"],
+        market_id="market-1",
+        asset_id="yes-token",
+        state="closed",
+        size=Decimal("10"),
+        realized_pnl_usd=Decimal("1.25"),
+        entry_price=Decimal("0.42"),
+        exit_price=Decimal("0.55"),
+        trade_ids=[trade["id"]],
+        opened_at=observed,
+        closed_at=observed,
+    )
+    stat = shared.record_polymarket_wallet_performance_stat(
+        environment=Environment.DEVELOPMENT,
+        wallet_address=trade["wallet_address"],
+        trade_count=125,
+        win_rate=Decimal("0.74"),
+        total_realized_pnl_usd=Decimal("212.50"),
+        average_hold_seconds=3600,
+        source="fixture",
+        calculated_at=observed,
+    )
+    snapshot = shared.record_polymarket_target_wallet_snapshot(
+        environment=Environment.DEVELOPMENT,
+        min_trade_count=100,
+        min_win_rate=Decimal("0.70"),
+        wallets=[{"walletAddress": stat["wallet_address"]}],
+        source_stat_ids=[stat["id"]],
+        created_at=observed,
+    )
+    checkpoint = shared.upsert_historical_import_checkpoint(
+        environment=Environment.DEVELOPMENT,
+        source="polygon_order_filled",
+        cursor_type="block_number",
+        cursor_value="123",
+        status="stored",
+        metadata={"window": "120-123"},
+        last_success_at=observed,
+    )
+
+    assert len(shared.polymarket_gamma_markets(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.polymarket_chain_fill_events(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.polymarket_trades(environment=Environment.DEVELOPMENT)) == 1
+    assert len(shared.polymarket_wallet_performance_stats(environment=Environment.DEVELOPMENT)) == 1
+    assert snapshot["wallet_count"] == 1
+    assert checkpoint["cursor_value"] == "123"
 
 def test_req_db_003_02_shared_record_routed_model_schema_repository_validation_runs() -> None:
     """TST-REQ-DB-003-02: Validates REQ-DB-003

@@ -142,6 +142,11 @@ from app.services.notification_service import (
     send_large_movement_alert,
     send_scheduled_daily_digest,
 )
+from app.services.polymarket_history_service import (
+    POLYMARKET_CTF_EXCHANGE_V2,
+    PolymarketHistoricalImportSummary,
+    PolymarketHistoryImporter,
+)
 from app.services.risk_engine import (
     AlpacaRiskConfig,
     AlpacaRiskInput,
@@ -253,8 +258,11 @@ __all__ = [
     "OpenOrder",
     "PolymarketExecutionRequest",
     "PerformanceRecord",
+    "POLYMARKET_CTF_EXCHANGE_V2",
     "PolymarketRiskConfig",
     "PolymarketRiskInput",
+    "PolymarketHistoricalImportSummary",
+    "PolymarketHistoryImporter",
     "PositionMovement",
     "ProviderBackedMarketDataFetcher",
     "BUILT_IN_ALPACA_PRESETS",
