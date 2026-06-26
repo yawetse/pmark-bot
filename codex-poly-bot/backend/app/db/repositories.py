@@ -274,21 +274,110 @@ class SharedRepositories:
         prompt_tokens: int,
         completion_tokens: int,
         cost_usd: Decimal,
+        model: str | None = None,
+        pipeline_run_id: str | None = None,
+        pipeline_step: str | None = None,
+        candidate_id: str | None = None,
+        usage_source: str = "provider_response",
+        cost_source: str = "recorded",
+        response_id: str | None = None,
+        raw_payload: dict | None = None,
+        imported_at: datetime | None = None,
         created_at: datetime | None = None,
     ) -> dict:
         self.ensure_schema(SHARED_SCHEMA)
+        now = created_at or datetime.now(UTC)
         return self.state.insert(
             f"{SHARED_SCHEMA}.ai_usage_events",
             {
                 "id": str(uuid4()),
                 "environment": environment.value,
                 "provider": provider.value,
+                "model": model,
+                "pipeline_run_id": pipeline_run_id,
+                "pipeline_step": pipeline_step,
+                "candidate_id": candidate_id,
                 "prompt_tokens": max(0, int(prompt_tokens)),
                 "completion_tokens": max(0, int(completion_tokens)),
                 "cost_usd": Decimal(str(cost_usd)),
-                "created_at": created_at or datetime.now(UTC),
+                "usage_source": usage_source,
+                "cost_source": cost_source,
+                "response_id": response_id,
+                "raw_payload": _json_ready(raw_payload or {}),
+                "imported_at": imported_at,
+                "created_at": now,
             },
         )
+
+    def ai_usage_events(
+        self,
+        *,
+        environment: Environment,
+        provider: ModelProvider | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.ai_usage_events")
+            if row["environment"] == environment.value
+        ]
+        if provider is not None:
+            rows = [row for row in rows if row["provider"] == provider.value]
+        return rows
+
+    def record_ai_usage_import_run(
+        self,
+        *,
+        environment: Environment,
+        provider: ModelProvider,
+        status: str,
+        source: str,
+        imported_count: int,
+        message: str,
+        started_at: datetime,
+        completed_at: datetime,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+        error_code: str | None = None,
+        metadata: dict | None = None,
+        created_at: datetime | None = None,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.insert(
+            f"{SHARED_SCHEMA}.ai_usage_import_runs",
+            {
+                "id": str(uuid4()),
+                "environment": environment.value,
+                "provider": provider.value,
+                "status": status,
+                "source": source,
+                "period_start": period_start,
+                "period_end": period_end,
+                "imported_count": max(0, int(imported_count)),
+                "error_code": error_code,
+                "message": message,
+                "metadata": _json_ready(metadata or {}),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "created_at": created_at or completed_at,
+            },
+        )
+
+    def ai_usage_import_runs(
+        self,
+        *,
+        environment: Environment,
+        provider: ModelProvider | None = None,
+    ) -> list[dict]:
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.ai_usage_import_runs")
+            if row["environment"] == environment.value
+        ]
+        if provider is not None:
+            rows = [row for row in rows if row["provider"] == provider.value]
+        return rows
 
     def record_economics_snapshot(
         self,

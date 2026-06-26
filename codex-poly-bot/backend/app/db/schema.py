@@ -491,9 +491,37 @@ def _shared_tables() -> list[Table]:
             Column("id", String, primary_key=True),
             Column("environment", String, nullable=False),
             Column("provider", String, nullable=False),
+            Column("model", String, nullable=True),
+            Column("pipeline_run_id", String, nullable=True),
+            Column("pipeline_step", String, nullable=True),
+            Column("candidate_id", String, nullable=True),
             Column("prompt_tokens", Integer, nullable=False),
             Column("completion_tokens", Integer, nullable=False),
             Column("cost_usd", Numeric(18, 8), nullable=False),
+            Column("usage_source", String, nullable=False),
+            Column("cost_source", String, nullable=False),
+            Column("response_id", String, nullable=True),
+            Column("raw_payload", JSONB, nullable=False),
+            Column("imported_at", DateTime(timezone=True), nullable=True),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "ai_usage_import_runs",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("provider", String, nullable=False),
+            Column("status", String, nullable=False),
+            Column("source", String, nullable=False),
+            Column("period_start", DateTime(timezone=True), nullable=True),
+            Column("period_end", DateTime(timezone=True), nullable=True),
+            Column("imported_count", Integer, nullable=False),
+            Column("error_code", String, nullable=True),
+            Column("message", String, nullable=False),
+            Column("metadata", JSONB, nullable=False),
+            Column("started_at", DateTime(timezone=True), nullable=False),
+            Column("completed_at", DateTime(timezone=True), nullable=False),
             Column("created_at", DateTime(timezone=True), nullable=False),
             schema=SHARED_SCHEMA,
         ),
@@ -897,6 +925,20 @@ Index(
     metadata.tables["shared.economics_snapshots"].c.environment,
     metadata.tables["shared.economics_snapshots"].c.month_key,
     metadata.tables["shared.economics_snapshots"].c.created_at,
+)
+
+Index(
+    "ix_ai_usage_events_environment_provider_created_at",
+    metadata.tables["shared.ai_usage_events"].c.environment,
+    metadata.tables["shared.ai_usage_events"].c.provider,
+    metadata.tables["shared.ai_usage_events"].c.created_at,
+)
+
+Index(
+    "ix_ai_usage_import_runs_environment_provider_completed",
+    metadata.tables["shared.ai_usage_import_runs"].c.environment,
+    metadata.tables["shared.ai_usage_import_runs"].c.provider,
+    metadata.tables["shared.ai_usage_import_runs"].c.completed_at,
 )
 
 Index(

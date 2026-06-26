@@ -150,6 +150,11 @@ class LlmUsageEvent:
     cost_usd: Decimal
     cost_source: str
     response_id: str | None = None
+    pipeline_run_id: str | None = None
+    pipeline_step: str | None = None
+    candidate_id: str | None = None
+    usage_source: str = "provider_response"
+    raw_payload: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -182,9 +187,17 @@ class RepositoryLlmUsageRecorder:
         row = shared.record_ai_usage_event(
             environment=self.environment,
             provider=event.provider,
+            model=event.model,
+            pipeline_run_id=event.pipeline_run_id,
+            pipeline_step=event.pipeline_step,
+            candidate_id=event.candidate_id,
             prompt_tokens=event.prompt_tokens,
             completion_tokens=event.completion_tokens,
             cost_usd=event.cost_usd,
+            usage_source=event.usage_source,
+            cost_source=event.cost_source,
+            response_id=event.response_id,
+            raw_payload=event.raw_payload,
             created_at=event.created_at,
         )
         shared.record_audit_event(
@@ -202,6 +215,10 @@ class RepositoryLlmUsageRecorder:
                 "cost_usd": str(event.cost_usd),
                 "cost_source": event.cost_source,
                 "response_id": event.response_id,
+                "pipeline_run_id": event.pipeline_run_id,
+                "pipeline_step": event.pipeline_step,
+                "candidate_id": event.candidate_id,
+                "usage_source": event.usage_source,
             },
         )
 
@@ -743,6 +760,7 @@ def _usage_event_from_provider_response(
         cost_usd=cost,
         cost_source=cost_source,
         response_id=body.get("id") if isinstance(body.get("id"), str) else None,
+        raw_payload={"usage": dict(usage)},
     )
 
 

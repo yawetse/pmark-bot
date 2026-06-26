@@ -4,6 +4,8 @@ REQ: REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-006, REQ-EXE-001, REQ-EXE-01
 
 Live trading remains blocked until every item below has evidence in the release record.
 
+The dashboard `Full live-gated` manual run mode does not bypass this checklist. It only allows the pipeline to use the configured live setting after credentials, risk limits, persistence, venue status, and the kill switch allow it.
+
 ## Credentials and Accounts
 
 - Confirm the target environment is correct, `development` or `production`.
@@ -23,6 +25,7 @@ Live trading remains blocked until every item below has evidence in the release 
 
 - Keep `LIVE_ENABLED=false` until final approval.
 - Enable only the intended venue flag, such as `POLYMARKET_US_ENABLED=true` or `ALPACA_ENABLED=true`.
+- Confirm concrete live venue submitters are attached for each intended venue and no `LIVE_SUBMITTER_NOT_CONFIGURED` refusal is present in the dry-run/live-gated evidence.
 - Confirm risk limits for max position size, max daily loss, max open positions, Kelly cap, and market order slippage.
 - Confirm dashboard auth allows only approved operators.
 - Confirm SES identity is verified and notification recipients are approved.

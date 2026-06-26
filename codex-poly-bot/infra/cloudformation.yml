@@ -168,6 +168,12 @@ Parameters:
   AlpacaSecretKeySecretArn:
     Type: String
     Default: ""
+  OpenAiAdminApiKeySecretArn:
+    Type: String
+    Default: ""
+  AnthropicAdminApiKeySecretArn:
+    Type: String
+    Default: ""
 
 Conditions:
   IsProduction: !Equals [!Ref EnvironmentName, production]
@@ -182,6 +188,8 @@ Conditions:
   UsePolymarketPrivateKeySecret: !Not [!Equals [!Ref PolymarketPrivateKeySecretArn, ""]]
   UseAlpacaKeyIdSecret: !Not [!Equals [!Ref AlpacaKeyIdSecretArn, ""]]
   UseAlpacaSecretKeySecret: !Not [!Equals [!Ref AlpacaSecretKeySecretArn, ""]]
+  UseOpenAiAdminApiKeySecret: !Not [!Equals [!Ref OpenAiAdminApiKeySecretArn, ""]]
+  UseAnthropicAdminApiKeySecret: !Not [!Equals [!Ref AnthropicAdminApiKeySecretArn, ""]]
 
 Resources:
   BackendRepository:
@@ -603,6 +611,16 @@ Resources:
               ValueFrom: !Ref OpenAISecret
             - Name: ANTHROPIC_API_KEY
               ValueFrom: !Ref AnthropicSecret
+            - !If
+              - UseOpenAiAdminApiKeySecret
+              - Name: OPENAI_ADMIN_API_KEY
+                ValueFrom: !Ref OpenAiAdminApiKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAnthropicAdminApiKeySecret
+              - Name: ANTHROPIC_ADMIN_API_KEY
+                ValueFrom: !Ref AnthropicAdminApiKeySecretArn
+              - !Ref AWS::NoValue
             - !If
               - UsePolymarketKeyIdSecret
               - Name: POLYMARKET_KEY_ID

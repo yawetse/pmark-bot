@@ -4,6 +4,29 @@ REQ: REQ-DEP-004, REQ-EXE-014, REQ-OBS-005, REQ-WAL-006
 
 Use this runbook for live incidents, degraded health, bad deploys, and credential failures.
 
+## Manual Runs
+
+Use the Operations dashboard manual-run controls when you need to trigger the loop outside the scheduler.
+
+- `Data import` fetches provider market data and stops before scanner logic.
+- `Scanner only` fetches data, runs scanner filters, and stops before LLM reasoning.
+- `Full dry run` runs data fetch, scanner, reasoning, execution, and exit with live execution disabled for that run.
+- `Full live-gated` runs all five stages with the configured live setting, credentials, risk gates, persistence gate, and kill switch still enforced.
+
+Skipped downstream stages are recorded as `skipped` pipeline rows. Review the pipeline detail grid to see the records behind each step.
+
+## Provider Usage Imports
+
+Use the Economics panel provider import buttons to backfill AI usage from provider-side reporting.
+
+- OpenAI import requires `/codex-poly-bot/{environment}/openai/admin-api-key`, injected as `OPENAI_ADMIN_API_KEY`, or `OPENAI_USAGE_API_KEY` in the backend runtime environment.
+- Claude import requires `/codex-poly-bot/{environment}/anthropic/admin-api-key`, injected as `ANTHROPIC_ADMIN_API_KEY`, or `ANTHROPIC_USAGE_API_KEY` in the backend runtime environment.
+- Missing admin keys are recorded as `unsupported`, not as successful pulls.
+- HTTP failures, provider rate limits, and response parsing failures are recorded as failed import runs.
+- Imported rows are stored in `shared.ai_usage_events`; import attempts are stored in `shared.ai_usage_import_runs`.
+
+The token spend grid shows usage source, cost source, latest usage time, latest import time, and provider import error state.
+
 ## Immediate Stop
 
 1. Activate the kill switch from the dashboard operations view or the live-control API.

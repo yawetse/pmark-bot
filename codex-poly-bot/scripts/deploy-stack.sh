@@ -188,6 +188,12 @@ add_secret_parameter_if_present \
 add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/alpaca/secret-key" \
   "AlpacaSecretKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/openai/admin-api-key" \
+  "OpenAiAdminApiKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/anthropic/admin-api-key" \
+  "AnthropicAdminApiKeySecretArn"
 
 aws cloudformation deploy \
   --stack-name "${stack_name}" \

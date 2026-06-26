@@ -160,6 +160,7 @@ class BrainService:
                     outputs.append(
                         self._score_candidate(
                             environment=environment,
+                            pipeline_run_id=pipeline_run_id,
                             reasoning_run_id=run_row["id"],
                             candidate=candidate,
                             provider=plan.provider,
@@ -258,6 +259,7 @@ class BrainService:
         self,
         *,
         environment: Environment,
+        pipeline_run_id: str,
         reasoning_run_id: str,
         candidate: dict[str, Any],
         provider: LlmProvider,
@@ -286,9 +288,17 @@ class BrainService:
         self.registry.shared().record_ai_usage_event(
             environment=environment,
             provider=provider.model_provider,
+            model=str(getattr(provider, "model", "")) or None,
+            pipeline_run_id=pipeline_run_id,
+            pipeline_step="brain",
+            candidate_id=candidate.get("id"),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
+            usage_source=usage_event.usage_source if usage_event else "estimated_scoring",
+            cost_source=usage_event.cost_source if usage_event else "model cost_estimate fallback",
+            response_id=usage_event.response_id if usage_event else None,
+            raw_payload=usage_event.raw_payload if usage_event else {"usage": "estimated"},
             created_at=created_at,
         )
         response_payload = {
