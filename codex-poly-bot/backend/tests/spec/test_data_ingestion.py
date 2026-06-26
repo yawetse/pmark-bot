@@ -363,6 +363,46 @@ def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates(
     assert result.candidates[1]["price"] == "380.02"
 
 
+def test_req_dat_008_06_alpaca_provider_does_not_per_symbol_fallback_by_default() -> None:
+    """TST-REQ-DAT-008-06: Validates REQ-DAT-008
+
+    Given: Alpaca batch endpoints are rate limited for a large universe
+    When: provider-backed ingestion runs with default fallback settings
+    Then: the fetcher reports the batch rate limit without issuing per-symbol quote calls
+    """
+
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path in {"/v2/stocks/snapshots", "/v2/stocks/bars"}:
+            return httpx.Response(429, json={"message": "rate limit"})
+        return httpx.Response(500, json={"message": "unexpected per-symbol call"})
+
+    symbols = [f"SYM{index}" for index in range(120)]
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "ALPACA_KEY_ID": "key",
+            "ALPACA_SECRET_KEY": "secret",
+            "ALPACA_DATA_BASE_URL": "https://data.alpaca.test/v2",
+            "ALPACA_SYMBOL_CHUNK_SIZE": "100",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.ALPACA.value,
+        config_payload={"alpaca": {"symbol_universe": symbols}},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "rate_limited"
+    assert result.error_code == "provider_rate_limited"
+    assert "/v2/stocks/SYM0/quotes/latest" not in paths
+    assert paths.count("/v2/stocks/snapshots") == 2
+    assert paths.count("/v2/stocks/bars") == 2
+
+
 def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() -> None:
     """TST-REQ-DAT-008-05: Validates REQ-DAT-008
 

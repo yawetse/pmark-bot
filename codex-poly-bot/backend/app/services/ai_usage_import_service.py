@@ -133,7 +133,10 @@ class ProviderBackedAiUsageImportSource:
     ) -> tuple[ProviderUsageRow, ...]:
         admin_key = self.environ.get("OPENAI_ADMIN_API_KEY") or self.environ.get("OPENAI_USAGE_API_KEY")
         if not admin_key:
-            raise AiUsageImportUnsupportedError("OPENAI_ADMIN_API_KEY is required for OpenAI usage import")
+            raise AiUsageImportUnsupportedError(
+                "OpenAI scoring can use OPENAI_API_KEY, but provider-side usage import "
+                "requires OPENAI_ADMIN_API_KEY or OPENAI_USAGE_API_KEY."
+            )
         headers = {"Authorization": f"Bearer {admin_key}"}
         organization = self.environ.get("OPENAI_ORGANIZATION_ID")
         project = self.environ.get("OPENAI_PROJECT_ID")
@@ -180,7 +183,10 @@ class ProviderBackedAiUsageImportSource:
     ) -> tuple[ProviderUsageRow, ...]:
         admin_key = self.environ.get("ANTHROPIC_ADMIN_API_KEY") or self.environ.get("ANTHROPIC_USAGE_API_KEY")
         if not admin_key:
-            raise AiUsageImportUnsupportedError("ANTHROPIC_ADMIN_API_KEY is required for Claude usage import")
+            raise AiUsageImportUnsupportedError(
+                "Claude scoring can use ANTHROPIC_API_KEY, but provider-side usage import "
+                "requires ANTHROPIC_ADMIN_API_KEY or ANTHROPIC_USAGE_API_KEY."
+            )
         headers = {
             "anthropic-version": "2023-06-01",
             "x-api-key": admin_key,

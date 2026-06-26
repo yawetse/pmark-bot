@@ -1861,10 +1861,12 @@ class RuntimeStatusService:
         seconds_until_next_run = max(0, int((next_run_at - now).total_seconds()))
         selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
         venues = config_payload.get("venues", {})
-        selected_venue_enabled = bool(venues.get(selected_venue, {}).get("enabled", False))
+        enabled_venues = self._enabled_config_venues(config_payload)
+        enabled_venues_ready = bool(enabled_venues)
+        enabled_venue_names = ", ".join(enabled_venues) or "none"
         live_enabled = bool(config_payload.get("live_enabled", False))
         credentials = self.credential_rows(environment)
-        credential_blockers = self._loop_credential_blockers(credentials, selected_venue)
+        credential_blockers = self._loop_credential_blockers(credentials, enabled_venues)
         order_events = self.order_events()
         open_orders = [
             item
@@ -1874,7 +1876,7 @@ class RuntimeStatusService:
         status = self._loop_status(
             worker_state=str(worker["state"]),
             live_enabled=live_enabled,
-            selected_venue_enabled=selected_venue_enabled,
+            enabled_venues_ready=enabled_venues_ready,
             credential_blockers=len(credential_blockers),
             kill_switch_active=kill_switch_active,
         )
@@ -1907,7 +1909,7 @@ class RuntimeStatusService:
             "currentPhase": self._current_loop_phase(
                 worker_state=str(worker["state"]),
                 live_enabled=live_enabled,
-                selected_venue_enabled=selected_venue_enabled,
+                enabled_venues_ready=enabled_venues_ready,
                 credential_blockers=len(credential_blockers),
                 kill_switch_active=kill_switch_active,
             ),
@@ -1915,17 +1917,19 @@ class RuntimeStatusService:
                 worker_state=str(worker["state"]),
                 config_degraded=config_degraded,
                 live_enabled=live_enabled,
-                selected_venue_enabled=selected_venue_enabled,
+                enabled_venues_ready=enabled_venues_ready,
                 credential_blockers=len(credential_blockers),
                 kill_switch_active=kill_switch_active,
                 order_count=len(order_events),
             ),
             "dataInputs": [
                 {
-                    "label": "Selected venue",
-                    "value": selected_venue,
-                    "state": "ok" if selected_venue_enabled else "blocked",
-                    "detail": "Venue flag controls whether candidates can be evaluated there.",
+                    "label": "Active venues",
+                    "value": enabled_venue_names,
+                    "state": "ok" if enabled_venues_ready else "blocked",
+                    "detail": (
+                        f"Default venue is {selected_venue}. Enabled venues are scanned and scored."
+                    ),
                 },
                 {
                     "label": "Alpaca symbols",
@@ -2038,9 +2042,9 @@ class RuntimeStatusService:
                 self._gate("Worker heartbeat", worker["state"] == "ok", str(worker["value"])),
                 self._gate("Live flag", live_enabled, "live enabled" if live_enabled else "dry run"),
                 self._gate(
-                    "Selected venue",
-                    selected_venue_enabled,
-                    f"{selected_venue} {'enabled' if selected_venue_enabled else 'disabled'}",
+                    "Active venues",
+                    enabled_venues_ready,
+                    enabled_venue_names,
                 ),
                 self._gate(
                     "Credentials",
@@ -2080,7 +2084,7 @@ class RuntimeStatusService:
         *,
         worker_state: str,
         live_enabled: bool,
-        selected_venue_enabled: bool,
+        enabled_venues_ready: bool,
         credential_blockers: int,
         kill_switch_active: bool,
     ) -> dict[str, str]:
@@ -2102,7 +2106,7 @@ class RuntimeStatusService:
                 "label": "Dry run",
                 "detail": "The scheduler heartbeat is current, but live order submission is disabled.",
             }
-        if not selected_venue_enabled or credential_blockers:
+        if not enabled_venues_ready or credential_blockers:
             return {
                 "state": "blocked",
                 "label": "Live gated",
@@ -2119,7 +2123,7 @@ class RuntimeStatusService:
         *,
         worker_state: str,
         live_enabled: bool,
-        selected_venue_enabled: bool,
+        enabled_venues_ready: bool,
         credential_blockers: int,
         kill_switch_active: bool,
     ) -> dict[str, str]:
@@ -2137,12 +2141,12 @@ class RuntimeStatusService:
                 "state": "blocked",
                 "detail": "The kill switch must be cleared before any live order path can run.",
             }
-        if live_enabled and (not selected_venue_enabled or credential_blockers):
+        if live_enabled and (not enabled_venues_ready or credential_blockers):
             return {
                 "id": "gates",
                 "label": "Pre-trade gates blocked",
                 "state": "blocked",
-                "detail": "Resolve venue and credential blockers before live order submission.",
+                "detail": "Resolve active venue and credential blockers before live order submission.",
             }
         return {
             "id": "scheduler",
@@ -2157,7 +2161,7 @@ class RuntimeStatusService:
         worker_state: str,
         config_degraded: bool,
         live_enabled: bool,
-        selected_venue_enabled: bool,
+        enabled_venues_ready: bool,
         credential_blockers: int,
         kill_switch_active: bool,
         order_count: int,
@@ -2204,7 +2208,7 @@ class RuntimeStatusService:
                 "label": "Execution",
                 "state": self._execution_stage_state(
                     live_enabled=live_enabled,
-                    selected_venue_enabled=selected_venue_enabled,
+                    enabled_venues_ready=enabled_venues_ready,
                     credential_blockers=credential_blockers,
                     kill_switch_active=kill_switch_active,
                 ),
@@ -2222,11 +2226,11 @@ class RuntimeStatusService:
         self,
         *,
         live_enabled: bool,
-        selected_venue_enabled: bool,
+        enabled_venues_ready: bool,
         credential_blockers: int,
         kill_switch_active: bool,
     ) -> str:
-        if kill_switch_active or (live_enabled and (not selected_venue_enabled or credential_blockers)):
+        if kill_switch_active or (live_enabled and (not enabled_venues_ready or credential_blockers)):
             return "blocked"
         if live_enabled:
             return "waiting"
@@ -2242,9 +2246,10 @@ class RuntimeStatusService:
     def _loop_credential_blockers(
         self,
         credentials: list[dict[str, Any]],
-        selected_venue: str,
+        enabled_venues: list[str],
     ) -> list[dict[str, Any]]:
-        required_venues = {selected_venue, "llm"}
+        required_venues = {item for item in enabled_venues}
+        required_venues.add("llm")
         return [
             credential
             for credential in credentials
@@ -2874,6 +2879,14 @@ class RuntimeStatusService:
             if venue in enabled and venue not in ordered:
                 ordered.append(venue)
         return ordered
+
+    def _enabled_config_venues(self, config_payload: dict[str, Any]) -> list[str]:
+        supported = [
+            Venue.POLYMARKET_US.value,
+            Venue.POLYMARKET_INTERNATIONAL.value,
+            Venue.ALPACA.value,
+        ]
+        return [venue for venue in supported if self._venue_enabled(venue, config_payload)]
 
     def _venue_enabled(self, venue: str, config_payload: dict[str, Any]) -> bool:
         venues = config_payload.get("venues", {})

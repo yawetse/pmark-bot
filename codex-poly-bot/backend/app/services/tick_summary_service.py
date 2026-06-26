@@ -25,11 +25,14 @@ from app.services.llm_service import (
 
 
 DEFAULT_TICK_SUMMARY_MODEL = "gpt-5-nano"
+DEFAULT_TICK_SUMMARY_FALLBACK_MODEL = "gpt-4.1-nano"
 DEFAULT_TICK_SUMMARY_WINDOW_MINUTES = 10
 DEFAULT_TICK_SUMMARY_CACHE_SECONDS = 60
 DEFAULT_TICK_SUMMARY_PROMPT_VERSION = "tick-summary-v1"
 DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION = Decimal("0.05")
 DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
+DEFAULT_GPT_4_1_NANO_INPUT_COST_PER_MILLION = Decimal("0.10")
+DEFAULT_GPT_4_1_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[3] / "docs" / "tick-summary-system-prompt.md"
 DEFAULT_TICK_SUMMARY_SYSTEM_PROMPT = """# Tick Summary System Prompt
 
@@ -117,7 +120,7 @@ class TickSummaryService:
         self.transport = transport or HttpxProviderTransport(timeout_seconds=20.0)
 
     def summarize(self, request: TickSummaryRequest) -> TickSummaryResult:
-        model = str(self.environ.get("OPENAI_TICK_SUMMARY_MODEL") or DEFAULT_TICK_SUMMARY_MODEL)
+        model = _summary_model_candidates(self.environ)[0]
         prompt_version = str(
             self.environ.get("OPENAI_TICK_SUMMARY_PROMPT_VERSION")
             or DEFAULT_TICK_SUMMARY_PROMPT_VERSION
@@ -146,71 +149,122 @@ class TickSummaryService:
                 input_hash=input_hash,
             )
 
-        try:
-            body = self.transport.post_json(
-                url=f"{_openai_base_url(self.environ)}/v1/responses",
-                headers={
-                    "Authorization": f"Bearer {self.environ.get('OPENAI_API_KEY')}",
-                    "Content-Type": "application/json",
-                },
-                payload={
-                    "model": model,
-                    "input": [
-                        {"role": "system", "content": _system_prompt()},
-                        {
-                            "role": "user",
-                            "content": json.dumps(summary_input, sort_keys=True),
-                        },
-                    ],
-                    "max_output_tokens": _int_env(
-                        self.environ,
-                        "OPENAI_TICK_SUMMARY_MAX_OUTPUT_TOKENS",
-                        600,
-                    ),
-                    "text": {
-                        "format": {
-                            "type": "json_schema",
-                            "name": "codex_poly_tick_summary",
-                            "schema": TICK_SUMMARY_JSON_SCHEMA,
-                            "strict": True,
-                        }
+        failures: list[tuple[str, Exception]] = []
+        for candidate_model in _summary_model_candidates(self.environ):
+            try:
+                body = self.transport.post_json(
+                    url=f"{_openai_base_url(self.environ)}/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {self.environ.get('OPENAI_API_KEY')}",
+                        "Content-Type": "application/json",
                     },
-                },
-            )
-            parsed = json.loads(_openai_response_text(body))
-            usage = _usage_payload(
-                body=body,
-                model=model,
-                environment=request.environment,
-                registry=self.registry,
-                latest_run_id=_latest_run_id(request.runs),
-                window_minutes=request.window_minutes,
-                pricing=_tick_summary_pricing(model, self.environ),
-            )
-            return TickSummaryResult(
-                status="summarized",
-                model=model,
-                prompt_version=prompt_version,
-                summary_markdown=str(parsed.get("summary_markdown") or "").strip(),
-                key_events=[str(item) for item in parsed.get("key_events", [])],
-                warnings=[str(item) for item in parsed.get("warnings", [])],
-                usage=usage,
-                input_hash=input_hash,
-                message="AI summary generated from recent tick history.",
-            )
-        except Exception as exc:
-            return TickSummaryResult(
-                status="error",
-                model=model,
-                prompt_version=prompt_version,
-                summary_markdown=_local_summary_markdown(request),
-                key_events=_local_key_events(request),
-                warnings=["OpenAI tick summary failed; showing local tick facts instead."],
-                usage=_empty_usage(),
-                input_hash=input_hash,
-                error_code=exc.__class__.__name__,
-                message=str(exc),
-            )
+                    payload=_openai_summary_payload(
+                        model=candidate_model,
+                        summary_input=summary_input,
+                        environ=self.environ,
+                    ),
+                )
+                parsed = json.loads(_openai_response_text(body))
+                usage = _usage_payload(
+                    body=body,
+                    model=candidate_model,
+                    environment=request.environment,
+                    registry=self.registry,
+                    latest_run_id=_latest_run_id(request.runs),
+                    window_minutes=request.window_minutes,
+                    pricing=_tick_summary_pricing(candidate_model, self.environ),
+                )
+                warnings = []
+                if failures:
+                    failed_models = ", ".join(model for model, _ in failures)
+                    warnings.append(
+                        f"Primary tick summary model failed ({failed_models}); used {candidate_model}."
+                    )
+                return TickSummaryResult(
+                    status="summarized",
+                    model=candidate_model,
+                    prompt_version=prompt_version,
+                    summary_markdown=str(parsed.get("summary_markdown") or "").strip(),
+                    key_events=[str(item) for item in parsed.get("key_events", [])],
+                    warnings=warnings + [str(item) for item in parsed.get("warnings", [])],
+                    usage=usage,
+                    input_hash=input_hash,
+                    message="AI summary generated from recent tick history.",
+                )
+            except Exception as exc:
+                failures.append((candidate_model, exc))
+
+        failed_model, failure = failures[-1]
+        error_code = failure.__class__.__name__
+        message = _safe_error_message(failure)
+        return TickSummaryResult(
+            status="error",
+            model=failed_model,
+            prompt_version=prompt_version,
+            summary_markdown=_local_summary_markdown(request),
+            key_events=_local_key_events(request),
+            warnings=[
+                f"OpenAI tick summary failed ({error_code}: {message}); showing local tick facts instead."
+            ],
+            usage=_empty_usage(),
+            input_hash=input_hash,
+            error_code=error_code,
+            message=message,
+        )
+
+
+def _openai_summary_payload(
+    *,
+    model: str,
+    summary_input: dict[str, Any],
+    environ: Mapping[str, str],
+) -> dict[str, Any]:
+    return {
+        "model": model,
+        "input": [
+            {"role": "system", "content": _system_prompt()},
+            {
+                "role": "user",
+                "content": json.dumps(summary_input, sort_keys=True),
+            },
+        ],
+        "max_output_tokens": _int_env(
+            environ,
+            "OPENAI_TICK_SUMMARY_MAX_OUTPUT_TOKENS",
+            600,
+        ),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "codex_poly_tick_summary",
+                "schema": TICK_SUMMARY_JSON_SCHEMA,
+                "strict": True,
+            }
+        },
+    }
+
+
+def _summary_model_candidates(environ: Mapping[str, str]) -> tuple[str, ...]:
+    primary = str(environ.get("OPENAI_TICK_SUMMARY_MODEL") or DEFAULT_TICK_SUMMARY_MODEL).strip()
+    fallback_values = [
+        str(environ.get("OPENAI_TICK_SUMMARY_FALLBACK_MODEL") or DEFAULT_TICK_SUMMARY_FALLBACK_MODEL)
+    ]
+    fallback_values.extend(
+        str(environ.get("OPENAI_TICK_SUMMARY_FALLBACK_MODELS") or "").split(",")
+    )
+    models: list[str] = []
+    for raw_model in [primary, *fallback_values]:
+        candidate = raw_model.strip()
+        if candidate and candidate not in models:
+            models.append(candidate)
+    return tuple(models or [DEFAULT_TICK_SUMMARY_MODEL])
+
+
+def _safe_error_message(exc: Exception) -> str:
+    message = " ".join(str(exc).split())
+    if not message:
+        return "provider request failed"
+    return message[:300]
 
 
 def _summary_enabled(environ: Mapping[str, str]) -> bool:
@@ -393,6 +447,11 @@ def _tick_summary_pricing(model: str, environ: Mapping[str, str]) -> TokenPricin
         return TokenPricing(
             input_cost_per_million_tokens=DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION,
             output_cost_per_million_tokens=DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION,
+        )
+    if model == DEFAULT_TICK_SUMMARY_FALLBACK_MODEL:
+        return TokenPricing(
+            input_cost_per_million_tokens=DEFAULT_GPT_4_1_NANO_INPUT_COST_PER_MILLION,
+            output_cost_per_million_tokens=DEFAULT_GPT_4_1_NANO_OUTPUT_COST_PER_MILLION,
         )
     return None
 
