@@ -522,9 +522,17 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "Execution",
         "Exit",
     ]
+    assert payload["pipelineRun"]["metadata"]["endResult"]["status"] == "accepted"
     assert payload["pipelineRun"]["steps"][0]["metrics"]["candidateCount"] == 2
+    assert payload["pipelineRun"]["steps"][0]["inputs"]["venues"] == [
+        "polymarket_us",
+        "alpaca",
+    ]
+    assert payload["pipelineRun"]["steps"][0]["outputs"]["candidateCount"] == 2
+    assert payload["pipelineRun"]["steps"][0]["decisions"]["accepted"] is True
     assert payload["pipelineRun"]["steps"][1]["metrics"]["acceptedCount"] == 0
     assert payload["pipelineRun"]["steps"][1]["metrics"]["rejectedCount"] == 2
+    assert "trace" not in payload["pipelineRun"]["steps"][0]["metrics"]
     assert payload["scannerRun"]["candidateCount"] == 2
     assert payload["scannerRun"]["rejectedCount"] == 2
     assert payload["reasoningRun"]["status"] == "no_candidates"
@@ -562,7 +570,13 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert strategy_rows[0]["pipeline_run_id"] == payload["runId"]
     assert strategy_rows[0]["status"] == "no_scores"
     assert pipeline_rows[0]["id"] == payload["runId"]
+    assert pipeline_rows[0]["metadata"]["endResult"]["orderIntentCount"] == 0
     assert len(pipeline_step_rows) == 5
+    assert pipeline_step_rows[0]["metrics"]["trace"]["inputs"]["venues"] == [
+        "polymarket_us",
+        "alpaca",
+    ]
+    assert pipeline_step_rows[0]["metrics"]["trace"]["outputs"]["candidateCount"] == 2
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
     assert audit_rows[-1]["event_type"] == "manual_loop_trigger"
     assert audit_rows[-1]["metadata"]["requested_mode"] == "full_dry_run"
@@ -579,6 +593,24 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert {item["table"] for item in detail_payload["records"][0]["items"]} == {
         "shared.dashboard_market_data_pulls"
     }
+    operations = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    operations_again = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    tick_summary_rows = client.app.state.services.registry.state.rows("shared.tick_summaries")
+    assert operations.status_code == 200
+    assert operations.json()["tickSummary"]["runCount"] == 1
+    assert operations.json()["tickSummary"]["latestRunId"] == payload["runId"]
+    assert operations.json()["tickSummary"]["status"] == "unavailable"
+    assert operations.json()["tickSummary"]["warnings"] == [
+        "OpenAI tick summary is not configured; set OPENAI_API_KEY to enable it."
+    ]
+    assert operations_again.status_code == 200
+    assert len(tick_summary_rows) == 1
 
 
 def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> None:

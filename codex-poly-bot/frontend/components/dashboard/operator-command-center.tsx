@@ -26,12 +26,18 @@ import {
 } from "@/components/dashboard/market-data-panel";
 import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
 import {
+  FALLBACK_TICK_SUMMARY,
+  TickSummaryPanel,
+  type TickSummaryView,
+} from "@/components/dashboard/tick-summary-panel";
+import {
   applyDashboardTheme,
   PreferencesPanel,
   type UserPreferencesView,
 } from "@/components/dashboard/preferences-panel";
 import type { StatusItem } from "@/components/dashboard/status-overview";
 import type { WalletCredentialView } from "@/components/dashboard/wallet-status";
+import { dashboardApi } from "@/lib/api";
 
 // REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-UI-010, REQ-UI-011, REQ-OBS-005
 
@@ -95,6 +101,9 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
   const settings = summary.config.settings;
   const [preferences, setPreferences] = useState(summary.preferences.settings);
   const [marketData, setMarketData] = useState(summary.marketData);
+  const [tickSummary, setTickSummary] = useState<TickSummaryView>(
+    summary.operations.tickSummary ?? FALLBACK_TICK_SUMMARY,
+  );
   const displayTimeZone = useResolvedTimeZone(preferences.timeZone);
   const statusItems = summary.status.items;
   const selectedVenue = settings.default_selected_venue ?? "unknown";
@@ -130,6 +139,14 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
 
   function onManualRunAccepted(result: ManualRunResult) {
     setMarketData(result.marketDataPull);
+    void refreshTickSummary();
+  }
+
+  async function refreshTickSummary() {
+    const result = await dashboardApi<OperationsSummaryView>("operations/summary");
+    if (result.ok) {
+      setTickSummary(result.data.tickSummary ?? FALLBACK_TICK_SUMMARY);
+    }
   }
 
   return (
@@ -216,6 +233,11 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
             ))}
           </div>
         </Panel>
+
+        <TickSummaryPanel
+          summary={tickSummary}
+          timeZone={displayTimeZone}
+        />
 
         <MarketDataPanel marketData={marketData} timeZone={displayTimeZone} />
 

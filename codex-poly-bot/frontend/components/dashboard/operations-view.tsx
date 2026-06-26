@@ -22,6 +22,11 @@ import {
   MarketDataPanel,
   type MarketDataPullView,
 } from "@/components/dashboard/market-data-panel";
+import {
+  FALLBACK_TICK_SUMMARY,
+  TickSummaryPanel,
+  type TickSummaryView,
+} from "@/components/dashboard/tick-summary-panel";
 import { dashboardApi } from "@/lib/api";
 
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
@@ -344,6 +349,7 @@ export type OperationsSummaryView = {
   manualReviewState: string;
   orderEvents: OrderEventView[];
   pipelineRuns: PipelineRunView[];
+  tickSummary?: TickSummaryView;
   scanner?: ScannerSummaryView;
   reasoning?: ReasoningSummaryView;
   strategyConsensus?: StrategyConsensusSummaryView;
@@ -449,6 +455,7 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   manualReviewState: "unknown",
   orderEvents: [],
   pipelineRuns: [],
+  tickSummary: FALLBACK_TICK_SUMMARY,
   scanner: FALLBACK_SCANNER,
   reasoning: FALLBACK_REASONING,
   strategyConsensus: FALLBACK_STRATEGY_CONSENSUS,
@@ -473,6 +480,7 @@ export function OperationsView({
 }) {
   const [latestMarketData, setLatestMarketData] = useState(marketData);
   const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
+  const [tickSummary, setTickSummary] = useState(summary.tickSummary ?? FALLBACK_TICK_SUMMARY);
   const [scanner, setScanner] = useState(summary.scanner ?? FALLBACK_SCANNER);
   const [reasoning, setReasoning] = useState(summary.reasoning ?? FALLBACK_REASONING);
   const [strategyConsensus, setStrategyConsensus] = useState(
@@ -552,6 +560,11 @@ export function OperationsView({
       </section>
 
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
+
+      <TickSummaryPanel
+        summary={tickSummary}
+        timeZone={displayTimeZone}
+      />
 
       <PipelineRunsPanel runs={pipelineRuns} timeZone={displayTimeZone} />
 
@@ -675,6 +688,14 @@ export function OperationsView({
         refusedCount: exitRun.refusedCount ?? 0,
         intents: exitRun.intents ?? [],
       });
+    }
+    void refreshTickSummary();
+  }
+
+  async function refreshTickSummary() {
+    const result = await dashboardApi<OperationsSummaryView>("operations/summary");
+    if (result.ok) {
+      setTickSummary(result.data.tickSummary ?? FALLBACK_TICK_SUMMARY);
     }
   }
 }
