@@ -1,3 +1,5 @@
+"use client";
+
 // REQ: REQ-DAT-001, REQ-DAT-008, REQ-OBS-005
 
 import {
@@ -118,6 +120,8 @@ export function MarketDataPanel({
         emptyTitle="No candidates recorded"
         emptyBody="The dashboard has not received priced candidate rows for the selected environment."
         getRowId={(candidate) => candidate.id}
+        title="Candidate records"
+        description="Use the grid for exact pricing, liquidity, spread, history, source, and pull time."
         searchPlaceholder="Filter candidates"
       />
     </section>

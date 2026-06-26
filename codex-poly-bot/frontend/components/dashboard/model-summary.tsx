@@ -1,3 +1,5 @@
+"use client";
+
 // REQ: REQ-UI-010
 
 import {
@@ -59,12 +61,30 @@ export function ModelSummaryPanel({
         <Metric label="Positions" value={String(positions.length)} />
         <Metric label="Decisions" value={String(decisions.length)} />
       </div>
+      <div className="model-workflow-strip" aria-label={`${provider} workflow summary`}>
+        <div>
+          <span>1</span>
+          <strong>Decisions</strong>
+          <small>{decisions.length} scored records</small>
+        </div>
+        <div>
+          <span>2</span>
+          <strong>Orders</strong>
+          <small>{orders.length} submitted or simulated rows</small>
+        </div>
+        <div>
+          <span>3</span>
+          <strong>Positions</strong>
+          <small>{positions.length} open or closed records</small>
+        </div>
+      </div>
 
       <h2>Positions</h2>
       <ModelRows
         emptyTitle="No positions"
         emptyBody="No open or closed positions have been recorded for this provider."
         rows={positions}
+        title="Position records"
       />
 
       <h2>Decisions</h2>
@@ -72,6 +92,7 @@ export function ModelSummaryPanel({
         emptyTitle="No decisions"
         emptyBody="No scored decisions have been recorded for this provider."
         rows={decisions}
+        title="Decision records"
       />
 
       <h2>Orders</h2>
@@ -79,6 +100,7 @@ export function ModelSummaryPanel({
         emptyTitle="No orders"
         emptyBody="No simulated or live orders have been recorded for this provider."
         rows={orders}
+        title="Order records"
       />
     </section>
   );
@@ -97,10 +119,12 @@ function ModelRows({
   rows,
   emptyTitle,
   emptyBody,
+  title,
 }: {
   rows: ModelRow[];
   emptyTitle: string;
   emptyBody: string;
+  title: string;
 }) {
   const normalizedRows = rows.map(normalizeRow);
   const columns = columnsForRows(normalizedRows);
@@ -112,6 +136,8 @@ function ModelRows({
       emptyTitle={emptyTitle}
       emptyBody={emptyBody}
       getRowId={(row) => row.id || row.positionId || JSON.stringify(row)}
+      title={title}
+      density="compact"
       searchPlaceholder="Filter rows"
     />
   );
@@ -124,12 +150,43 @@ function normalizeRow(row: ModelRow): Record<string, string> {
 }
 
 function columnsForRows(rows: Record<string, string>[]): DashboardGridColumn<Record<string, string>>[] {
-  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).sort(compareModelColumnKeys);
   return keys.map((key) => ({
     field: key,
     headerName: titleFromKey(key),
     minWidth: key.toLowerCase().includes("message") ? 240 : 140,
   }));
+}
+
+const MODEL_COLUMN_PRIORITY = [
+  "id",
+  "positionId",
+  "instrumentId",
+  "venue",
+  "modelProvider",
+  "state",
+  "status",
+  "side",
+  "direction",
+  "confidence",
+  "estimatedProbability",
+  "notionalUsd",
+  "pnl",
+  "costUsd",
+  "createdAt",
+  "updatedAt",
+  "message",
+  "refusalReason",
+];
+
+function compareModelColumnKeys(left: string, right: string): number {
+  const leftIndex = MODEL_COLUMN_PRIORITY.indexOf(left);
+  const rightIndex = MODEL_COLUMN_PRIORITY.indexOf(right);
+  if (leftIndex !== -1 || rightIndex !== -1) {
+    return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+      (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+  }
+  return left.localeCompare(right);
 }
 
 function formatCellValue(value: unknown): string {
