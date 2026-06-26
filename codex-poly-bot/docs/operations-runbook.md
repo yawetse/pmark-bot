@@ -6,7 +6,7 @@ Use this runbook for live incidents, degraded health, bad deploys, and credentia
 
 ## SigNoz Observability
 
-Use `docs/signoz-observability.md` to enable SigNoz traces, logs, frontend browser telemetry, CloudWatch log forwarding, and the SigNoz MCP server. Keep `SIGNOZ_INGESTION_KEY` in local env or AWS Secrets Manager, not in tracked files.
+Use `docs/signoz-observability.md` to enable SigNoz traces, logs, frontend browser telemetry, optional CloudWatch log forwarding, and the SigNoz MCP server. Keep `SIGNOZ_INGESTION_KEY` in local env or AWS Secrets Manager, not in tracked files.
 
 ## Manual Runs
 

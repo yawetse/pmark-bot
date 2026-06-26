@@ -34,7 +34,7 @@ For AWS deployment, store the ingestion key in Secrets Manager and pass its ARN 
 
 ## CloudWatch Logs
 
-The CloudFormation stack already writes backend and frontend container logs to CloudWatch. When `SignozEnabled=true`, it also creates `SignozCloudWatchReadPolicyArn` for the application log group.
+The CloudFormation stack already writes backend and frontend container logs to CloudWatch. Set `SignozCloudWatchReadPolicyEnabled=true` only when the deploy role is allowed to create managed IAM policies and you want CloudFormation to output `SignozCloudWatchReadPolicyArn` for the application log group.
 
 Use `infra/signoz-cloudwatch-collector.yml` with `otelcol-contrib` when you want a manual CloudWatch pull collector:
 

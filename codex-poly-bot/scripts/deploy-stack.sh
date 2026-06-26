@@ -84,6 +84,7 @@ signoz_frontend_enabled="${SIGNOZ_FRONTEND_ENABLED:-${signoz_enabled}}"
 signoz_region="${SIGNOZ_REGION:-}"
 signoz_otlp_endpoint="${SIGNOZ_OTLP_ENDPOINT:-}"
 signoz_ingestion_key_secret_arn="${SIGNOZ_INGESTION_KEY_SECRET_ARN:-}"
+signoz_cloudwatch_read_policy_enabled="${SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED:-false}"
 
 stack_exists="false"
 if aws cloudformation describe-stacks --stack-name "${stack_name}" >/dev/null 2>&1; then
@@ -137,6 +138,7 @@ parameter_overrides=(
   "SignozFrontendEnabled=${signoz_frontend_enabled}"
   "SignozRegion=${signoz_region}"
   "SignozOtlpEndpoint=${signoz_otlp_endpoint}"
+  "SignozCloudWatchReadPolicyEnabled=${signoz_cloudwatch_read_policy_enabled}"
   "ManageSesIdentity=${manage_ses_identity}"
   "ApplicationDomainName=${application_domain_name}"
   "CertificateArn=${certificate_arn}"
