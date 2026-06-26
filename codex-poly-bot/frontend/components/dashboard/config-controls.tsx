@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import { dashboardApi } from "@/lib/api";
 import {
   ALLOWED_CONFIG_PATHS,
@@ -299,87 +300,91 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           <span>Stale after {String(staleAfter ?? 168)}h.</span>
         </div>
         {presetMetadata.length ? (
-          <div className="preset-metadata-list" aria-label="Preset membership snapshots">
-            {presetMetadata.map((preset) => (
-              <div key={preset.presetName}>
-                <strong>{preset.presetName}</strong>
-                <span>{preset.symbolCount} symbols</span>
-                <span>{preset.status}</span>
-                <span>{preset.source}</span>
-                <span>{formatPresetAge(preset.ageHours)}</span>
-              </div>
-            ))}
-          </div>
+          <Disclosure title={`View ${presetMetadata.length} preset snapshots`}>
+            <div className="preset-metadata-list" aria-label="Preset membership snapshots">
+              {presetMetadata.map((preset) => (
+                <div key={preset.presetName}>
+                  <strong>{preset.presetName}</strong>
+                  <span>{preset.symbolCount} symbols</span>
+                  <span>{preset.status}</span>
+                  <span>{preset.source}</span>
+                  <span>{formatPresetAge(preset.ageHours)}</span>
+                </div>
+              ))}
+            </div>
+          </Disclosure>
         ) : null}
         <button className="button primary" type="submit">
           Save stock universe
         </button>
       </form>
-      <form className="form-stack" onSubmit={onSubmit}>
-        <div>
-          <p className="section-label">Advanced setting editor</p>
-          <h3>Path-based config update</h3>
-          <p className="panel-note">
-            Use this editor for less common settings. Common live, venue, risk, model, and
-            notification settings are grouped above.
-          </p>
-        </div>
-        <label>
-          Path
-          <select
-            value={path}
-            onChange={(event) => onPathChange(event.target.value)}
-          >
-            {ALLOWED_CONFIG_PATHS.map((allowedPath) => (
-              <option key={allowedPath} value={allowedPath}>
-                {CONFIG_PATH_DETAILS[allowedPath].label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="setting-help">
-          <strong>{selectedDetail.label}</strong>
-          <p>{selectedDetail.description}</p>
-          <dl>
-            <div>
-              <dt>Path</dt>
-              <dd>{path}</dd>
-            </div>
-            <div>
-              <dt>Current value</dt>
-              <dd>{formatValueForInput(currentValue) || "not set"}</dd>
-            </div>
-            <div>
-              <dt>Expected value</dt>
-              <dd>{selectedDetail.valueHint}</dd>
-            </div>
-            <div>
-              <dt>Effect</dt>
-              <dd>{selectedDetail.effect}</dd>
-            </div>
-          </dl>
-        </div>
-        <label>
-          Value
-          <textarea
-            rows={pathRequiresJson(path) ? 6 : 3}
-            placeholder={selectedDetail.valueHint}
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-          />
-        </label>
-        <label>
-          Expected version
-          <input
-            value={expectedVersion}
-            onChange={(event) => setExpectedVersion(event.target.value)}
-            placeholder="Current version"
-          />
-        </label>
-        <button className="button primary" type="submit">
-          Save
-        </button>
-      </form>
+      <Disclosure title="Advanced Path-Based Editor">
+        <form className="form-stack" onSubmit={onSubmit}>
+          <div>
+            <p className="section-label">Advanced setting editor</p>
+            <h3>Path-based config update</h3>
+            <p className="panel-note">
+              Use this editor for less common settings. Common live, venue, risk, model, and
+              notification settings are grouped above.
+            </p>
+          </div>
+          <label>
+            Path
+            <select
+              value={path}
+              onChange={(event) => onPathChange(event.target.value)}
+            >
+              {ALLOWED_CONFIG_PATHS.map((allowedPath) => (
+                <option key={allowedPath} value={allowedPath}>
+                  {CONFIG_PATH_DETAILS[allowedPath].label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="setting-help">
+            <strong>{selectedDetail.label}</strong>
+            <p>{selectedDetail.description}</p>
+            <dl>
+              <div>
+                <dt>Path</dt>
+                <dd>{path}</dd>
+              </div>
+              <div>
+                <dt>Current value</dt>
+                <dd>{formatValueForInput(currentValue) || "not set"}</dd>
+              </div>
+              <div>
+                <dt>Expected value</dt>
+                <dd>{selectedDetail.valueHint}</dd>
+              </div>
+              <div>
+                <dt>Effect</dt>
+                <dd>{selectedDetail.effect}</dd>
+              </div>
+            </dl>
+          </div>
+          <label>
+            Value
+            <textarea
+              rows={pathRequiresJson(path) ? 6 : 3}
+              placeholder={selectedDetail.valueHint}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+            />
+          </label>
+          <label>
+            Expected version
+            <input
+              value={expectedVersion}
+              onChange={(event) => setExpectedVersion(event.target.value)}
+              placeholder="Current version"
+            />
+          </label>
+          <button className="button primary" type="submit">
+            Save
+          </button>
+        </form>
+      </Disclosure>
       {saveState.status === "saved" ? (
         <p className="status-message">Saved version {saveState.version}. Applies on next loop.</p>
       ) : null}

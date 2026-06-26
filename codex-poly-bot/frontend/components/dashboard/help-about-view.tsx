@@ -6,6 +6,7 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 
 const COMPONENTS = [
   {
@@ -145,14 +146,16 @@ export function HelpAboutView() {
       <section className="panel wide-panel">
         <p className="section-label">Components</p>
         <h2>Main Components</h2>
-        <DashboardDataGrid
-          rows={[...COMPONENTS]}
-          columns={componentColumns}
-          emptyTitle="No components"
-          emptyBody="No component reference rows are available."
-          getRowId={(component) => component.name}
-          searchPlaceholder="Filter components"
-        />
+        <Disclosure title={`View ${COMPONENTS.length} component rows`}>
+          <DashboardDataGrid
+            rows={[...COMPONENTS]}
+            columns={componentColumns}
+            emptyTitle="No components"
+            emptyBody="No component reference rows are available."
+            getRowId={(component) => component.name}
+            searchPlaceholder="Filter components"
+          />
+        </Disclosure>
       </section>
 
       <section className="panel wide-panel">
@@ -199,14 +202,16 @@ export function HelpAboutView() {
       <section className="panel wide-panel">
         <p className="section-label">Storage</p>
         <h2>How Information Is Stored</h2>
-        <DashboardDataGrid
-          rows={[...STORAGE]}
-          columns={storageColumns}
-          emptyTitle="No storage rows"
-          emptyBody="No storage reference rows are available."
-          getRowId={(item) => item.area}
-          searchPlaceholder="Filter storage"
-        />
+        <Disclosure title={`View ${STORAGE.length} storage rows`}>
+          <DashboardDataGrid
+            rows={[...STORAGE]}
+            columns={storageColumns}
+            emptyTitle="No storage rows"
+            emptyBody="No storage reference rows are available."
+            getRowId={(item) => item.area}
+            searchPlaceholder="Filter storage"
+          />
+        </Disclosure>
       </section>
 
       <section className="panel wide-panel">
@@ -217,50 +222,56 @@ export function HelpAboutView() {
           and production use separate stacks, parameter files, resources, secret
           prefixes, and runtime profiles.
         </p>
-        <div className="infra-grid">
-          {CLOUD_INFRA.map(([name, detail]) => (
-            <div className="infra-item" key={name}>
-              <strong>{name}</strong>
-              <span>{detail}</span>
-            </div>
-          ))}
-        </div>
+        <Disclosure title={`View ${CLOUD_INFRA.length} infrastructure areas`}>
+          <div className="infra-grid">
+            {CLOUD_INFRA.map(([name, detail]) => (
+              <div className="infra-item" key={name}>
+                <strong>{name}</strong>
+                <span>{detail}</span>
+              </div>
+            ))}
+          </div>
+        </Disclosure>
       </section>
 
       <section className="panel wide-panel">
         <p className="section-label">Environments</p>
         <h2>Where It Runs</h2>
-        <DashboardDataGrid
-          rows={[...ENVIRONMENTS]}
-          columns={environmentColumns}
-          emptyTitle="No environments"
-          emptyBody="No environment reference rows are available."
-          getRowId={(environment) => environment.name}
-          searchPlaceholder="Filter environments"
-        />
+        <Disclosure title={`View ${ENVIRONMENTS.length} environments`}>
+          <DashboardDataGrid
+            rows={[...ENVIRONMENTS]}
+            columns={environmentColumns}
+            emptyTitle="No environments"
+            emptyBody="No environment reference rows are available."
+            getRowId={(environment) => environment.name}
+            searchPlaceholder="Filter environments"
+          />
+        </Disclosure>
       </section>
 
       <section className="panel wide-panel">
         <p className="section-label">Release path</p>
         <h2>How Code Gets Deployed</h2>
-        <ol className="timeline-list compact-timeline">
-          <li>
-            <strong>Pull request and CI</strong>
-            <span>GitHub Actions run backend tests, frontend checks, and migration safety checks before deployment work.</span>
-          </li>
-          <li>
-            <strong>Develop branch</strong>
-            <span>Merging to develop selects the development stack.</span>
-          </li>
-          <li>
-            <strong>Main branch</strong>
-            <span>Merging to main selects the production stack.</span>
-          </li>
-          <li>
-            <strong>Container rollout</strong>
-            <span>The workflow builds images, publishes them to ECR, updates ECS, and waits for services to stabilize.</span>
-          </li>
-        </ol>
+        <Disclosure title="View release workflow">
+          <ol className="timeline-list compact-timeline">
+            <li>
+              <strong>Pull request and CI</strong>
+              <span>GitHub Actions run backend tests, frontend checks, and migration safety checks before deployment work.</span>
+            </li>
+            <li>
+              <strong>Develop branch</strong>
+              <span>Merging to develop selects the development stack.</span>
+            </li>
+            <li>
+              <strong>Main branch</strong>
+              <span>Merging to main selects the production stack.</span>
+            </li>
+            <li>
+              <strong>Container rollout</strong>
+              <span>The workflow builds images, publishes them to ECR, updates ECS, and waits for services to stabilize.</span>
+            </li>
+          </ol>
+        </Disclosure>
       </section>
     </div>
   );

@@ -36,7 +36,7 @@ export default async function ModelPage({ params }: ModelPageProps) {
   return (
     <>
       <DashboardNav />
-      <main className="page-shell">
+      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
         <ModelSummaryPanel
           provider={provider}
           summary={summary.ok ? summary.data : undefined}

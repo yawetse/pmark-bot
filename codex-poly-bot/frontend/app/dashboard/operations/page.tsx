@@ -39,7 +39,7 @@ export default async function OperationsPage() {
   return (
     <>
       <DashboardNav />
-      <main className="page-shell">
+      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
         <OperationsView
           summary={operations.ok ? operations.data : undefined}
           marketData={marketData.ok ? marketData.data : undefined}
