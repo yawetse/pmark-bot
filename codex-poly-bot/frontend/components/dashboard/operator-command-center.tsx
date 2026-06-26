@@ -7,6 +7,12 @@ import {
   type EconomicsSummaryView,
 } from "@/components/dashboard/economics-panel";
 import {
+  EmptyState,
+  MetricCard,
+  MetricGrid,
+  Panel,
+} from "@/components/dashboard/dashboard-primitives";
+import {
   LoopMonitor,
   type LoopObservabilityView,
 } from "@/components/dashboard/loop-monitor";
@@ -143,39 +149,31 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
         </div>
       </div>
 
-      <LoopMonitor loop={summary.loop} timeZone={displayTimeZone} />
+      <div className="state-summary-strip" aria-label="Current gate summary">
+        <MetricCard
+          label="Selected venue"
+          value={selectedVenue}
+          detail={selectedVenueEnabled ? "Venue enabled" : "Venue disabled"}
+        />
+        <MetricCard
+          label="Live mode"
+          value={liveEnabled ? "Enabled" : "Dry run"}
+          detail={summary.status.kill_switch_active ? "Kill switch active" : "Kill switch clear"}
+        />
+        <MetricCard
+          label="Open orders"
+          value={String(openOrders.length)}
+          detail={`${summary.operations.orderEvents.length} recent events`}
+        />
+        <MetricCard
+          label="Blockers"
+          value={String(credentialBlockers.length + blockedStatusItems.length)}
+          detail={blockedStatusItems[0]?.label ?? "No extra status blocker"}
+        />
+      </div>
 
-      <div className="operator-grid">
-        <PreferencesPanel preferences={preferences} onSaved={setPreferences} />
-
-        <ManualRunControl environment={summary.environment} onAccepted={onManualRunAccepted} />
-
-        <section className="operator-panel span-2" aria-labelledby="running-title">
-          <div className="panel-heading">
-            <div>
-              <p className="section-label">What is running</p>
-              <h2 id="running-title">Runtime status</h2>
-            </div>
-            <span className={`status ${summary.status.health === "ok" ? "ok" : "blocked"}`}>
-              {summary.status.health}
-            </span>
-          </div>
-          <div className="status-card-grid">
-            {statusItems.map((item) => (
-              <article className="status-card" key={item.label}>
-                <span className={`status-dot ${item.state}`} aria-hidden="true" />
-                <div>
-                  <strong>{item.label}</strong>
-                  <p>{item.value}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="operator-panel" aria-labelledby="next-title">
-          <p className="section-label">What happens next</p>
-          <h2 id="next-title">Next actions</h2>
+      <div className="priority-grid">
+        <Panel eyebrow="What happens next" title="Next actions" className="priority-panel">
           <ol className="action-list">
             {nextActions.map((action) => (
               <li key={action.title}>
@@ -189,18 +187,44 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
               </li>
             ))}
           </ol>
-        </section>
+        </Panel>
+
+        <ManualRunControl environment={summary.environment} onAccepted={onManualRunAccepted} />
+
+        <PreferencesPanel preferences={preferences} onSaved={setPreferences} />
+      </div>
+
+      <LoopMonitor loop={summary.loop} timeZone={displayTimeZone} />
+
+      <div className="operator-grid">
+        <Panel
+          eyebrow="What is running"
+          title="Runtime status"
+          status={summary.status.health}
+          statusTone={summary.status.health === "ok" ? "ok" : "blocked"}
+          className="span-2"
+        >
+          <div className="status-card-grid">
+            {statusItems.map((item) => (
+              <article className="status-card" key={item.label}>
+                <span className={`status-dot ${item.state}`} aria-hidden="true" />
+                <div>
+                  <strong>{item.label}</strong>
+                  <p>{item.value}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </Panel>
 
         <MarketDataPanel marketData={marketData} timeZone={displayTimeZone} />
 
-        <section className="operator-panel" aria-labelledby="pending-title">
-          <p className="section-label">Trades and orders</p>
-          <h2 id="pending-title">Pending activity</h2>
-          <div className="metric-strip">
-            <Metric label="Open orders" value={String(openOrders.length)} />
-            <Metric label="Recent events" value={String(summary.operations.orderEvents.length)} />
-            <Metric label="Audit rows" value={String(summary.audit?.items?.length ?? 0)} />
-          </div>
+        <Panel eyebrow="Trades and orders" title="Pending activity">
+          <MetricGrid compact>
+            <MetricCard label="Open orders" value={String(openOrders.length)} />
+            <MetricCard label="Recent events" value={String(summary.operations.orderEvents.length)} />
+            <MetricCard label="Audit rows" value={String(summary.audit?.items?.length ?? 0)} />
+          </MetricGrid>
           {recentOrders.length > 0 ? (
             <div className="compact-list">
               {recentOrders.map((event) => (
@@ -216,13 +240,11 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
               body="The backend has not recorded simulated or live orders in the current data store."
             />
           )}
-        </section>
+        </Panel>
 
         <EconomicsPanel economics={summary.economics} />
 
-        <section className="operator-panel" aria-labelledby="controls-title">
-          <p className="section-label">Available controls</p>
-          <h2 id="controls-title">What you can do</h2>
+        <Panel eyebrow="Available controls" title="What you can do">
           <div className="control-list">
             <ControlLink
               href="/dashboard/config"
@@ -240,18 +262,9 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
               body="Confirm credentials, worker heartbeat, notification readiness, and account status."
             />
           </div>
-        </section>
+        </Panel>
       </div>
     </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
@@ -269,15 +282,6 @@ function ControlLink({
       <strong>{title}</strong>
       <span>{body}</span>
     </a>
-  );
-}
-
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="empty-state">
-      <strong>{title}</strong>
-      <p>{body}</p>
-    </div>
   );
 }
 

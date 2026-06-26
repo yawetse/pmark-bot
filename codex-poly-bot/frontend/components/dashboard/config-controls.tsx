@@ -54,6 +54,37 @@ type ConfigControlsProps = {
   loadError?: string;
 };
 
+const CONFIG_GROUPS: Array<{
+  title: string;
+  body: string;
+  paths: AllowedConfigPath[];
+}> = [
+  {
+    title: "Venue and live mode",
+    body: "Choose where the bot can operate and whether live mode can be considered.",
+    paths: ["default_selected_venue", "live_enabled", "venues.polymarket_us.enabled"],
+  },
+  {
+    title: "Risk controls",
+    body: "Limit size, slippage, exposure, and loss before any order can pass gates.",
+    paths: [
+      "risk.alpaca.max_position_usd",
+      "risk.alpaca.market_order_slippage_threshold",
+      "trading_loop_interval_seconds",
+    ],
+  },
+  {
+    title: "Model budgets",
+    body: "Keep provider usage and scoring costs visible before the next run.",
+    paths: ["llm.openai.budget_usd", "llm.claude.budget_usd"],
+  },
+  {
+    title: "Notifications",
+    body: "Control who receives alerts and how quickly repeated alerts can fire.",
+    paths: ["notifications.recipients", "notifications.cooldown_seconds"],
+  },
+];
+
 export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsProps) {
   const [settings, setSettings] = useState(initialSnapshot?.settings);
   const [path, setPath] = useState<AllowedConfigPath>(ALLOWED_CONFIG_PATHS[0]);
@@ -201,6 +232,26 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         </p>
       ) : null}
       {loadError ? <p className="status-message">{loadError}</p> : null}
+      <div className="config-group-grid" aria-label="Common configuration groups">
+        {CONFIG_GROUPS.map((group) => (
+          <article className="config-group-card" key={group.title}>
+            <strong>{group.title}</strong>
+            <p>{group.body}</p>
+            <div className="config-path-actions">
+              {group.paths.map((groupPath) => (
+                <button
+                  className={`config-path-button ${path === groupPath ? "active" : ""}`}
+                  key={groupPath}
+                  type="button"
+                  onClick={() => onPathChange(groupPath)}
+                >
+                  {CONFIG_PATH_DETAILS[groupPath].label}
+                </button>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
       <form className="symbol-editor" onSubmit={onStockUniverseSubmit}>
         <div>
           <h3>Alpaca stock universe</h3>
@@ -265,6 +316,14 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         </button>
       </form>
       <form className="form-stack" onSubmit={onSubmit}>
+        <div>
+          <p className="section-label">Advanced setting editor</p>
+          <h3>Path-based config update</h3>
+          <p className="panel-note">
+            Use this editor for less common settings. Common live, venue, risk, model, and
+            notification settings are grouped above.
+          </p>
+        </div>
         <label>
           Path
           <select
