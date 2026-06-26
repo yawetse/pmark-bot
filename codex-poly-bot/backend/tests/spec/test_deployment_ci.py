@@ -408,20 +408,24 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "/codex-poly-bot/${environment}/signoz/ingestion-key" in text
     assert "SignozIngestionKeySecretArn=${signoz_ingestion_key_secret_arn}" in text
 
-def test_req_dep_002_04_cloudformation_keeps_frontend_auth_routes_on_frontend() -> None:
+def test_req_dep_002_04_cloudformation_keeps_frontend_owned_api_routes_on_frontend() -> None:
     """TST-REQ-DEP-002-04: Validates REQ-DEP-002
 
     Given: CloudFormation ALB listener rules
-    When: frontend auth and backend API routes are inspected
-    Then: /api/auth/* is routed to the frontend before backend /api/* routing
+    When: frontend-owned and backend API routes are inspected
+    Then: frontend-owned /api/* paths are routed to the frontend before backend /api/* routing
     """
     text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
     auth_rule_index = text.index("FrontendAuthListenerRule")
+    observability_rule_index = text.index("FrontendObservabilityListenerRule")
     backend_rule_index = text.index("BackendListenerRule")
 
     assert auth_rule_index < backend_rule_index
+    assert observability_rule_index < backend_rule_index
     assert "- /api/auth/*" in text
+    assert "- /api/observability/*" in text
     assert "Priority: 5" in text[auth_rule_index:backend_rule_index]
+    assert "Priority: 6" in text[observability_rule_index:backend_rule_index]
     assert "- /api/*" in text[backend_rule_index:]
     assert "Priority: 10" in text[backend_rule_index:]
 
