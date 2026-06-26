@@ -101,6 +101,16 @@ class ProviderBackedMarketDataFetcher:
             minimum=1,
             maximum=100,
         )
+        self.alpaca_per_symbol_fallback_enabled = _boolish(
+            source.get("ALPACA_ENABLE_PER_SYMBOL_FALLBACK"),
+            default=False,
+        )
+        self.alpaca_per_symbol_fallback_limit = _int_setting(
+            source.get("ALPACA_PER_SYMBOL_FALLBACK_LIMIT"),
+            25,
+            minimum=1,
+            maximum=100,
+        )
 
     def fetch(
         self,
@@ -219,9 +229,11 @@ class ProviderBackedMarketDataFetcher:
         snapshots = _snapshot_by_symbol(snapshot_payload)
         bars_by_symbol = _bars_by_symbol(bars_payload)
         if not snapshots and not bars_by_symbol and errors:
+            if not self.alpaca_per_symbol_fallback_enabled:
+                return [], errors
             fallback_candidates: list[dict[str, Any]] = []
             fallback_errors: list[ProviderHttpError] = []
-            for symbol in symbols:
+            for symbol in symbols[: self.alpaca_per_symbol_fallback_limit]:
                 try:
                     fallback_candidates.append(
                         self._fetch_alpaca_symbol(
@@ -234,6 +246,18 @@ class ProviderBackedMarketDataFetcher:
                     )
                 except ProviderHttpError as exc:
                     fallback_errors.append(exc)
+            skipped = len(symbols) - min(len(symbols), self.alpaca_per_symbol_fallback_limit)
+            if skipped > 0:
+                fallback_errors.append(
+                    ProviderHttpError(
+                        status="partial",
+                        error_code="alpaca_fallback_limited",
+                        message=(
+                            "alpaca per-symbol fallback was capped after "
+                            f"{self.alpaca_per_symbol_fallback_limit} symbols."
+                        ),
+                    )
+                )
             if fallback_candidates:
                 return fallback_candidates, fallback_errors
             return [], errors

@@ -355,10 +355,13 @@ def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypa
         "execution",
     }
     assert {item["label"] for item in loop["dataInputs"]} >= {
-        "Selected venue",
+        "Active venues",
         "Alpaca symbols",
         "Market candidates",
     }
+    active_venue_input = next(item for item in loop["dataInputs"] if item["label"] == "Active venues")
+    assert active_venue_input["value"] == "alpaca"
+    assert active_venue_input["detail"] == "Default venue is alpaca. Enabled venues are scanned and scored."
     assert {prompt["label"] for prompt in loop["prompts"]} >= {
         "Scoring system prompt",
         "Prompt version",

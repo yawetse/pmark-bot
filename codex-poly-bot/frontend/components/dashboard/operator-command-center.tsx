@@ -108,7 +108,11 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
   const displayTimeZone = useResolvedTimeZone(preferences.timeZone);
   const statusItems = summary.status.items;
   const selectedVenue = settings.default_selected_venue ?? "unknown";
-  const selectedVenueEnabled = Boolean(settings.venues?.[selectedVenue]?.enabled);
+  const activeVenues = Object.entries(settings.venues ?? {})
+    .filter(([, venue]) => Boolean(venue?.enabled))
+    .map(([venue]) => venue);
+  const activeVenueNames = activeVenues.length ? activeVenues.join(", ") : "none";
+  const activeVenuesReady = activeVenues.length > 0;
   const liveEnabled = Boolean(settings.live_enabled);
   const credentialBlockers = summary.wallet.credentials.filter(
     (credential) => credential.requiredForLive !== false && !credential.present,
@@ -120,14 +124,15 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
   const recentOrders = summary.operations.orderEvents.slice(0, 5);
   const mode = resolveMode({
     liveEnabled,
-    selectedVenueEnabled,
+    activeVenuesReady,
     killSwitchActive: summary.status.kill_switch_active,
     blockerCount: credentialBlockers.length + blockedStatusItems.length,
   });
   const nextActions = buildNextActions({
     liveEnabled,
     selectedVenue,
-    selectedVenueEnabled,
+    activeVenuesReady,
+    activeVenueNames,
     credentialBlockers,
     blockedStatusItems,
     notificationState: summary.notifications?.state,
@@ -162,16 +167,16 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
           <span>{mode.label}</span>
           <strong>{liveEnabled ? "Live flag on" : "Dry run"}</strong>
           <small>
-            {selectedVenue} {selectedVenueEnabled ? "enabled" : "disabled"}
+            {activeVenueNames} active
           </small>
         </div>
       </div>
 
       <div className="state-summary-strip" aria-label="Current gate summary">
         <MetricCard
-          label="Selected venue"
-          value={selectedVenue}
-          detail={selectedVenueEnabled ? "Venue enabled" : "Venue disabled"}
+          label="Active venues"
+          value={activeVenueNames}
+          detail={`Default: ${selectedVenue}`}
         />
         <MetricCard
           label="Live mode"
@@ -310,12 +315,12 @@ function ControlLink({
 
 function resolveMode({
   liveEnabled,
-  selectedVenueEnabled,
+  activeVenuesReady,
   killSwitchActive,
   blockerCount,
 }: {
   liveEnabled: boolean;
-  selectedVenueEnabled: boolean;
+  activeVenuesReady: boolean;
   killSwitchActive: boolean;
   blockerCount: number;
 }) {
@@ -335,7 +340,7 @@ function resolveMode({
       state: "neutral",
     };
   }
-  if (!selectedVenueEnabled || blockerCount > 0) {
+  if (!activeVenuesReady || blockerCount > 0) {
     return {
       title: "Live trading is gated",
       body: "The live flag is on, but one or more required gates still block order submission.",
@@ -345,7 +350,7 @@ function resolveMode({
   }
   return {
     title: "Live trading can run",
-    body: "Live mode and the selected venue are enabled. Keep risk limits, orders, and the kill switch visible.",
+    body: "Live mode and active venues are enabled. Keep risk limits, orders, and the kill switch visible.",
     label: "Live enabled",
     state: "ok",
   };
@@ -354,7 +359,8 @@ function resolveMode({
 function buildNextActions({
   liveEnabled,
   selectedVenue,
-  selectedVenueEnabled,
+  activeVenuesReady,
+  activeVenueNames,
   credentialBlockers,
   blockedStatusItems,
   notificationState,
@@ -362,7 +368,8 @@ function buildNextActions({
 }: {
   liveEnabled: boolean;
   selectedVenue: string;
-  selectedVenueEnabled: boolean;
+  activeVenuesReady: boolean;
+  activeVenueNames: string;
   credentialBlockers: WalletCredentialView[];
   blockedStatusItems: StatusItem[];
   notificationState?: string;
@@ -375,10 +382,10 @@ function buildNextActions({
     linkLabel?: string;
   }> = [];
 
-  if (!selectedVenueEnabled) {
+  if (!activeVenuesReady) {
     actions.push({
-      title: "Decide whether to enable a venue",
-      body: `${selectedVenue} is selected but disabled, so the app should not scan, score, or trade there.`,
+      title: "Enable at least one venue",
+      body: `No active venue is enabled. The default venue is ${selectedVenue}, and active venues are ${activeVenueNames}.`,
       href: "/dashboard/config",
       linkLabel: "Open config",
     });

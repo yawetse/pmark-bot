@@ -92,6 +92,12 @@ export function TickSummaryPanel({
           ))}
         </ul>
       ) : null}
+      {summary.status === "error" && summary.message ? (
+        <p className="panel-note">
+          Summary error: {summary.errorCode ? `${summary.errorCode}: ` : ""}
+          {summary.message}
+        </p>
+      ) : null}
       <p className="panel-note">
         Generated {formatDateTime(summary.generatedAt, timeZone)} from ticks since{" "}
         {formatDateTime(summary.windowStartedAt, timeZone)}.
