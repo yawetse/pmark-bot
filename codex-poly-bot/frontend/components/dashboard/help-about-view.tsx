@@ -1,3 +1,5 @@
+"use client";
+
 // REQ: REQ-UI-004, REQ-DEP-001, REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-WAL-003
 
 import {

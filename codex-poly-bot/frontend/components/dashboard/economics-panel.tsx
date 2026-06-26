@@ -3,6 +3,18 @@
 // REQ: REQ-UI-004, REQ-UI-010, REQ-CMP-002, REQ-OBS-005
 
 import { useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import {
   DashboardDataGrid,
@@ -225,6 +237,20 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
     { field: "awsSource", headerName: "AWS source", minWidth: 190 },
     { field: "status", headerName: "Status", minWidth: 120 },
   ];
+  const aiCost = toFiniteNumber(economics.ai.totalCostUsd);
+  const awsDailyCost = toFiniteNumber(economics.aws.dailyInfraCostEstimateUsd);
+  const totalRecordedCost = Math.max(aiCost + awsDailyCost, 1);
+  const recentSnapshots = (economics.history.snapshots ?? []).slice(0, 6).reverse();
+  const costCompositionData = [
+    { name: "AI", cost: aiCost, fill: "var(--accent)" },
+    { name: "AWS daily", cost: awsDailyCost, fill: "var(--dot-waiting)" },
+  ];
+  const netTrendData = recentSnapshots.map((snapshot) => ({
+    cost: toFiniteNumber(snapshot.aiCostUsd) + toFiniteNumber(snapshot.awsDailyCostUsd),
+    date: compactDate(snapshot.createdAt),
+    net: toFiniteNumber(snapshot.netAfterRecordedCostsUsd),
+    pnl: toFiniteNumber(snapshot.tradingPnlUsd),
+  }));
 
   async function triggerProviderImport(provider: string) {
     setImportState({ status: "submitting", provider });
@@ -256,6 +282,67 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
         <Metric label="AI cost" value={formatUsd(economics.ai.totalCostUsd)} />
         <Metric label="AWS daily cost" value={formatUsd(economics.aws.dailyInfraCostEstimateUsd)} />
         <Metric label="Net after costs" value={formatUsd(economics.profitability.netAfterRecordedCostsUsd)} />
+      </div>
+      <div className="economics-visual-grid">
+        <div className="cost-composition" aria-label="Recorded cost composition">
+          <div>
+            <span>Cost composition</span>
+            <strong>{formatUsd(String(aiCost + awsDailyCost))}</strong>
+          </div>
+          <div className="dashboard-chart compact-chart">
+            <ResponsiveContainer height="100%" width="100%">
+              <BarChart data={costCompositionData} layout="vertical" margin={{ bottom: 0, left: 0, right: 8, top: 0 }}>
+                <XAxis hide domain={[0, totalRecordedCost]} type="number" />
+                <YAxis dataKey="name" hide type="category" />
+                <Tooltip content={<UsdTooltip labelKey="name" valueKey="cost" />} cursor={false} />
+                <Bar dataKey="cost" radius={[0, 4, 4, 0]}>
+                  {costCompositionData.map((entry) => (
+                    <Cell fill={entry.fill} key={entry.name} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <dl className="chart-legend">
+            <div>
+              <dt>AI</dt>
+              <dd>{formatUsd(String(aiCost))}</dd>
+            </div>
+            <div>
+              <dt>AWS daily</dt>
+              <dd>{formatUsd(String(awsDailyCost))}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="net-snapshot-strip" aria-label="Recent net snapshots">
+          <div>
+            <span>Recent net snapshots</span>
+            <strong>{economics.history.monthKey}</strong>
+          </div>
+          {recentSnapshots.length ? (
+            <div className="dashboard-chart">
+              <ResponsiveContainer height="100%" width="100%">
+                <LineChart data={netTrendData} margin={{ bottom: 0, left: 0, right: 8, top: 8 }}>
+                  <CartesianGrid stroke="var(--surface-strong)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" tickLine={false} tickMargin={8} />
+                  <YAxis tickFormatter={(value) => compactUsd(Number(value))} tickLine={false} width={42} />
+                  <Tooltip content={<UsdTooltip labelKey="date" valueKey="net" />} />
+                  <Line
+                    dataKey="net"
+                    dot={{ r: 3 }}
+                    isAnimationActive={false}
+                    name="Net"
+                    stroke="var(--accent)"
+                    strokeWidth={2}
+                    type="monotone"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="panel-note">{economics.history.message}</p>
+          )}
+        </div>
       </div>
       <div className="economics-grid">
         <div className="economics-block">
@@ -300,6 +387,8 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
         emptyBody="The backend has not recorded provider token usage rows yet."
         getRowId={(provider) => provider.provider}
         pageSize={10}
+        title="Provider token spend"
+        description="Exact provider usage, estimated rows, and import status."
         searchPlaceholder="Filter providers"
       />
       <div className="economics-block">
@@ -329,6 +418,7 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
         emptyBody="Provider-side token usage imports will appear here after they run."
         getRowId={(run) => run.id}
         pageSize={10}
+        title="Provider usage import runs"
         searchPlaceholder="Filter provider usage imports"
       />
       <DashboardDataGrid
@@ -338,6 +428,8 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
         emptyBody="Economics snapshots will appear after summary reads store monthly profitability history."
         getRowId={(snapshot) => snapshot.id}
         pageSize={10}
+        title="Cost history"
+        description="Use this grid for exact values behind the visual summaries."
         searchPlaceholder="Filter cost history"
       />
     </section>
@@ -349,6 +441,33 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function UsdTooltip({
+  active,
+  label,
+  payload,
+  labelKey,
+  valueKey,
+}: {
+  active?: boolean;
+  label?: string;
+  payload?: Array<{ payload?: Record<string, unknown>; value?: number | string }>;
+  labelKey: string;
+  valueKey: string;
+}) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+  const row = payload[0]?.payload ?? {};
+  const displayLabel = String(row[labelKey] ?? label ?? "");
+  const value = Number(row[valueKey] ?? payload[0]?.value ?? 0);
+  return (
+    <div className="chart-tooltip">
+      <strong>{displayLabel}</strong>
+      <span>{formatUsd(String(value))}</span>
     </div>
   );
 }
@@ -366,6 +485,34 @@ function formatUsd(value: string): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function compactUsd(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: 0,
+    notation: "compact",
+    style: "currency",
+  }).format(value);
+}
+
+function compactDate(value?: string | null): string {
+  if (!value) {
+    return "n/a";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "short",
+  }).format(parsed);
+}
+
+function toFiniteNumber(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatPeriod(start: string | null, end: string | null): string {
