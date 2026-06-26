@@ -15,6 +15,15 @@ Use the Operations dashboard manual-run controls when you need to trigger the lo
 
 Skipped downstream stages are recorded as `skipped` pipeline rows. Review the pipeline detail grid to see the records behind each step.
 
+Live-gated runs can submit real orders only when the runtime has attached venue submitters. The backend attaches them when `LIVE_ENABLED=true`, the venue flag is enabled, required credentials are present, and the Alpaca account status is `active`.
+
+- Alpaca entries use market buy orders at `/v2/orders` with notional sizing.
+- Alpaca exits use market sell orders at `/v2/orders` with tracked quantity.
+- Polymarket entries use the official Polymarket US SDK `orders.create`.
+- Polymarket exits use the official Polymarket US SDK `orders.close_position`.
+
+If a submitter is missing, the pipeline records `LIVE_SUBMITTER_NOT_CONFIGURED` or `LIVE_EXIT_SUBMITTER_NOT_CONFIGURED` and does not call the venue.
+
 ## Provider Usage Imports
 
 Use the Economics panel provider import buttons to backfill AI usage from provider-side reporting.

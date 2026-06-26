@@ -8,6 +8,62 @@ from decimal import Decimal
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider, OrderSide, OrderType, PositionState, Venue
 from app.services import PipelineLifecycleService
+from app.venues import PolymarketLiveOrderRequest, VenueCallResult
+
+
+class RecordingAlpacaSubmitter:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    def submit_order(
+        self,
+        *,
+        account_mode: str,
+        symbol: str,
+        notional: Decimal | None = None,
+        quantity: Decimal | None = None,
+        side: str = "buy",
+        client_order_id: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "account_mode": account_mode,
+                "symbol": symbol,
+                "notional": str(notional) if notional is not None else "",
+                "quantity": str(quantity) if quantity is not None else "",
+                "side": side,
+                "client_order_id": client_order_id or "",
+            }
+        )
+        return f"alpaca-{side}-{symbol}-{len(self.calls)}"
+
+
+class RecordingPolymarketSubmitter:
+    def __init__(self) -> None:
+        self.submit_calls: list[PolymarketLiveOrderRequest] = []
+        self.close_calls: list[dict[str, str]] = []
+
+    def submit_order(self, request: PolymarketLiveOrderRequest) -> VenueCallResult:
+        self.submit_calls.append(request)
+        return VenueCallResult(ok=True, payload={"venue_order_id": f"pm-entry-{len(self.submit_calls)}"})
+
+    def close_position(
+        self,
+        *,
+        market_slug: str,
+        current_price: Decimal | str | None = None,
+        slippage_tolerance_bips: int | None = None,
+        slippage_tolerance_ticks: int | None = None,
+    ) -> VenueCallResult:
+        self.close_calls.append(
+            {
+                "market_slug": market_slug,
+                "current_price": str(current_price or ""),
+                "bips": str(slippage_tolerance_bips or ""),
+                "ticks": str(slippage_tolerance_ticks or ""),
+            }
+        )
+        return VenueCallResult(ok=True, payload={"venue_order_id": f"pm-exit-{len(self.close_calls)}"})
 
 
 def test_req_exe_016_04_dry_run_execution_records_polymarket_and_alpaca_order_intents() -> None:
@@ -74,6 +130,42 @@ def test_req_exe_013_04_live_execution_refuses_when_market_data_and_credentials_
     assert "STALE_MARKET_DATA" in str(intent["refusalReason"])
     assert "SLIPPAGE_LIMIT" in str(intent["refusalReason"])
     assert "CREDENTIAL_MISSING" in str(intent["refusalReason"])
+
+
+def test_req_exe_016_06_live_execution_submits_when_submitters_are_configured() -> None:
+    """TST-REQ-EXE-016-06: Validates REQ-EXE-010, REQ-ALP-006, and REQ-EXE-016
+
+    Given: live mode, fresh market data, credentials, and live submitters
+    When: execution runs
+    Then: approved entry intents are submitted through venue adapters
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    alpaca = RecordingAlpacaSubmitter()
+    polymarket = RecordingPolymarketSubmitter()
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_submitter=alpaca,
+        polymarket_submitter=polymarket,
+    ).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-live-submit",
+        trigger="manual",
+        strategy_run=_strategy_run_with_outputs(registry, now),
+        market_data_pulls=_market_data_pulls(now),
+        config_payload=_config(live_enabled=True),
+        credential_status={Venue.POLYMARKET_US.value: True, Venue.ALPACA.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["status"] == "completed"
+    assert result.payload["submittedCount"] == 2
+    assert {intent["status"] for intent in result.payload["intents"]} == {"submitted"}
+    assert polymarket.submit_calls[0].market_slug == "market-1"
+    assert alpaca.calls[0]["symbol"] == "SPY"
+    assert alpaca.calls[0]["side"] == "buy"
+    assert len(alpaca.calls[0]["client_order_id"]) == 64
 
 
 def test_req_exe_016_05_execution_reconciles_existing_nonterminal_intent_before_retry() -> None:
@@ -186,6 +278,83 @@ def test_req_ext_001_03_exit_run_records_polymarket_and_stock_exit_intents() -> 
         Venue.ALPACA.value,
     }
     assert len(registry.state.rows("shared.exit_intents")) == result.payload["triggeredCount"]
+
+
+def test_req_ext_006_01_live_exit_submits_through_configured_venue_submitters() -> None:
+    """TST-REQ-EXT-006-01: Validates REQ-EXT-006
+
+    Given: live mode and open Polymarket and Alpaca positions
+    When: exit monitoring triggers exits
+    Then: Polymarket closes the position and Alpaca submits a sell quantity
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.record_polymarket_wallet_position(
+        environment=Environment.DEVELOPMENT,
+        wallet_address="0x1111111111111111111111111111111111111111",
+        market_id="market-1",
+        asset_id="yes-token",
+        state=PositionState.OPEN.value,
+        size=Decimal("100"),
+        realized_pnl_usd=Decimal("0"),
+        entry_price=Decimal("0.40"),
+        opened_at=now - timedelta(hours=10),
+        trade_ids=["trade-1"],
+        created_at=now,
+        updated_at=now,
+    )
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-1",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        filled_at=now - timedelta(hours=24),
+        raw_payload={"id": "fill-1"},
+        created_at=now,
+    )
+    shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("100"),
+        current_price=Decimal("112"),
+        market_value=Decimal("112"),
+        unrealized_pnl_usd=Decimal("12"),
+        raw_payload={"high_watermark_price": "115"},
+        observed_at=now,
+        created_at=now,
+    )
+    alpaca = RecordingAlpacaSubmitter()
+    polymarket = RecordingPolymarketSubmitter()
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_exit_submitter=alpaca,
+        polymarket_position_closer=polymarket,
+    ).run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-live-exit",
+        trigger="manual",
+        market_data_pulls=_market_data_pulls(now, include_alpaca=False),
+        config_payload=_config(live_enabled=True),
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["status"] == "completed"
+    assert result.payload["submittedCount"] == result.payload["triggeredCount"]
+    assert polymarket.close_calls[0]["market_slug"] == "market-1"
+    assert polymarket.close_calls[0]["bips"] == "200"
+    assert alpaca.calls[0]["symbol"] == "SPY"
+    assert alpaca.calls[0]["side"] == "sell"
+    assert alpaca.calls[0]["quantity"] == "1"
 
 
 def _strategy_run_with_outputs(
