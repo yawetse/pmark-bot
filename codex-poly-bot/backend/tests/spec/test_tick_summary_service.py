@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 import json
@@ -43,16 +44,57 @@ class RecordingSummaryTransport:
         }
 
 
-def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model() -> None:
+def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypatch) -> None:
     """TST-REQ-OBS-005-09: Validates REQ-OBS-005
 
     Given: the configured OpenAI tick summary model fails
     When: a fallback model is configured
-    Then: the summary retries with the fallback and records provider usage
+    Then: the summary retries with the fallback and records provider usage plus an APM failure
     """
 
     registry = RepositoryRegistry()
     transport = RecordingSummaryTransport()
+    spans: list[dict[str, Any]] = []
+    recorded_failures: list[dict[str, Any]] = []
+
+    @contextmanager
+    def recording_span(name: str, *, attributes: dict[str, Any] | None = None):
+        span = {"name": name, "attributes": dict(attributes or {})}
+        spans.append(span)
+        yield span
+
+    def record_failure(
+        span: dict[str, Any] | None,
+        exc: Exception,
+        *,
+        event_name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        recorded_failures.append(
+            {
+                "span": span,
+                "event_name": event_name,
+                "error_type": exc.__class__.__name__,
+                "attributes": dict(attributes or {}),
+            }
+        )
+
+    def set_attributes(span: dict[str, Any] | None, attributes: dict[str, Any] | None) -> None:
+        if span is not None:
+            span["attributes"].update(attributes or {})
+
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.start_observability_span",
+        recording_span,
+    )
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.record_span_failure",
+        record_failure,
+    )
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.set_span_attributes",
+        set_attributes,
+    )
     service = TickSummaryService(
         registry=registry,
         environ={
@@ -90,6 +132,32 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model() -> None
     assert len(usage_rows) == 1
     assert usage_rows[0]["model"] == "gpt-4.1-nano"
     assert Decimal(str(usage_rows[0]["cost_usd"])) == Decimal("0.0000180")
+    assert [span["name"] for span in spans] == [
+        "tick_summary.model_attempt",
+        "tick_summary.model_attempt",
+    ]
+    assert spans[0]["attributes"]["model"] == "unavailable-model"
+    assert spans[0]["attributes"]["attempt_number"] == 1
+    assert spans[1]["attributes"]["model"] == "gpt-4.1-nano"
+    assert spans[1]["attributes"]["status"] == "success"
+    assert recorded_failures == [
+        {
+            "span": spans[0],
+            "event_name": "tick_summary_model_failed",
+            "error_type": "RuntimeError",
+            "attributes": {
+                "model": "unavailable-model",
+                "attempt_number": 1,
+                "environment": "development",
+                "prompt_version": "tick-summary-v1",
+                "error_type": "RuntimeError",
+                "message": "model not available",
+                "input_hash": result.input_hash,
+                "latest_run_id": "run-1",
+                "window_minutes": 10,
+            },
+        }
+    ]
 
 
 def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -> None:
