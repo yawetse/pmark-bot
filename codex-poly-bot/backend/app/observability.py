@@ -5,12 +5,13 @@ REQ: REQ-OBS-001, REQ-OBS-002, REQ-OBS-005, REQ-OBS-006
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import logging
 import os
 from time import perf_counter
-from typing import Mapping
+from typing import Iterator, Mapping
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -18,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 try:  # pragma: no cover - exercised only when optional OTel packages are present.
     from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
     from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -29,6 +31,8 @@ try:  # pragma: no cover - exercised only when optional OTel packages are presen
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 except ImportError:  # pragma: no cover - fallback keeps local tests usable before install.
     trace = None
+    Status = None
+    StatusCode = None
     OTLPLogExporter = None
     OTLPSpanExporter = None
     FastAPIInstrumentor = None
@@ -212,6 +216,83 @@ def signoz_headers(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     return build_observability_config(environ).headers
 
 
+@contextmanager
+def start_observability_span(
+    name: str,
+    *,
+    attributes: Mapping[str, object] | None = None,
+) -> Iterator[object | None]:
+    """Start a child span when OpenTelemetry is configured.
+
+    REQ: REQ-OBS-005
+    """
+
+    if trace is None:
+        yield None
+        return
+    tracer = trace.get_tracer("codex-poly-bot")
+    with tracer.start_as_current_span(name) as span:
+        set_span_attributes(span, attributes)
+        yield span
+
+
+def set_span_attributes(span: object | None, attributes: Mapping[str, object] | None) -> None:
+    """Attach scalar application attributes to a span.
+
+    REQ: REQ-OBS-005
+    """
+
+    if span is None:
+        return
+    set_attribute = getattr(span, "set_attribute", None)
+    if not callable(set_attribute):
+        return
+    for key, value in _prefixed_span_attributes(attributes).items():
+        set_attribute(key, value)
+
+
+def record_span_failure(
+    span: object | None,
+    exc: Exception,
+    *,
+    event_name: str,
+    attributes: Mapping[str, object] | None = None,
+) -> None:
+    """Record an application failure event and mark the span as failed.
+
+    REQ: REQ-OBS-005
+    """
+
+    if span is None:
+        return
+    payload = {
+        "event_name": event_name,
+        "status": "error",
+        "error_type": exc.__class__.__name__,
+        "error_message": _safe_span_error_message(exc),
+        **dict(attributes or {}),
+    }
+    span_attributes = _prefixed_span_attributes(payload)
+    set_span_attributes(span, payload)
+
+    record_exception = getattr(span, "record_exception", None)
+    if callable(record_exception):
+        record_exception(exc, attributes=span_attributes)
+
+    add_event = getattr(span, "add_event", None)
+    if callable(add_event):
+        add_event(event_name, attributes=span_attributes)
+
+    set_status = getattr(span, "set_status", None)
+    if callable(set_status) and Status is not None and StatusCode is not None:
+        set_status(
+            Status(
+                StatusCode.ERROR,
+                description=f"{event_name}: {exc.__class__.__name__}",
+            )
+        )
+
+
 def _configure_opentelemetry(app: FastAPI, config: ObservabilityConfig) -> None:
     global _OTEL_CONFIGURED
     global _HTTPX_INSTRUMENTED
@@ -289,9 +370,20 @@ def _set_current_span_attributes(payload: Mapping[str, object]) -> None:
     span = trace.get_current_span()
     if not span:
         return
-    for key, value in payload.items():
+    set_span_attributes(span, payload)
+
+
+def _prefixed_span_attributes(attributes: Mapping[str, object] | None) -> dict[str, object]:
+    prefixed: dict[str, object] = {}
+    for key, value in dict(attributes or {}).items():
         if isinstance(value, (str, int, float, bool)):
-            span.set_attribute(f"codex_poly_bot.{key}", value)
+            prefixed[f"codex_poly_bot.{key}"] = value
+    return prefixed
+
+
+def _safe_span_error_message(exc: Exception) -> str:
+    message = " ".join(str(exc).split())
+    return (message or "application failure")[:300]
 
 
 def _route_path(request: Request) -> str:
