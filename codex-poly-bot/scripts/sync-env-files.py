@@ -91,6 +91,18 @@ ORDERED_KEYS = (
     "ALPACA_ENABLE_PER_SYMBOL_FALLBACK",
     "ALPACA_PER_SYMBOL_FALLBACK_LIMIT",
     "ALPACA_HISTORICAL_BAR_LIMIT",
+    "HTTP_RESPONSE_LOGS_ENABLED",
+    "SIGNOZ_ENABLED",
+    "SIGNOZ_REGION",
+    "SIGNOZ_OTLP_ENDPOINT",
+    "SIGNOZ_OTLP_TRACES_ENDPOINT",
+    "SIGNOZ_OTLP_LOGS_ENDPOINT",
+    "SIGNOZ_INGESTION_KEY",
+    "SIGNOZ_SERVICE_NAME",
+    "SIGNOZ_FRONTEND_ENABLED",
+    "SIGNOZ_FRONTEND_SERVICE_NAME",
+    "OTEL_SERVICE_NAME",
+    "OTEL_SDK_DISABLED",
 )
 
 PROFILE_KEYS = {
@@ -174,6 +186,18 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("ALPACA_ENABLE_PER_SYMBOL_FALLBACK", "true"),
             ("ALPACA_PER_SYMBOL_FALLBACK_LIMIT", "25"),
             ("ALPACA_HISTORICAL_BAR_LIMIT", "30"),
+            ("HTTP_RESPONSE_LOGS_ENABLED", "true"),
+            ("SIGNOZ_ENABLED", "false"),
+            ("SIGNOZ_REGION", ""),
+            ("SIGNOZ_OTLP_ENDPOINT", ""),
+            ("SIGNOZ_OTLP_TRACES_ENDPOINT", ""),
+            ("SIGNOZ_OTLP_LOGS_ENDPOINT", ""),
+            ("SIGNOZ_INGESTION_KEY", ""),
+            ("SIGNOZ_SERVICE_NAME", "codex-poly-bot-backend"),
+            ("SIGNOZ_FRONTEND_ENABLED", "false"),
+            ("SIGNOZ_FRONTEND_SERVICE_NAME", "codex-poly-bot-frontend"),
+            ("OTEL_SERVICE_NAME", "codex-poly-bot-backend"),
+            ("OTEL_SDK_DISABLED", "false"),
         )
     ),
     "development": OrderedDict(
@@ -239,6 +263,18 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("ALPACA_ENABLE_PER_SYMBOL_FALLBACK", "true"),
             ("ALPACA_PER_SYMBOL_FALLBACK_LIMIT", "25"),
             ("ALPACA_HISTORICAL_BAR_LIMIT", "30"),
+            ("HTTP_RESPONSE_LOGS_ENABLED", "true"),
+            ("SIGNOZ_ENABLED", "false"),
+            ("SIGNOZ_REGION", ""),
+            ("SIGNOZ_OTLP_ENDPOINT", ""),
+            ("SIGNOZ_OTLP_TRACES_ENDPOINT", ""),
+            ("SIGNOZ_OTLP_LOGS_ENDPOINT", ""),
+            ("SIGNOZ_INGESTION_KEY", ""),
+            ("SIGNOZ_SERVICE_NAME", "codex-poly-bot-backend"),
+            ("SIGNOZ_FRONTEND_ENABLED", "false"),
+            ("SIGNOZ_FRONTEND_SERVICE_NAME", "codex-poly-bot-frontend"),
+            ("OTEL_SERVICE_NAME", "codex-poly-bot-backend"),
+            ("OTEL_SDK_DISABLED", "false"),
         )
     ),
     "production": OrderedDict(
@@ -304,6 +340,18 @@ DEFAULTS: dict[str, OrderedDict[str, str]] = {
             ("ALPACA_ENABLE_PER_SYMBOL_FALLBACK", "true"),
             ("ALPACA_PER_SYMBOL_FALLBACK_LIMIT", "25"),
             ("ALPACA_HISTORICAL_BAR_LIMIT", "30"),
+            ("HTTP_RESPONSE_LOGS_ENABLED", "true"),
+            ("SIGNOZ_ENABLED", "false"),
+            ("SIGNOZ_REGION", ""),
+            ("SIGNOZ_OTLP_ENDPOINT", ""),
+            ("SIGNOZ_OTLP_TRACES_ENDPOINT", ""),
+            ("SIGNOZ_OTLP_LOGS_ENDPOINT", ""),
+            ("SIGNOZ_INGESTION_KEY", ""),
+            ("SIGNOZ_SERVICE_NAME", "codex-poly-bot-backend"),
+            ("SIGNOZ_FRONTEND_ENABLED", "false"),
+            ("SIGNOZ_FRONTEND_SERVICE_NAME", "codex-poly-bot-frontend"),
+            ("OTEL_SERVICE_NAME", "codex-poly-bot-backend"),
+            ("OTEL_SDK_DISABLED", "false"),
         )
     ),
 }
@@ -325,6 +373,8 @@ PATH_KEY_MAP = {
     "dashboard/backend-token-signing-secret": "BACKEND_TOKEN_SIGNING_SECRET",
     "dashboard/session-secret": "DASHBOARD_SESSION_SECRET",
     "dashboard/csrf-token": "DASHBOARD_CSRF_TOKEN",
+    "signoz/ingestion-key": "SIGNOZ_INGESTION_KEY",
+    "observability/signoz-ingestion-key": "SIGNOZ_INGESTION_KEY",
 }
 
 

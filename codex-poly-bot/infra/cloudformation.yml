@@ -174,9 +174,39 @@ Parameters:
   AnthropicAdminApiKeySecretArn:
     Type: String
     Default: ""
+  SignozEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable backend OpenTelemetry export to SigNoz.
+  SignozFrontendEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable browser telemetry export through the frontend OTLP proxy.
+  SignozRegion:
+    Type: String
+    Default: ""
+    Description: SigNoz Cloud region, for example us, eu, or in.
+  SignozOtlpEndpoint:
+    Type: String
+    Default: ""
+    Description: Optional custom OTLP base endpoint. Leave empty to derive from SignozRegion.
+  SignozIngestionKeySecretArn:
+    Type: String
+    Default: ""
+    Description: Optional Secrets Manager ARN whose value is the raw SigNoz ingestion key.
 
 Conditions:
   IsProduction: !Equals [!Ref EnvironmentName, production]
+  UseSignoz: !Equals [!Ref SignozEnabled, "true"]
+  SignozRegionConfigured: !Not [!Equals [!Ref SignozRegion, ""]]
+  SignozEndpointConfigured: !Not [!Equals [!Ref SignozOtlpEndpoint, ""]]
+  UseSignozIngestionKeySecret: !Not [!Equals [!Ref SignozIngestionKeySecretArn, ""]]
   CreateSesIdentity: !Equals [!Ref ManageSesIdentity, "true"]
   UseCustomDomain: !Not [!Equals [!Ref ApplicationDomainName, ""]]
   UseHttps: !Not [!Equals [!Ref CertificateArn, ""]]
@@ -514,6 +544,25 @@ Resources:
               - secretsmanager:DescribeSecret
             Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:/codex-poly-bot/${EnvironmentName}/*"
 
+  SignozCloudWatchReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: UseSignoz
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${EnvironmentName}-signoz-cloudwatch-read"
+      Description: !Sub "Read ${ProjectName} ${EnvironmentName} ECS application logs for SigNoz ingestion."
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+              - logs:FilterLogEvents
+              - logs:GetLogEvents
+            Resource:
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ecs/${ProjectName}/${EnvironmentName}"
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ecs/${ProjectName}/${EnvironmentName}:*"
+
   BackendTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -548,6 +597,26 @@ Resources:
               Value: Environment
             - Name: AWS_COST_EXPLORER_ACCOUNT_FALLBACK
               Value: "true"
+            - Name: HTTP_RESPONSE_LOGS_ENABLED
+              Value: "true"
+            - Name: SIGNOZ_ENABLED
+              Value: !Ref SignozEnabled
+            - Name: SIGNOZ_REGION
+              Value: !Ref SignozRegion
+            - Name: SIGNOZ_OTLP_ENDPOINT
+              Value: !If
+                - SignozEndpointConfigured
+                - !Ref SignozOtlpEndpoint
+                - !If
+                  - SignozRegionConfigured
+                  - !Sub "https://ingest.${SignozRegion}.signoz.cloud:443"
+                  - ""
+            - Name: SIGNOZ_SERVICE_NAME
+              Value: !Sub "${ProjectName}-${EnvironmentName}-backend"
+            - Name: OTEL_SERVICE_NAME
+              Value: !Sub "${ProjectName}-${EnvironmentName}-backend"
+            - Name: OTEL_SDK_DISABLED
+              Value: "false"
             - Name: DATABASE_URL
               Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}:5432/codexbot"
             - Name: LIVE_ENABLED
@@ -620,6 +689,11 @@ Resources:
               - UseAnthropicAdminApiKeySecret
               - Name: ANTHROPIC_ADMIN_API_KEY
                 ValueFrom: !Ref AnthropicAdminApiKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseSignozIngestionKeySecret
+              - Name: SIGNOZ_INGESTION_KEY
+                ValueFrom: !Ref SignozIngestionKeySecretArn
               - !Ref AWS::NoValue
             - !If
               - UsePolymarketKeyIdSecret
@@ -702,6 +776,30 @@ Resources:
               Value: !Ref GithubClientSecret
             - Name: ALLOW_LOCAL_AUTH_BYPASS
               Value: "false"
+            - Name: SIGNOZ_ENABLED
+              Value: !Ref SignozEnabled
+            - Name: SIGNOZ_FRONTEND_ENABLED
+              Value: !Ref SignozFrontendEnabled
+            - Name: SIGNOZ_REGION
+              Value: !Ref SignozRegion
+            - Name: SIGNOZ_OTLP_ENDPOINT
+              Value: !If
+                - SignozEndpointConfigured
+                - !Ref SignozOtlpEndpoint
+                - !If
+                  - SignozRegionConfigured
+                  - !Sub "https://ingest.${SignozRegion}.signoz.cloud:443"
+                  - ""
+            - Name: SIGNOZ_FRONTEND_SERVICE_NAME
+              Value: !Sub "${ProjectName}-${EnvironmentName}-frontend"
+            - Name: OTEL_SDK_DISABLED
+              Value: "false"
+          Secrets:
+            - !If
+              - UseSignozIngestionKeySecret
+              - Name: SIGNOZ_INGESTION_KEY
+                ValueFrom: !Ref SignozIngestionKeySecretArn
+              - !Ref AWS::NoValue
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -759,6 +857,16 @@ Outputs:
       - !Sub "http://${ApplicationLoadBalancer.DNSName}"
   LoadBalancerDnsName:
     Value: !GetAtt ApplicationLoadBalancer.DNSName
+  ApplicationLogGroupName:
+    Value: !Ref ApplicationLogGroup
+  SignozCloudWatchReadPolicyArn:
+    Condition: UseSignoz
+    Value: !Ref SignozCloudWatchReadPolicy
+  SignozMcpUrl:
+    Value: !If
+      - SignozRegionConfigured
+      - !Sub "https://mcp.${SignozRegion}.signoz.cloud/mcp"
+      - ""
   CustomDomainName:
     Value: !Ref ApplicationDomainName
   CertificateArn:

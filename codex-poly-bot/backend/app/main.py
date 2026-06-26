@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import build_dashboard_router
 from app.db import RepositoryRegistry
 from app.domain import Environment, Venue
+from app.observability import configure_observability
 from app.services import AuthService, ConfigService, KillSwitchService
 from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
 from app.services.stock_universe import (
@@ -151,6 +152,7 @@ def create_app(
     app.state.services = resolved_services
     app.state.worker_heartbeat_task = None
     resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
+    configure_observability(app, settings=resolved_settings)
 
     if resolved_settings.background_worker_enabled:
 

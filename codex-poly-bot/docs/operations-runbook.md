@@ -4,6 +4,10 @@ REQ: REQ-DEP-004, REQ-EXE-014, REQ-OBS-005, REQ-WAL-006
 
 Use this runbook for live incidents, degraded health, bad deploys, and credential failures.
 
+## SigNoz Observability
+
+Use `docs/signoz-observability.md` to enable SigNoz traces, logs, frontend browser telemetry, CloudWatch log forwarding, and the SigNoz MCP server. Keep `SIGNOZ_INGESTION_KEY` in local env or AWS Secrets Manager, not in tracked files.
+
 ## Manual Runs
 
 Use the Operations dashboard manual-run controls when you need to trigger the loop outside the scheduler.

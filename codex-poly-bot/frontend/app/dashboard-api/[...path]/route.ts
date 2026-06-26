@@ -28,6 +28,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 }
 
 async function proxyToBackend(request: NextRequest, context: RouteContext): Promise<Response> {
+  const startedAt = performance.now();
   const sessionCheck = await getDashboardSession();
   if (sessionCheck.status === "missing") {
     return NextResponse.json({ error: "authentication required" }, { status: 401 });
@@ -46,11 +47,41 @@ async function proxyToBackend(request: NextRequest, context: RouteContext): Prom
     body,
     cache: "no-store",
   });
+  logBackendProxyResponse({
+    method: request.method,
+    path: request.nextUrl.pathname,
+    status: response.status,
+    durationMs: performance.now() - startedAt,
+  });
 
   return new Response(response.body, {
     status: response.status,
     headers: responseHeaders(response.headers),
   });
+}
+
+function logBackendProxyResponse({
+  method,
+  path,
+  status,
+  durationMs,
+}: {
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+}) {
+  console.info(
+    "http_response",
+    JSON.stringify({
+      event_name: "frontend.backend_proxy.response",
+      method,
+      path,
+      status_code: status,
+      duration_ms: Math.round(durationMs * 100) / 100,
+      environment: process.env.NEXT_PUBLIC_APP_ENV ?? "local",
+    }),
+  );
 }
 
 function backendApiUrl(pathParts: string[], search: string): string {
