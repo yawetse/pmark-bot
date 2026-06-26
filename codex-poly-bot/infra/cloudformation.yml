@@ -466,6 +466,20 @@ Resources:
       ListenerArn: !If [UseHttps, !Ref HttpsListener, !Ref HttpListener]
       Priority: 5
 
+  FrontendObservabilityListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FrontendTargetGroup
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/observability/*
+      ListenerArn: !If [UseHttps, !Ref HttpsListener, !Ref HttpListener]
+      Priority: 6
+
   BackendListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
     Properties:
@@ -842,6 +856,7 @@ Resources:
     Type: AWS::ECS::Service
     DependsOn:
       - FrontendAuthListenerRule
+      - FrontendObservabilityListenerRule
     Properties:
       ServiceName: !Sub "${ProjectName}-${EnvironmentName}-frontend"
       LaunchType: FARGATE
