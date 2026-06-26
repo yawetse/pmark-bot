@@ -8,7 +8,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.adapters.aws import AwsBillingCost
-from app.domain import Environment, ModelProvider
+from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
 from app.services.stock_universe_refresh_service import (
@@ -117,6 +117,39 @@ def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> No
         "QQQ",
         "NVDA",
     ]
+
+
+def test_req_ui_001_05_live_runtime_wires_venue_submitters_when_credentials_present() -> None:
+    """TST-REQ-UI-001-05: Validates REQ-UI-001 and REQ-EXE-017
+
+    Given: live runtime flags and venue credentials
+    When: dashboard services are created
+    Then: the lifecycle service receives live submitter adapters
+    """
+    settings = AppSettings(
+        environment=Environment.PRODUCTION,
+        runtime_env={
+            "TRADING_ACCOUNT_MODE": "live",
+            "ALPACA_KEY_ID": "alpaca-key",
+            "ALPACA_SECRET_KEY": "alpaca-secret",
+            "POLYMARKET_KEY_ID": "pm-key",
+            "POLYMARKET_SECRET_KEY": "pm-secret",
+        },
+        live_enabled=True,
+        trading_account_mode="live",
+        default_selected_venue=Venue.POLYMARKET_US,
+        polymarket_us_enabled=True,
+        alpaca_enabled=True,
+        alpaca_account_status="active",
+    )
+
+    app = create_app(settings)
+    lifecycle = app.state.services.runtime_status.lifecycle
+
+    assert lifecycle.alpaca_submitter is not None
+    assert lifecycle.alpaca_exit_submitter is lifecycle.alpaca_submitter
+    assert lifecycle.polymarket_submitter is not None
+    assert lifecycle.polymarket_position_closer is lifecycle.polymarket_submitter
 
 
 def test_req_ui_003_03_dashboard_api_blocks_unauthenticated_and_unallowlisted_users() -> None:

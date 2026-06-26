@@ -34,6 +34,7 @@ from app.domain import (
 from app.services.execution_service import (
     AlpacaExecutionRequest,
     AlpacaVenueSubmitter,
+    PolymarketPositionCloser,
     PolymarketExecutionRequest,
     PolymarketVenueSubmitter,
     execute_alpaca_order,
@@ -41,6 +42,7 @@ from app.services.execution_service import (
 )
 from app.services.exit_service import (
     ExitExecutionRequest,
+    ExitExecutionResult,
     evaluate_profit_target_exit,
     evaluate_stale_thesis_exit,
     evaluate_volume_spike_exit,
@@ -103,10 +105,14 @@ class PipelineLifecycleService:
         *,
         alpaca_submitter: AlpacaVenueSubmitter | None = None,
         polymarket_submitter: PolymarketVenueSubmitter | None = None,
+        alpaca_exit_submitter: AlpacaVenueSubmitter | None = None,
+        polymarket_position_closer: PolymarketPositionCloser | None = None,
     ) -> None:
         self.registry = registry
         self.alpaca_submitter = alpaca_submitter
         self.polymarket_submitter = polymarket_submitter
+        self.alpaca_exit_submitter = alpaca_exit_submitter or alpaca_submitter
+        self.polymarket_position_closer = polymarket_position_closer
 
     def run_execution(
         self,
@@ -365,6 +371,7 @@ class PipelineLifecycleService:
                 order_type=order_type,
                 instrument_id=instrument_id,
                 notional=notional,
+                idempotency_key=idempotency_key,
                 output=output,
                 candidate=candidate,
                 config_payload=config_payload,
@@ -505,6 +512,7 @@ class PipelineLifecycleService:
         order_type: str,
         instrument_id: str,
         notional: Decimal,
+        idempotency_key: str,
         output: dict[str, Any],
         candidate: dict[str, Any] | None,
         config_payload: dict[str, Any],
@@ -523,6 +531,7 @@ class PipelineLifecycleService:
                     risk_approved=True,
                     symbol=_symbol_from_instrument(instrument_id, candidate),
                     notional=notional,
+                    client_order_id=idempotency_key,
                 ),
                 submitter=self.alpaca_submitter or _NoopAlpacaSubmitter(),
             )
@@ -688,18 +697,14 @@ class PipelineLifecycleService:
             if not _is_market_hours(created_at):
                 risk_approved = False
                 refusal_reason = "OUTSIDE_MARKET_HOURS"
-        if execution_mode == "live":
-            risk_approved = False
-            refusal_reason = refusal_reason or "LIVE_EXIT_SUBMITTER_NOT_CONFIGURED"
-        result = execute_exit_order(
-            ExitExecutionRequest(
-                position_id=position["position_id"],
-                venue=Venue(venue),
-                global_execution_mode=execution_mode,
-                risk_approved=risk_approved,
-                risk_refusal_reason=refusal_reason,
-            ),
-            submitter=_NoopExitSubmitter(),
+        result = self._execute_exit_order(
+            position=position,
+            venue=venue,
+            execution_mode=execution_mode,
+            risk_approved=risk_approved,
+            refusal_reason=refusal_reason,
+            config_payload=config_payload,
+            idempotency_key=idempotency_key,
         )
         status = result.status
         notional = _position_notional(position)
@@ -737,6 +742,100 @@ class PipelineLifecycleService:
             message=_exit_event_message(status, exit_trigger, result.refusal_reason),
         )
         return intent
+
+    def _execute_exit_order(
+        self,
+        *,
+        position: dict[str, Any],
+        venue: str,
+        execution_mode: str,
+        risk_approved: bool,
+        refusal_reason: str | None,
+        config_payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> ExitExecutionResult:
+        if execution_mode != "live" or not risk_approved:
+            return execute_exit_order(
+                ExitExecutionRequest(
+                    position_id=position["position_id"],
+                    venue=Venue(venue),
+                    global_execution_mode=execution_mode,
+                    risk_approved=risk_approved,
+                    risk_refusal_reason=refusal_reason,
+                ),
+                submitter=_NoopExitSubmitter(),
+            )
+        if venue == Venue.ALPACA.value:
+            if self.alpaca_exit_submitter is None:
+                return ExitExecutionResult(
+                    status="refused",
+                    exit_recorded=False,
+                    venue_submitted=False,
+                    refusal_reason="LIVE_EXIT_SUBMITTER_NOT_CONFIGURED",
+                )
+            try:
+                venue_order_id = self.alpaca_exit_submitter.submit_order(
+                    account_mode=str(config_payload.get("alpaca", {}).get("account_mode", "paper")),
+                    symbol=str(position.get("symbol") or _symbol_from_instrument(position["instrument_id"], None)),
+                    quantity=_decimal_or_zero(position.get("quantity")),
+                    side="sell",
+                    client_order_id=idempotency_key,
+                )
+            except Exception as exc:
+                return ExitExecutionResult(
+                    status="refused",
+                    exit_recorded=False,
+                    venue_submitted=False,
+                    refusal_reason=_submit_exception_reason(exc),
+                    payload=_submit_exception_payload(exc),
+                )
+            return ExitExecutionResult(
+                status="submitted",
+                exit_recorded=True,
+                venue_submitted=True,
+                payload={
+                    "position_id": position["position_id"],
+                    "venue": venue,
+                    "venue_order_id": venue_order_id,
+                },
+            )
+        if venue == Venue.POLYMARKET_US.value:
+            if self.polymarket_position_closer is None:
+                return ExitExecutionResult(
+                    status="refused",
+                    exit_recorded=False,
+                    venue_submitted=False,
+                    refusal_reason="LIVE_EXIT_SUBMITTER_NOT_CONFIGURED",
+                )
+            result = self.polymarket_position_closer.close_position(
+                market_slug=_polymarket_position_slug(position),
+                current_price=position.get("current_price"),
+                slippage_tolerance_bips=_polymarket_exit_slippage_bips(config_payload),
+            )
+            if not result.ok:
+                return ExitExecutionResult(
+                    status="refused",
+                    exit_recorded=False,
+                    venue_submitted=False,
+                    refusal_reason=result.refusal_reason,
+                    payload=result.payload,
+                )
+            return ExitExecutionResult(
+                status="submitted",
+                exit_recorded=True,
+                venue_submitted=True,
+                payload={
+                    "position_id": position["position_id"],
+                    "venue": venue,
+                    "venue_order_id": result.payload.get("venue_order_id"),
+                },
+            )
+        return ExitExecutionResult(
+            status="refused",
+            exit_recorded=False,
+            venue_submitted=False,
+            refusal_reason="UNSUPPORTED_EXIT_VENUE",
+        )
 
     def _order_notional(
         self,
@@ -1391,8 +1490,62 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
+def _submit_exception_reason(exc: Exception) -> str:
+    reason = getattr(exc, "refusal_reason", None)
+    if reason:
+        return str(reason)
+    return f"{type(exc).__name__}: venue submit failed"
+
+
+def _submit_exception_payload(exc: Exception) -> dict[str, Any]:
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        return dict(payload)
+    status_code = getattr(exc, "status_code", None)
+    result: dict[str, Any] = {"error_type": type(exc).__name__}
+    if status_code is not None:
+        result["status_code"] = status_code
+    return result
+
+
+def _polymarket_position_slug(position: dict[str, Any]) -> str:
+    source = position.get("source") if isinstance(position.get("source"), dict) else {}
+    for value in (
+        position.get("market_slug"),
+        position.get("marketSlug"),
+        source.get("market_slug"),
+        source.get("marketSlug"),
+        position.get("market_id"),
+    ):
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _polymarket_exit_slippage_bips(config_payload: dict[str, Any]) -> int | None:
+    raw = config_payload.get("risk", {}).get("polymarket", {}).get(
+        "market_order_slippage_threshold"
+    )
+    threshold = _decimal_or_none(raw)
+    if threshold is None or threshold < 0:
+        return None
+    return int((threshold * Decimal("10000")).to_integral_value())
+
+
 class _NoopAlpacaSubmitter:
-    def submit_order(self, *, account_mode: str, symbol: str, notional: Decimal) -> str:
+    def submit_order(
+        self,
+        *,
+        account_mode: str,
+        symbol: str,
+        notional: Decimal | None = None,
+        quantity: Decimal | None = None,
+        side: str = "buy",
+        client_order_id: str | None = None,
+    ) -> str:
         return f"alpaca-{account_mode}-{symbol}-dry-run"
 
 

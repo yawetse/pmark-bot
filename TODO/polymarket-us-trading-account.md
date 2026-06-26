@@ -37,6 +37,8 @@ Do not paste API keys, private keys, seed phrases, or account secrets into this 
 - [ ] Keep `POLYMARKET_US_ENABLED=false`.
 - [ ] Ask Codex to verify read-only account, balance, and market data access after credentials are stored.
 - [ ] Run dry-run order checks before enabling live Polymarket orders.
+- [ ] Run a `Full live-gated` check with tiny risk caps and confirm Polymarket entries use the official SDK `orders.create` path only when expected.
+- [ ] Run an exit-path check with a tiny open position and confirm Polymarket exits use the official SDK `orders.close_position` path.
 - [ ] Confirm kill switch and notification delivery before enabling live orders.
 
 ## Reference

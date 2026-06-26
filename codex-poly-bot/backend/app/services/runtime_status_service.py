@@ -65,6 +65,10 @@ from app.services.stock_universe_refresh_service import (
     StockUniverseRefreshService,
     latest_preset_snapshot_payloads,
 )
+from app.venues import (
+    alpaca_live_order_adapter_from_env,
+    polymarket_us_live_adapter_from_env,
+)
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
@@ -152,6 +156,8 @@ class RuntimeStatusService:
         market_data_fetcher: MarketDataProvider | None = None,
         stock_universe_refresher: StockUniverseRefreshService | None = None,
         ai_usage_importer: AiUsageImportService | None = None,
+        alpaca_submitter: Any | None = None,
+        polymarket_submitter: Any | None = None,
     ) -> None:
         self.settings = settings
         self.registry = registry or RepositoryRegistry()
@@ -167,7 +173,15 @@ class RuntimeStatusService:
             environ=getattr(settings, "runtime_env", {}),
         )
         self.strategy_consensus = StrategyConsensusService(self.registry)
-        self.lifecycle = PipelineLifecycleService(self.registry)
+        resolved_alpaca_submitter = alpaca_submitter or _alpaca_submitter_from_settings(settings)
+        resolved_polymarket_submitter = polymarket_submitter or _polymarket_submitter_from_settings(settings)
+        self.lifecycle = PipelineLifecycleService(
+            self.registry,
+            alpaca_submitter=resolved_alpaca_submitter,
+            alpaca_exit_submitter=resolved_alpaca_submitter,
+            polymarket_submitter=resolved_polymarket_submitter,
+            polymarket_position_closer=resolved_polymarket_submitter,
+        )
         self.stock_universe_refresher = stock_universe_refresher or StockUniverseRefreshService(
             self.registry
         )
@@ -1008,7 +1022,8 @@ class RuntimeStatusService:
                 venue=Venue.POLYMARKET_US.value,
                 provider=ModelProvider.OPENAI.value,
                 reference=f"/codex-poly-bot/{environment.value}/polymarket",
-                required_names=("POLYMARKET_KEY_ID", "POLYMARKET_SECRET_KEY", "POLYMARKET_PRIVATE_KEY"),
+                required_names=("POLYMARKET_KEY_ID",),
+                alternative_required_names=("POLYMARKET_SECRET_KEY", "POLYMARKET_PRIVATE_KEY"),
                 public_identifier="pm-openai-" + environment.value,
                 enabled=self.settings.polymarket_us_enabled,
             ),
@@ -3065,9 +3080,16 @@ class RuntimeStatusService:
         required_names: tuple[str, ...],
         public_identifier: str,
         enabled: bool,
+        alternative_required_names: tuple[str, ...] = (),
         account_status: str = "active",
     ) -> RuntimeCredentialView:
-        present = enabled and all(_configured(self.settings.runtime_env.get(name, "")) for name in required_names)
+        required_present = all(_configured(self.settings.runtime_env.get(name, "")) for name in required_names)
+        alternative_present = (
+            True
+            if not alternative_required_names
+            else any(_configured(self.settings.runtime_env.get(name, "")) for name in alternative_required_names)
+        )
+        present = enabled and required_present and alternative_present
         if account_status in {"reviewing", "pending"}:
             present = False
         if not enabled:
@@ -3099,6 +3121,40 @@ def _configured(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip() not in PLACEHOLDER_VALUES
+
+
+def _alpaca_submitter_from_settings(settings: Any) -> Any | None:
+    runtime_env = getattr(settings, "runtime_env", {})
+    if not bool(getattr(settings, "live_enabled", False)):
+        return None
+    if not bool(getattr(settings, "alpaca_enabled", False)):
+        return None
+    if str(getattr(settings, "alpaca_account_status", "active")).strip().lower() != "active":
+        return None
+    if not _configured(runtime_env.get("ALPACA_KEY_ID")):
+        return None
+    if not _configured(runtime_env.get("ALPACA_SECRET_KEY")):
+        return None
+    try:
+        return alpaca_live_order_adapter_from_env(runtime_env)
+    except ValueError:
+        return None
+
+
+def _polymarket_submitter_from_settings(settings: Any) -> Any | None:
+    runtime_env = getattr(settings, "runtime_env", {})
+    if not bool(getattr(settings, "live_enabled", False)):
+        return None
+    if not bool(getattr(settings, "polymarket_us_enabled", False)):
+        return None
+    if not _configured(runtime_env.get("POLYMARKET_KEY_ID")):
+        return None
+    if not (
+        _configured(runtime_env.get("POLYMARKET_SECRET_KEY"))
+        or _configured(runtime_env.get("POLYMARKET_PRIVATE_KEY"))
+    ):
+        return None
+    return polymarket_us_live_adapter_from_env(runtime_env)
 
 
 def _manual_run_mode(value: str | None) -> str:
