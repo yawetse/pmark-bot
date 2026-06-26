@@ -144,6 +144,12 @@ jobs:
           PRIVATE_SUBNET_IDS: ${{ vars.PRIVATE_SUBNET_IDS }}
           PUBLIC_SUBNET_IDS: ${{ vars.PUBLIC_SUBNET_IDS }}
           SES_IDENTITY_EMAIL: ${{ vars.SES_IDENTITY_EMAIL }}
+          SIGNOZ_ENABLED: ${{ vars.SIGNOZ_ENABLED }}
+          SIGNOZ_FRONTEND_ENABLED: ${{ vars.SIGNOZ_FRONTEND_ENABLED }}
+          SIGNOZ_REGION: ${{ vars.SIGNOZ_REGION }}
+          SIGNOZ_OTLP_ENDPOINT: ${{ vars.SIGNOZ_OTLP_ENDPOINT }}
+          SIGNOZ_INGESTION_KEY_SECRET_ARN: ${{ vars.SIGNOZ_INGESTION_KEY_SECRET_ARN }}
+          SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED: ${{ vars.SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED }}
           VPC_ID: ${{ vars.VPC_ID }}
         run: ./codex-poly-bot/scripts/deploy-stack.sh "${{ needs.select-environment.outputs.deploy_env }}"
 

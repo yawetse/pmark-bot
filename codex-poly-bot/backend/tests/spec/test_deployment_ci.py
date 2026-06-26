@@ -176,6 +176,18 @@ def test_req_dep_003_03_workflow_develop_branch_deploys_development_after_build(
     assert "github.ref == 'refs/heads/develop'" in workflow_text
     assert "container-build" in workflow_text
     assert "migration-safety" in workflow_text
+    assert "SIGNOZ_ENABLED: ${{ vars.SIGNOZ_ENABLED }}" in workflow_text
+    assert "SIGNOZ_FRONTEND_ENABLED: ${{ vars.SIGNOZ_FRONTEND_ENABLED }}" in workflow_text
+    assert "SIGNOZ_REGION: ${{ vars.SIGNOZ_REGION }}" in workflow_text
+    assert "SIGNOZ_OTLP_ENDPOINT: ${{ vars.SIGNOZ_OTLP_ENDPOINT }}" in workflow_text
+    assert (
+        "SIGNOZ_INGESTION_KEY_SECRET_ARN: ${{ vars.SIGNOZ_INGESTION_KEY_SECRET_ARN }}"
+        in workflow_text
+    )
+    assert (
+        "SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED: ${{ vars.SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED }}"
+        in workflow_text
+    )
 
 def test_req_dep_004_01_code_merged_main_github_actions_runs_production_deployment() -> None:
     """TST-REQ-DEP-004-01: Validates REQ-DEP-004
@@ -317,6 +329,10 @@ def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -
     assert "FrontendTargetGroup" in text
     assert "DASHBOARD_ALLOWED_USERS" in text
     assert "BACKEND_TOKEN_SIGNING_SECRET" in text
+    assert "SIGNOZ_ENABLED" in text
+    assert "SIGNOZ_FRONTEND_ENABLED" in text
+    assert "SignozCloudWatchReadPolicyEnabled" in text
+    assert "SignozCloudWatchReadPolicy" in text
     assert "ApplicationUrl" in text
 
 def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injection() -> None:
@@ -385,21 +401,31 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "NOTIFICATION_RECIPIENT_EMAIL:-yaw.etse@gmail.com" in text
     assert "NotificationRecipients=${notification_recipients}" in text
     assert "EnableBackgroundWorker=${enable_background_worker}" in text
+    assert "SignozEnabled=${signoz_enabled}" in text
+    assert "SignozFrontendEnabled=${signoz_frontend_enabled}" in text
+    assert "SignozRegion=${signoz_region}" in text
+    assert "SignozCloudWatchReadPolicyEnabled=${signoz_cloudwatch_read_policy_enabled}" in text
+    assert "/codex-poly-bot/${environment}/signoz/ingestion-key" in text
+    assert "SignozIngestionKeySecretArn=${signoz_ingestion_key_secret_arn}" in text
 
-def test_req_dep_002_04_cloudformation_keeps_frontend_auth_routes_on_frontend() -> None:
+def test_req_dep_002_04_cloudformation_keeps_frontend_owned_api_routes_on_frontend() -> None:
     """TST-REQ-DEP-002-04: Validates REQ-DEP-002
 
     Given: CloudFormation ALB listener rules
-    When: frontend auth and backend API routes are inspected
-    Then: /api/auth/* is routed to the frontend before backend /api/* routing
+    When: frontend-owned and backend API routes are inspected
+    Then: frontend-owned /api/* paths are routed to the frontend before backend /api/* routing
     """
     text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
     auth_rule_index = text.index("FrontendAuthListenerRule")
+    observability_rule_index = text.index("FrontendObservabilityListenerRule")
     backend_rule_index = text.index("BackendListenerRule")
 
     assert auth_rule_index < backend_rule_index
+    assert observability_rule_index < backend_rule_index
     assert "- /api/auth/*" in text
+    assert "- /api/observability/*" in text
     assert "Priority: 5" in text[auth_rule_index:backend_rule_index]
+    assert "Priority: 6" in text[observability_rule_index:backend_rule_index]
     assert "- /api/*" in text[backend_rule_index:]
     assert "Priority: 10" in text[backend_rule_index:]
 

@@ -1,0 +1,8 @@
+# SigNoz MCP server template.
+# REQ: REQ-OBS-005
+#
+# Replace <region> with the SigNoz Cloud region shown under Settings > Ingestion.
+# Then run: codex mcp login signoz
+
+[mcp_servers.signoz]
+url = "https://mcp.<region>.signoz.cloud/mcp"

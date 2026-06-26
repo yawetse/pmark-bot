@@ -16,6 +16,11 @@ from typing import Any, Mapping
 
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider
+from app.observability import (
+    record_span_failure,
+    set_span_attributes,
+    start_observability_span,
+)
 from app.services.llm_service import (
     HttpxProviderTransport,
     LlmUsageEvent,
@@ -153,62 +158,102 @@ class TickSummaryService:
             )
 
         failures: list[tuple[str, Exception]] = []
-        for candidate_model in _summary_model_candidates(self.environ):
-            try:
-                body = self.transport.post_json(
-                    url=f"{_openai_base_url(self.environ)}/v1/responses",
-                    headers={
-                        "Authorization": f"Bearer {self.environ.get('OPENAI_API_KEY')}",
-                        "Content-Type": "application/json",
-                    },
-                    payload=_openai_summary_payload(
-                        model=candidate_model,
-                        summary_input=summary_input,
-                        environ=self.environ,
-                    ),
-                )
-                parsed = json.loads(_openai_response_text(body))
-                usage = _usage_payload(
-                    body=body,
-                    model=candidate_model,
-                    environment=request.environment,
-                    registry=self.registry,
-                    latest_run_id=_latest_run_id(request.runs),
-                    window_minutes=request.window_minutes,
-                    pricing=_tick_summary_pricing(candidate_model, self.environ),
-                )
-                warnings = []
-                if failures:
-                    failed_models = ", ".join(model for model, _ in failures)
-                    warnings.append(
-                        f"Primary tick summary model failed ({failed_models}); used {candidate_model}."
-                    )
-                return TickSummaryResult(
-                    status="summarized",
-                    model=candidate_model,
-                    prompt_version=prompt_version,
-                    summary_markdown=str(parsed.get("summary_markdown") or "").strip(),
-                    key_events=[str(item) for item in parsed.get("key_events", [])],
-                    warnings=warnings + [str(item) for item in parsed.get("warnings", [])],
-                    usage=usage,
-                    input_hash=input_hash,
-                    message="AI summary generated from recent tick history.",
-                )
-            except Exception as exc:
-                LOGGER.warning(
-                    "tick_summary_model_failed %s",
-                    json.dumps(
-                        {
-                            "event": "tick_summary_model_failed",
-                            "model": candidate_model,
-                            "error_type": exc.__class__.__name__,
-                            "message": _safe_error_message(exc),
-                            "input_hash": input_hash,
+        latest_run_id = _latest_run_id(request.runs)
+        for attempt_number, candidate_model in enumerate(
+            _summary_model_candidates(self.environ), start=1
+        ):
+            with start_observability_span(
+                "tick_summary.model_attempt",
+                attributes={
+                    "event_name": "tick_summary_model_attempt",
+                    "environment": request.environment.value,
+                    "model": candidate_model,
+                    "attempt_number": attempt_number,
+                    "prompt_version": prompt_version,
+                    "input_hash": input_hash,
+                    "latest_run_id": latest_run_id or "",
+                    "window_minutes": request.window_minutes,
+                },
+            ) as span:
+                try:
+                    body = self.transport.post_json(
+                        url=f"{_openai_base_url(self.environ)}/v1/responses",
+                        headers={
+                            "Authorization": f"Bearer {self.environ.get('OPENAI_API_KEY')}",
+                            "Content-Type": "application/json",
                         },
-                        sort_keys=True,
-                    ),
-                )
-                failures.append((candidate_model, exc))
+                        payload=_openai_summary_payload(
+                            model=candidate_model,
+                            summary_input=summary_input,
+                            environ=self.environ,
+                        ),
+                    )
+                    parsed = json.loads(_openai_response_text(body))
+                    usage = _usage_payload(
+                        body=body,
+                        model=candidate_model,
+                        environment=request.environment,
+                        registry=self.registry,
+                        latest_run_id=latest_run_id,
+                        window_minutes=request.window_minutes,
+                        pricing=_tick_summary_pricing(candidate_model, self.environ),
+                    )
+                    set_span_attributes(
+                        span,
+                        {
+                            "status": "success",
+                            "response_id": usage.get("responseId") or "",
+                            "prompt_tokens": usage.get("promptTokens") or 0,
+                            "completion_tokens": usage.get("completionTokens") or 0,
+                            "cost_usd": usage.get("costUsd") or "0",
+                        },
+                    )
+                    warnings = []
+                    if failures:
+                        failed_models = ", ".join(model for model, _ in failures)
+                        warnings.append(
+                            f"Primary tick summary model failed ({failed_models}); used {candidate_model}."
+                        )
+                    return TickSummaryResult(
+                        status="summarized",
+                        model=candidate_model,
+                        prompt_version=prompt_version,
+                        summary_markdown=str(parsed.get("summary_markdown") or "").strip(),
+                        key_events=[str(item) for item in parsed.get("key_events", [])],
+                        warnings=warnings + [str(item) for item in parsed.get("warnings", [])],
+                        usage=usage,
+                        input_hash=input_hash,
+                        message="AI summary generated from recent tick history.",
+                    )
+                except Exception as exc:
+                    failure_payload = {
+                        "model": candidate_model,
+                        "attempt_number": attempt_number,
+                        "environment": request.environment.value,
+                        "prompt_version": prompt_version,
+                        "error_type": exc.__class__.__name__,
+                        "message": _safe_error_message(exc),
+                        "input_hash": input_hash,
+                        "latest_run_id": latest_run_id or "",
+                        "window_minutes": request.window_minutes,
+                    }
+                    record_span_failure(
+                        span,
+                        exc,
+                        event_name="tick_summary_model_failed",
+                        attributes=failure_payload,
+                    )
+                    LOGGER.warning(
+                        "tick_summary_model_failed %s",
+                        json.dumps(
+                            {
+                                "event": "tick_summary_model_failed",
+                                **failure_payload,
+                            },
+                            sort_keys=True,
+                        ),
+                    )
+                    failures.append((candidate_model, exc))
 
         failed_model, failure = failures[-1]
         error_code = failure.__class__.__name__
