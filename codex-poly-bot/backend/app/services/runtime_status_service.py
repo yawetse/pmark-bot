@@ -20,6 +20,12 @@ from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
 from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
 from app.services.llm_service import SCORING_SYSTEM_PROMPT
+from app.services.tick_summary_service import (
+    DEFAULT_TICK_SUMMARY_CACHE_SECONDS,
+    DEFAULT_TICK_SUMMARY_WINDOW_MINUTES,
+    TickSummaryRequest,
+    TickSummaryService,
+)
 from app.services.ai_usage_import_service import (
     AiUsageImportService,
     ProviderBackedAiUsageImportSource,
@@ -134,6 +140,7 @@ class RuntimeStatusService:
     MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.dashboard_market_data_pulls"
     PIPELINE_RUNS_TABLE = f"{SHARED_SCHEMA}.pipeline_runs"
     PIPELINE_STEPS_TABLE = f"{SHARED_SCHEMA}.pipeline_steps"
+    TICK_SUMMARIES_TABLE = f"{SHARED_SCHEMA}.tick_summaries"
     SCANNER_RUNS_TABLE = f"{SHARED_SCHEMA}.scanner_runs"
     SCANNER_CANDIDATES_TABLE = f"{SHARED_SCHEMA}.scanner_candidates"
     REASONING_RUNS_TABLE = f"{SHARED_SCHEMA}.reasoning_runs"
@@ -1162,6 +1169,7 @@ class RuntimeStatusService:
             "manualReviewState": "clear",
             "orderEvents": order_items,
             "pipelineRuns": self.pipeline_runs(environment),
+            "tickSummary": self.tick_summary(environment),
             "scanner": self.scanner_summary(environment),
             "reasoning": self.reasoning_summary(environment),
             "strategyConsensus": self.strategy_consensus_summary(environment),
@@ -1615,6 +1623,69 @@ class RuntimeStatusService:
                 for step in step_rows
             ],
         }
+
+    def tick_summary(
+        self,
+        environment: Environment,
+        *,
+        window_minutes: int = DEFAULT_TICK_SUMMARY_WINDOW_MINUTES,
+    ) -> dict[str, Any]:
+        """Return a cached AI summary of recent pipeline ticks."""
+
+        now = datetime.now(UTC)
+        window_minutes = max(1, min(120, int(window_minutes)))
+        window_started_at = now - timedelta(minutes=window_minutes)
+        recent_runs = self._recent_pipeline_runs(
+            environment=environment,
+            since=window_started_at,
+        )
+        latest_run_id = recent_runs[-1]["id"] if recent_runs else None
+        cached = self._cached_tick_summary(
+            environment=environment,
+            window_minutes=window_minutes,
+            latest_run_id=latest_run_id,
+            run_count=len(recent_runs),
+            now=now,
+        )
+        if cached is not None:
+            return self._tick_summary_payload(cached)
+
+        result = TickSummaryService(
+            registry=self.registry,
+            environ=getattr(self.settings, "runtime_env", {}),
+        ).summarize(
+            TickSummaryRequest(
+                environment=environment,
+                runs=recent_runs,
+                window_minutes=window_minutes,
+                generated_at=now,
+            )
+        )
+        row = {
+            "id": str(uuid4()),
+            "environment": environment.value,
+            "window_minutes": window_minutes,
+            "window_started_at": window_started_at,
+            "window_ended_at": now,
+            "latest_run_id": latest_run_id,
+            "run_count": len(recent_runs),
+            "status": result.status,
+            "model": result.model,
+            "prompt_version": result.prompt_version,
+            "input_hash": result.input_hash,
+            "summary_markdown": result.summary_markdown,
+            "key_events": result.key_events,
+            "warnings": result.warnings,
+            "usage": result.usage,
+            "error_code": result.error_code,
+            "message": result.message,
+            "created_at": now,
+        }
+        try:
+            self.registry.state.insert(self.TICK_SUMMARIES_TABLE, row)
+        except PersistenceUnavailableError:
+            pass
+        return self._tick_summary_payload(row)
 
     def market_data_pull(
         self,
@@ -2228,6 +2299,21 @@ class RuntimeStatusService:
         candidate_count = sum(_as_int(pull.get("candidateCount")) for pull in market_data_pulls)
         pipeline_status = _pipeline_run_status(pull_status)
         venue_names = [pull["venue"] for pull in market_data_pulls]
+        end_result = {
+            "status": pipeline_status,
+            "marketDataStatus": pull_status,
+            "candidateCount": candidate_count,
+            "scannerAcceptedCount": scanner_run["acceptedCount"],
+            "reasoningScoredCount": reasoning_run["scoredCount"],
+            "strategyApprovedCount": strategy_run["approvedCount"],
+            "orderIntentCount": execution_run["intentCount"],
+            "orderSubmittedCount": execution_run["submittedCount"],
+            "orderSimulatedCount": execution_run["simulatedCount"],
+            "orderRefusedCount": execution_run["refusedCount"],
+            "exitTriggeredCount": exit_run["triggeredCount"],
+            "exitRefusedCount": exit_run["refusedCount"],
+            "venues": venue_names,
+        }
         run_row = {
             "id": run_id,
             "environment": environment.value,
@@ -2256,6 +2342,7 @@ class RuntimeStatusService:
                 "exitTriggeredCount": exit_run["triggeredCount"],
                 "exitRefusedCount": exit_run["refusedCount"],
                 "venues": venue_names,
+                "endResult": end_result,
             },
             "created_at": completed_at,
         }
@@ -2373,6 +2460,32 @@ class RuntimeStatusService:
                     "marketDataStatus": market_data_status,
                 },
                 "record_ids": pull_ids,
+                "inputs": {
+                    "venues": venue_names,
+                    "runId": run_id,
+                },
+                "outputs": {
+                    "candidateCount": candidate_count,
+                    "pulls": [
+                        {
+                            "id": pull.get("id"),
+                            "venue": pull.get("venue"),
+                            "status": pull.get("status"),
+                            "candidateCount": pull.get("candidateCount", 0),
+                            "errorCode": pull.get("errorCode"),
+                        }
+                        for pull in market_data_pulls
+                    ],
+                },
+                "decisions": {
+                    "accepted": market_data_status in {"pulled", "partial"},
+                    "status": market_data_status,
+                    "messages": [
+                        pull.get("message")
+                        for pull in market_data_pulls
+                        if pull.get("message")
+                    ][:10],
+                },
             },
             "scanner": {
                 "status": scanner_status,
@@ -2383,6 +2496,19 @@ class RuntimeStatusService:
                     "rejectedCount": scanner_run["rejectedCount"],
                 },
                 "record_ids": scanner_record_ids,
+                "inputs": {
+                    "sourcePullIds": scanner_run.get("sourcePullIds", pull_ids),
+                    "candidateCount": scanner_run.get("candidateCount", candidate_count),
+                },
+                "outputs": {
+                    "scannerRunId": scanner_run.get("id"),
+                    "acceptedCount": scanner_run.get("acceptedCount", 0),
+                    "rejectedCount": scanner_run.get("rejectedCount", 0),
+                },
+                "decisions": {
+                    "status": scanner_run.get("status"),
+                    "candidates": _compact_candidate_decisions(scanner_run.get("candidates", [])),
+                },
             },
             "brain": {
                 "status": _pipeline_reasoning_status(str(reasoning_run.get("status", "idle"))),
@@ -2395,6 +2521,21 @@ class RuntimeStatusService:
                     "failedCount": reasoning_run.get("failedCount", 0),
                 },
                 "record_ids": reasoning_record_ids,
+                "inputs": {
+                    "scannerRunId": reasoning_run.get("scannerRunId"),
+                    "providerCount": reasoning_run.get("providerCount", 0),
+                    "promptCount": reasoning_run.get("promptCount", 0),
+                },
+                "outputs": {
+                    "reasoningRunId": reasoning_run.get("id"),
+                    "scoredCount": reasoning_run.get("scoredCount", 0),
+                    "skippedCount": reasoning_run.get("skippedCount", 0),
+                    "failedCount": reasoning_run.get("failedCount", 0),
+                },
+                "decisions": {
+                    "status": reasoning_run.get("status"),
+                    "outputs": _compact_reasoning_decisions(reasoning_run.get("outputs", [])),
+                },
             },
             "execution": {
                 "status": _pipeline_lifecycle_status(str(execution_run.get("status", "idle"))),
@@ -2409,6 +2550,24 @@ class RuntimeStatusService:
                     "orderRefusedCount": execution_run.get("refusedCount", 0),
                 },
                 "record_ids": strategy_record_ids + execution_record_ids,
+                "inputs": {
+                    "strategyConsensusRunId": strategy_run.get("id"),
+                    "executionRunId": execution_run.get("id"),
+                    "approvedCount": strategy_run.get("approvedCount", 0),
+                    "voteCount": strategy_run.get("voteCount", 0),
+                },
+                "outputs": {
+                    "intentCount": execution_run.get("intentCount", 0),
+                    "submittedCount": execution_run.get("submittedCount", 0),
+                    "simulatedCount": execution_run.get("simulatedCount", 0),
+                    "refusedCount": execution_run.get("refusedCount", 0),
+                },
+                "decisions": {
+                    "strategyStatus": strategy_run.get("status"),
+                    "executionStatus": execution_run.get("status"),
+                    "consensus": _compact_strategy_decisions(strategy_run.get("outputs", [])),
+                    "intents": _compact_intent_decisions(execution_run.get("intents", [])),
+                },
             },
             "exit": {
                 "status": _pipeline_exit_status(str(exit_run.get("status", "idle"))),
@@ -2421,11 +2580,31 @@ class RuntimeStatusService:
                     "exitRefusedCount": exit_run.get("refusedCount", 0),
                 },
                 "record_ids": exit_record_ids,
+                "inputs": {
+                    "exitRunId": exit_run.get("id"),
+                    "openPositionCount": exit_run.get("openPositionCount", 0),
+                },
+                "outputs": {
+                    "triggeredCount": exit_run.get("triggeredCount", 0),
+                    "submittedCount": exit_run.get("submittedCount", 0),
+                    "simulatedCount": exit_run.get("simulatedCount", 0),
+                    "refusedCount": exit_run.get("refusedCount", 0),
+                },
+                "decisions": {
+                    "status": exit_run.get("status"),
+                    "intents": _compact_intent_decisions(exit_run.get("intents", [])),
+                },
             },
         }
         rows = []
         for key, order, label in self.PIPELINE_STAGES:
             payload = stage_payloads[key]
+            metrics = dict(payload["metrics"])
+            metrics["trace"] = {
+                "inputs": payload["inputs"],
+                "outputs": payload["outputs"],
+                "decisions": payload["decisions"],
+            }
             rows.append(
                 {
                     "id": f"{run_id}:{key}",
@@ -2438,7 +2617,7 @@ class RuntimeStatusService:
                     "started_at": started_at,
                     "completed_at": completed_at,
                     "message": payload["message"],
-                    "metrics": payload["metrics"],
+                    "metrics": metrics,
                     "record_ids": payload["record_ids"],
                     "created_at": completed_at,
                 }
@@ -2450,6 +2629,9 @@ class RuntimeStatusService:
         row: dict[str, Any],
         steps: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        metadata = dict(row.get("metadata", {}))
+        if "endResult" not in metadata:
+            metadata["endResult"] = _pipeline_end_result(metadata, row.get("status"))
         return {
             "id": row["id"],
             "environment": row["environment"],
@@ -2457,22 +2639,104 @@ class RuntimeStatusService:
             "status": row["status"],
             "startedAt": _isoformat_or_none(row.get("started_at")),
             "completedAt": _isoformat_or_none(row.get("completed_at")),
-            "metadata": row.get("metadata", {}),
+            "metadata": metadata,
             "steps": [
-                {
-                    "id": step["id"],
-                    "key": step["step_key"],
-                    "order": step["step_order"],
-                    "label": step["label"],
-                    "status": step["status"],
-                    "startedAt": _isoformat_or_none(step.get("started_at")),
-                    "completedAt": _isoformat_or_none(step.get("completed_at")),
-                    "message": step.get("message"),
-                    "metrics": step.get("metrics", {}),
-                    "recordIds": step.get("record_ids", []),
-                }
+                self._pipeline_step_payload(step)
                 for step in steps
             ],
+        }
+
+    def _pipeline_step_payload(self, step: dict[str, Any]) -> dict[str, Any]:
+        metrics = step.get("metrics", {})
+        trace = metrics.get("trace", {}) if isinstance(metrics, dict) else {}
+        return {
+            "id": step["id"],
+            "key": step["step_key"],
+            "order": step["step_order"],
+            "label": step["label"],
+            "status": step["status"],
+            "startedAt": _isoformat_or_none(step.get("started_at")),
+            "completedAt": _isoformat_or_none(step.get("completed_at")),
+            "message": step.get("message"),
+            "metrics": _metrics_without_trace(metrics),
+            "inputs": trace.get("inputs", {}) if isinstance(trace, dict) else {},
+            "outputs": trace.get("outputs", {}) if isinstance(trace, dict) else {},
+            "decisions": trace.get("decisions", {}) if isinstance(trace, dict) else {},
+            "recordIds": step.get("record_ids", []),
+        }
+
+    def _recent_pipeline_runs(
+        self,
+        *,
+        environment: Environment,
+        since: datetime,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        runs = self.pipeline_runs(environment, limit=limit)
+        recent: list[dict[str, Any]] = []
+        for run in runs:
+            started_at = _parse_datetime(run.get("startedAt"))
+            completed_at = _parse_datetime(run.get("completedAt"))
+            observed_at = started_at or completed_at
+            if observed_at is None or observed_at >= since:
+                recent.append(run)
+        recent.sort(key=lambda run: _parse_datetime(run.get("startedAt")) or datetime.min.replace(tzinfo=UTC))
+        return recent
+
+    def _cached_tick_summary(
+        self,
+        *,
+        environment: Environment,
+        window_minutes: int,
+        latest_run_id: str | None,
+        run_count: int,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows(self.TICK_SUMMARIES_TABLE)
+                if row.get("environment") == environment.value
+                and row.get("window_minutes") == window_minutes
+                and row.get("latest_run_id") == latest_run_id
+                and row.get("run_count") == run_count
+            ]
+        except PersistenceUnavailableError:
+            return None
+        cache_seconds = _positive_int(
+            getattr(self.settings, "runtime_env", {}).get("OPENAI_TICK_SUMMARY_CACHE_SECONDS"),
+            DEFAULT_TICK_SUMMARY_CACHE_SECONDS,
+        )
+        fresh_rows = []
+        for row in rows:
+            created_at = _parse_datetime(row.get("created_at"))
+            if created_at is not None and (now - created_at).total_seconds() <= cache_seconds:
+                fresh_rows.append(row)
+        if not fresh_rows:
+            return None
+        fresh_rows.sort(key=lambda row: _parse_datetime(row.get("created_at")) or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return fresh_rows[0]
+
+    def _tick_summary_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "environment": row.get("environment"),
+            "status": row.get("status"),
+            "windowMinutes": row.get("window_minutes"),
+            "windowStartedAt": _isoformat_or_none(row.get("window_started_at")),
+            "windowEndedAt": _isoformat_or_none(row.get("window_ended_at")),
+            "latestRunId": row.get("latest_run_id"),
+            "runCount": row.get("run_count", 0),
+            "model": row.get("model"),
+            "promptVersion": row.get("prompt_version"),
+            "inputHash": row.get("input_hash"),
+            "summaryMarkdown": row.get("summary_markdown", ""),
+            "keyEvents": row.get("key_events", []),
+            "warnings": row.get("warnings", []),
+            "usage": row.get("usage", {}),
+            "errorCode": row.get("error_code"),
+            "message": row.get("message", ""),
+            "generatedAt": _isoformat_or_none(row.get("created_at")),
         }
 
     def _pipeline_step_records(
@@ -3644,6 +3908,116 @@ def _pipeline_exit_status(exit_status: str) -> str:
     return "waiting"
 
 
+def _compact_candidate_decisions(candidates: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": candidate.get("id"),
+            "venue": candidate.get("venue"),
+            "instrumentId": candidate.get("instrumentId"),
+            "displayName": candidate.get("displayName"),
+            "status": candidate.get("status"),
+            "refusalReason": candidate.get("refusalReason"),
+            "strategyNames": candidate.get("strategyNames", []),
+            "price": candidate.get("price"),
+            "liquidity": candidate.get("liquidity"),
+            "spread": candidate.get("spread"),
+        }
+        for candidate in _first_dict_items(candidates)
+    ]
+
+
+def _compact_reasoning_decisions(outputs: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": output.get("id"),
+            "instrumentId": output.get("instrumentId"),
+            "modelProvider": output.get("modelProvider"),
+            "status": output.get("status"),
+            "refusalReason": output.get("refusalReason"),
+            "directionalSignal": output.get("directionalSignal"),
+            "confidence": output.get("confidence"),
+            "estimatedProbability": output.get("estimatedProbability"),
+            "costUsd": output.get("costUsd"),
+            "thesis": _truncate_text(output.get("thesis")),
+        }
+        for output in _first_dict_items(outputs)
+    ]
+
+
+def _compact_strategy_decisions(outputs: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": output.get("id"),
+            "instrumentId": output.get("instrumentId"),
+            "modelProvider": output.get("modelProvider"),
+            "status": output.get("status"),
+            "side": output.get("side"),
+            "sizeMultiplier": output.get("sizeMultiplier"),
+            "signalCount": output.get("signalCount"),
+            "strategyNames": output.get("strategyNames", []),
+            "refusalReason": output.get("refusalReason"),
+        }
+        for output in _first_dict_items(outputs)
+    ]
+
+
+def _compact_intent_decisions(intents: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": intent.get("id"),
+            "venue": intent.get("venue"),
+            "instrumentId": intent.get("instrumentId"),
+            "modelProvider": intent.get("modelProvider"),
+            "status": intent.get("status"),
+            "side": intent.get("side"),
+            "orderType": intent.get("orderType"),
+            "notionalUsd": intent.get("notionalUsd"),
+            "triggerType": intent.get("triggerType"),
+            "positionId": intent.get("positionId"),
+            "refusalReason": intent.get("refusalReason"),
+            "venueOrderId": intent.get("venueOrderId"),
+        }
+        for intent in _first_dict_items(intents)
+    ]
+
+
+def _first_dict_items(items: Any, limit: int = 20) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)][:limit]
+
+
+def _truncate_text(value: Any, limit: int = 280) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _metrics_without_trace(metrics: Any) -> dict[str, Any]:
+    if not isinstance(metrics, dict):
+        return {}
+    return {key: value for key, value in metrics.items() if key != "trace"}
+
+
+def _pipeline_end_result(metadata: dict[str, Any], status: Any) -> dict[str, Any]:
+    return {
+        "status": str(status or "unknown"),
+        "marketDataStatus": metadata.get("marketDataStatus"),
+        "candidateCount": metadata.get("candidateCount", 0),
+        "scannerAcceptedCount": metadata.get("scannerAcceptedCount", 0),
+        "reasoningScoredCount": metadata.get("reasoningScoredCount", 0),
+        "strategyApprovedCount": metadata.get("strategyApprovedCount", 0),
+        "orderIntentCount": metadata.get("orderIntentCount", 0),
+        "orderSubmittedCount": metadata.get("orderSubmittedCount", 0),
+        "orderSimulatedCount": metadata.get("orderSimulatedCount", 0),
+        "orderRefusedCount": metadata.get("orderRefusedCount", 0),
+        "exitTriggeredCount": metadata.get("exitTriggeredCount", 0),
+        "exitRefusedCount": metadata.get("exitRefusedCount", 0),
+        "venues": metadata.get("venues", []),
+    }
+
+
 def _pipeline_reasoning_message(reasoning_run: dict[str, Any]) -> str:
     status = str(reasoning_run.get("status", "idle"))
     if status == "no_candidates":
@@ -3771,3 +4145,11 @@ def _as_int(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, parsed)
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)
