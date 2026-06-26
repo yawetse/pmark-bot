@@ -188,32 +188,54 @@ presets and individual symbols additive to the refreshed preset members.
 
 ## Phase 8: AI and Infrastructure Cost Backfill
 
-- [ ] Keep recording provider token usage from live scoring responses.
-- [ ] Add a provider-side usage import or backfill job where the provider exposes enough API data.
-- [ ] Store token usage by provider, model, run, step, and candidate.
-- [ ] Chart token spend and AI cost over time using economics snapshots.
-- [ ] Keep AWS Cost Explorer as the primary AWS cost source when available.
-- [ ] Fall back to saved monthly AWS cost preference only when Cost Explorer is unavailable.
-- [ ] Show cost source, freshness, and error state in the dashboard.
+- [x] Keep recording provider token usage from live scoring responses.
+- [x] Add a provider-side usage import or backfill job where the provider exposes enough API data.
+- [x] Store token usage by provider, model, run, step, and candidate.
+- [x] Chart token spend and AI cost over time using economics snapshots.
+- [x] Keep AWS Cost Explorer as the primary AWS cost source when available.
+- [x] Fall back to saved monthly AWS cost preference only when Cost Explorer is unavailable.
+- [x] Show cost source, freshness, and error state in the dashboard.
+
+Implementation note: Phase 8 now persists `shared.ai_usage_import_runs` and extends
+`shared.ai_usage_events` with provider, model, run, step, candidate, source, and
+raw provider payload attribution. Runtime imports use provider admin/reporting APIs
+when `OPENAI_ADMIN_API_KEY` or `ANTHROPIC_ADMIN_API_KEY` is configured; otherwise
+the dashboard records an explicit unsupported import run instead of showing a
+successful pull. Economics summary now includes recent cost snapshots for token,
+AI cost, AWS cost, trading P&L, and net profitability history.
 
 ## Phase 9: Dashboard and Operations
 
-- [ ] Add a pipeline detail view for each run.
-- [ ] Link each pipeline step to its underlying records.
-- [ ] Add full tables for data imports, scanner output, reasoning output, strategy votes, order intents, executions, exits, and economics history.
-- [ ] Add manual controls for data import, scanner-only run, full dry-run, and full live-gated run.
-- [ ] Show rate limits, provider errors, stale data, and partial fetches separately from successful pulls.
-- [ ] Add operator documentation in `docs/operations-runbook.md`.
+- [x] Add a pipeline detail view for each run.
+- [x] Link each pipeline step to its underlying records.
+- [x] Add full tables for data imports, scanner output, reasoning output, strategy votes, order intents, executions, exits, and economics history.
+- [x] Add manual controls for data import, scanner-only run, full dry-run, and full live-gated run.
+- [x] Show rate limits, provider errors, stale data, and partial fetches separately from successful pulls.
+- [x] Add operator documentation in `docs/operations-runbook.md`.
+
+Implementation note: Phase 9 now has explicit manual modes: `data_import`,
+`scanner_only`, `full_dry_run`, and `full_live_gated`. Downstream stages skipped
+by a requested mode are persisted as skipped pipeline records, not hidden UI state.
+Pipeline details expose the shared-table records behind each step, and economics
+uses the shared data grid for provider usage imports and cost history.
 
 ## Phase 10: Release Gates
 
-- [ ] Backend tests cover each new repository table and service boundary.
-- [ ] Frontend checks cover each new dashboard table and control.
-- [ ] Migration safety passes with no destructive changes.
-- [ ] A local dry-run records all five pipeline steps with real records behind each step.
+- [x] Backend tests cover each new repository table and service boundary.
+- [x] Frontend checks cover each new dashboard table and control.
+- [x] Migration safety passes with no destructive changes.
+- [x] A local dry-run records all five pipeline steps with real records behind each step.
 - [ ] Development deployment passes health checks.
 - [ ] Production deployment passes health checks.
 - [ ] Live trading remains gated until `docs/live-trading-checklist.md` is complete.
+
+Live-trading enablement note: AWS production currently has `LIVE_ENABLED=true`,
+`TRADING_ACCOUNT_MODE=live`, `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true`,
+and `ALPACA_ACCOUNT_STATUS=active`, but actual autonomous live order submission is
+still not complete until concrete venue submitters are attached in the runtime
+service and every live-trading checklist item has release evidence. The current
+default lifecycle refuses live submissions with `LIVE_SUBMITTER_NOT_CONFIGURED`
+when a venue submitter is absent.
 
 ## Current Next Slice
 

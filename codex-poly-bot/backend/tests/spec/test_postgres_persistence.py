@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+import httpx
 from pydantic import ValidationError
 
 from app.db import (
@@ -32,6 +33,12 @@ from app.domain import (
     StrategySignal,
     TradeDecision,
     Venue,
+)
+from app.services.ai_usage_import_service import (
+    AiUsageImportService,
+    ProviderBackedAiUsageImportSource,
+    ProviderUsageRow,
+    StaticAiUsageImportSource,
 )
 from tests.spec.helpers import pending
 
@@ -136,6 +143,7 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.job_runs" in plan.table_names
     assert "shared.comparison_metric_snapshots" in plan.table_names
     assert "shared.economics_snapshots" in plan.table_names
+    assert "shared.ai_usage_import_runs" in plan.table_names
     assert "shared.pipeline_runs" in plan.table_names
     assert "shared.pipeline_steps" in plan.table_names
     assert "shared.scanner_runs" in plan.table_names
@@ -271,6 +279,145 @@ def test_req_db_003_03_shared_economics_snapshots_persist_monthly_history() -> N
     assert rows[0]["ai_total_tokens"] == 1500
     assert rows[0]["aws_month_to_date_cost_usd"] == Decimal("30.00")
     assert rows[0]["net_after_costs_usd"] == Decimal("12.30")
+
+
+def test_req_db_003_09_shared_ai_usage_import_rows_keep_provider_attribution() -> None:
+    """TST-REQ-DB-003-09: Validates REQ-DB-003, REQ-LLM-002, and REQ-UI-010
+
+    Given: provider-side token usage rows exist
+    When: the usage import service stores them
+    Then: dashboard economics can separate source, model, run, step, and candidate attribution
+    """
+
+    registry = RepositoryRegistry()
+    observed = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)
+    service = AiUsageImportService(
+        registry,
+        source=StaticAiUsageImportSource(
+            rows=(
+                ProviderUsageRow(
+                    provider=ModelProvider.OPENAI,
+                    model="gpt-5",
+                    prompt_tokens=100,
+                    completion_tokens=40,
+                    cost_usd=Decimal("0.12"),
+                    observed_at=observed,
+                    response_id="resp-1",
+                    pipeline_run_id="run-1",
+                    pipeline_step="brain",
+                    candidate_id="candidate-1",
+                    cost_source="provider usage export",
+                    raw_payload={"id": "resp-1"},
+                ),
+            )
+        ),
+    )
+
+    result = service.import_provider_usage(
+        environment=Environment.DEVELOPMENT,
+        provider=ModelProvider.OPENAI,
+        period_start=datetime(2026, 6, 25, 0, 0, tzinfo=UTC),
+        period_end=datetime(2026, 6, 26, 0, 0, tzinfo=UTC),
+        triggered_by="yaw",
+    )
+    usage_rows = registry.shared().ai_usage_events(
+        environment=Environment.DEVELOPMENT,
+        provider=ModelProvider.OPENAI,
+    )
+    import_rows = registry.shared().ai_usage_import_runs(
+        environment=Environment.DEVELOPMENT,
+        provider=ModelProvider.OPENAI,
+    )
+
+    assert result.payload["status"] == "completed"
+    assert result.payload["importedCount"] == 1
+    assert usage_rows[0]["model"] == "gpt-5"
+    assert usage_rows[0]["pipeline_run_id"] == "run-1"
+    assert usage_rows[0]["pipeline_step"] == "brain"
+    assert usage_rows[0]["candidate_id"] == "candidate-1"
+    assert usage_rows[0]["usage_source"] == "provider_backfill"
+    assert usage_rows[0]["cost_source"] == "provider usage export"
+    assert usage_rows[0]["response_id"] == "resp-1"
+    assert import_rows[0]["status"] == "completed"
+    assert import_rows[0]["imported_count"] == 1
+
+
+def test_req_db_003_10_openai_admin_usage_import_fetches_provider_rows() -> None:
+    """TST-REQ-DB-003-10: Validates REQ-LLM-002 and REQ-UI-010
+
+    Given: an OpenAI admin usage source is configured
+    When: usage and cost endpoints return bucketed rows
+    Then: provider token and cost rows are persisted for dashboard profitability
+    """
+
+    registry = RepositoryRegistry()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/organization/usage/completions"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_time": 1_782_345_600,
+                            "results": [
+                                {
+                                    "model": "gpt-5",
+                                    "input_tokens": 120,
+                                    "output_tokens": 30,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/organization/costs"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "start_time": 1_782_345_600,
+                            "results": [
+                                {
+                                    "line_item": "gpt-5",
+                                    "amount": {"value": "0.42", "currency": "usd"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404, json={"error": "not found"})
+
+    service = AiUsageImportService(
+        registry,
+        source=ProviderBackedAiUsageImportSource(
+            {"OPENAI_ADMIN_API_KEY": "admin-test-key"},
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    result = service.import_provider_usage(
+        environment=Environment.DEVELOPMENT,
+        provider=ModelProvider.OPENAI,
+        period_start=datetime(2026, 6, 20, tzinfo=UTC),
+        period_end=datetime(2026, 6, 25, tzinfo=UTC),
+        triggered_by="yaw",
+    )
+    rows = registry.shared().ai_usage_events(
+        environment=Environment.DEVELOPMENT,
+        provider=ModelProvider.OPENAI,
+    )
+
+    assert result.payload["status"] == "completed"
+    assert result.payload["source"] == "provider admin usage api"
+    assert result.payload["importedCount"] == 2
+    assert rows[0]["prompt_tokens"] == 120
+    assert rows[0]["completion_tokens"] == 30
+    assert rows[0]["cost_source"] == "openai organization usage endpoint"
+    assert rows[1]["cost_usd"] == Decimal("0.42")
+    assert rows[1]["cost_source"] == "openai organization costs endpoint"
 
 def test_req_db_003_04_shared_polymarket_history_records_persist_for_step_zero() -> None:
     """TST-REQ-DB-003-04: Validates REQ-DB-003 and REQ-DAT-009

@@ -419,7 +419,9 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert response.status_code == 202
     payload = response.json()
     assert payload["status"] == "accepted"
+    assert payload["requestedMode"] == "full_dry_run"
     assert payload["pipelineRun"]["trigger"] == "manual"
+    assert payload["pipelineRun"]["metadata"]["requestedMode"] == "full_dry_run"
     assert [step["label"] for step in payload["pipelineRun"]["steps"]] == [
         "Data Fetch",
         "Scanner",
@@ -470,7 +472,96 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert len(pipeline_step_rows) == 5
     assert any(row["job_name"] == "manual-trading-loop" for row in job_rows)
     assert audit_rows[-1]["event_type"] == "manual_loop_trigger"
+    assert audit_rows[-1]["metadata"]["requested_mode"] == "full_dry_run"
     assert set(audit_rows[-1]["metadata"]["venues"]) == {"polymarket_us", "alpaca"}
+    detail = client.get(
+        f"/api/operations/runs/{payload['runId']}",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    detail_payload = detail.json()
+    assert detail.status_code == 200
+    assert detail_payload["run"]["id"] == payload["runId"]
+    assert detail_payload["records"][0]["stepKey"] == "data_fetch"
+    assert detail_payload["records"][0]["recordCount"] == 2
+    assert {item["table"] for item in detail_payload["records"][0]["items"]} == {
+        "shared.dashboard_market_data_pulls"
+    }
+
+
+def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> None:
+    """TST-REQ-UI-008-05: Validates REQ-UI-008, REQ-DAT-008, and REQ-OBS-005
+
+    Given: provider-backed market data is available
+    When: an operator requests data-only and scanner-only manual modes
+    Then: the pipeline records skipped downstream stages without forcing live execution
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+        polymarket_us_enabled=False,
+        alpaca_enabled=True,
+    )
+    app = create_app(settings)
+    app.state.services.runtime_status.market_data_fetcher = FakeMarketDataFetcher(
+        {
+            "alpaca": MarketDataProviderResult(
+                venue="alpaca",
+                status="pulled",
+                source="alpaca market data api",
+                message="Fetched 1 Alpaca priced candidate.",
+                candidates=[
+                    {
+                        "id": "alpaca:SPY",
+                        "venue": "alpaca",
+                        "symbol": "SPY",
+                        "price": "500.01",
+                        "liquidity": "3",
+                        "spread": "0.02",
+                        "state": "priced",
+                        "pulledAt": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            ),
+        }
+    )
+    token = app.state.services.auth.create_session_token(username="yaw")
+    client = TestClient(app)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Origin": "http://localhost:3000",
+        "X-CSRF-Token": "csrf-token",
+    }
+
+    data_import = client.post(
+        "/api/operations/manual-run",
+        headers=headers,
+        json={"environment": "development", "mode": "data_import"},
+    )
+    scanner_only = client.post(
+        "/api/operations/manual-run",
+        headers=headers,
+        json={"environment": "development", "mode": "scanner_only"},
+    )
+
+    data_payload = data_import.json()
+    scanner_payload = scanner_only.json()
+    assert data_import.status_code == 202
+    assert data_payload["requestedMode"] == "data_import"
+    assert data_payload["scannerRun"]["status"] == "skipped"
+    assert data_payload["reasoningRun"]["status"] == "skipped"
+    assert data_payload["executionRun"]["status"] == "skipped"
+    assert data_payload["pipelineRun"]["steps"][0]["status"] == "completed"
+    assert data_payload["pipelineRun"]["steps"][1]["status"] == "skipped"
+    assert scanner_only.status_code == 202
+    assert scanner_payload["requestedMode"] == "scanner_only"
+    assert scanner_payload["scannerRun"]["status"] in {"completed", "no_candidates_passed"}
+    assert scanner_payload["reasoningRun"]["status"] == "skipped"
+    assert scanner_payload["strategyRun"]["status"] == "skipped"
+    assert scanner_payload["executionRun"]["status"] == "skipped"
+    assert scanner_payload["pipelineRun"]["metadata"]["requestedMode"] == "scanner_only"
 
 
 def test_req_dat_009_11_operations_summary_exposes_historical_import_status() -> None:
@@ -931,6 +1022,7 @@ def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() ->
     assert payload["economics"]["trading"]["totalPnlUsd"] == "13.75"
     assert payload["economics"]["profitability"]["netAfterRecordedCostsUsd"] == "12.30"
     assert payload["economics"]["history"]["stored"] is True
+    assert payload["economics"]["history"]["snapshots"][0]["aiTotalTokens"] == 1500
     snapshot_rows = state.rows("shared.economics_snapshots")
     assert len(snapshot_rows) == 1
     assert snapshot_rows[0]["ai_cost_usd"] == Decimal("0.45")
@@ -1015,6 +1107,50 @@ def test_req_ui_010_03_dashboard_summary_uses_real_aws_billing_when_available() 
     assert history_payload["count"] == 1
     assert history_payload["snapshots"][0]["awsMonthToDateCostUsd"] == "42.00"
     assert history_payload["snapshots"][0]["netAfterRecordedCostsUsd"] == "10.80"
+
+
+def test_req_ui_010_04_ai_usage_import_reports_provider_status_separately() -> None:
+    """TST-REQ-UI-010-04: Validates REQ-LLM-002, REQ-UI-010, and REQ-OBS-005
+
+    Given: no provider-side token import source is configured
+    When: an operator triggers an AI usage import
+    Then: the API records the import status and economics shows the provider import error state
+    """
+
+    client, token = _client()
+
+    response = client.post(
+        "/api/economics/ai-usage-import",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={"environment": "development", "provider": "openai"},
+    )
+    summary = client.get(
+        "/api/economics/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    import_rows = client.app.state.services.registry.shared().ai_usage_import_runs(
+        environment=Environment.DEVELOPMENT,
+        provider=ModelProvider.OPENAI,
+    )
+    audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status"] == "unsupported"
+    assert payload["errorCode"] == "provider_usage_import_unsupported"
+    assert len(import_rows) == 1
+    assert import_rows[0]["status"] == "unsupported"
+    assert audit_rows[-1]["event_type"] == "ai_usage_import_trigger"
+    assert summary.status_code == 200
+    economics = summary.json()
+    assert economics["ai"]["imports"]["count"] == 1
+    assert economics["ai"]["imports"]["runs"][0]["status"] == "unsupported"
+    assert economics["ai"]["errorState"]["status"] == "unsupported"
+    assert economics["ai"]["providers"][0]["latestImportStatus"] == "unsupported"
 
 
 def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch) -> None:
