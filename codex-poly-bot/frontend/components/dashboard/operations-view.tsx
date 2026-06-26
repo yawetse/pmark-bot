@@ -12,6 +12,7 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import {
   ManualRunControl,
   type ManualRunResult,
@@ -732,14 +733,16 @@ function OrderTable({
   ];
 
   return (
-    <DashboardDataGrid
-      rows={events}
-      columns={columns}
-      emptyTitle={emptyTitle}
-      emptyBody={emptyBody}
-      getRowId={(event) => event.id}
-      searchPlaceholder="Filter orders"
-    />
+    <Disclosure title={events.length === 1 ? "View 1 order record" : `View ${events.length} order records`}>
+      <DashboardDataGrid
+        rows={events}
+        columns={columns}
+        emptyTitle={emptyTitle}
+        emptyBody={emptyBody}
+        getRowId={(event) => event.id}
+        searchPlaceholder="Filter orders"
+      />
+    </Disclosure>
   );
 }
 
@@ -892,23 +895,27 @@ function PipelineRunsPanel({
         <p className="panel-note">No manual or scheduled runs have been recorded yet.</p>
       )}
       <p className="section-label">Pipeline detail</p>
-      <DashboardDataGrid
-        rows={latestSteps}
-        columns={stepColumns}
-        emptyTitle="No step records"
-        emptyBody="Pipeline step records will appear after a run starts."
-        getRowId={(step) => step.id}
-        pageSize={5}
-        searchPlaceholder="Filter run steps"
-      />
-      <DashboardDataGrid
-        rows={runs}
-        columns={columns}
-        emptyTitle="No runs recorded"
-        emptyBody="Manual and scheduled runs will appear here after they start."
-        getRowId={(run) => run.id}
-        searchPlaceholder="Filter runs"
-      />
+      <Disclosure title={`View ${latestSteps.length} step records`}>
+        <DashboardDataGrid
+          rows={latestSteps}
+          columns={stepColumns}
+          emptyTitle="No step records"
+          emptyBody="Pipeline step records will appear after a run starts."
+          getRowId={(step) => step.id}
+          pageSize={5}
+          searchPlaceholder="Filter run steps"
+        />
+      </Disclosure>
+      <Disclosure title={runs.length === 1 ? "View 1 pipeline run" : `View ${runs.length} pipeline runs`}>
+        <DashboardDataGrid
+          rows={runs}
+          columns={columns}
+          emptyTitle="No runs recorded"
+          emptyBody="Manual and scheduled runs will appear here after they start."
+          getRowId={(run) => run.id}
+          searchPlaceholder="Filter runs"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -966,14 +973,22 @@ function HistoricalImportPanel({
         <Metric label="Checkpoints" value={String(historicalImport.counts.checkpoints)} />
         <Metric label="Updated" value={formatDateTime(historicalImport.lastUpdatedAt, timeZone)} />
       </div>
-      <DashboardDataGrid
-        rows={historicalImport.checkpoints}
-        columns={columns}
-        emptyTitle="No import checkpoints"
-        emptyBody="Historical import checkpoints will appear after Gamma or Polygon backfills run."
-        getRowId={(checkpoint) => checkpoint.id}
-        searchPlaceholder="Filter checkpoints"
-      />
+      <Disclosure
+        title={
+          historicalImport.checkpoints.length === 1
+            ? "View 1 import checkpoint"
+            : `View ${historicalImport.checkpoints.length} import checkpoints`
+        }
+      >
+        <DashboardDataGrid
+          rows={historicalImport.checkpoints}
+          columns={columns}
+          emptyTitle="No import checkpoints"
+          emptyBody="Historical import checkpoints will appear after Gamma or Polygon backfills run."
+          getRowId={(checkpoint) => checkpoint.id}
+          searchPlaceholder="Filter checkpoints"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -1033,14 +1048,22 @@ function ScannerPanel({
           value={formatDateTime(scanner.latestRun?.completedAt, timeZone)}
         />
       </div>
-      <DashboardDataGrid
-        rows={scanner.candidates}
-        columns={columns}
-        emptyTitle="No scanner candidates"
-        emptyBody="Scanner output will appear after a manual or scheduled run evaluates provider candidates."
-        getRowId={(candidate) => candidate.id}
-        searchPlaceholder="Filter scanner candidates"
-      />
+      <Disclosure
+        title={
+          scanner.candidates.length === 1
+            ? "View 1 scanner candidate"
+            : `View ${scanner.candidates.length} scanner candidates`
+        }
+      >
+        <DashboardDataGrid
+          rows={scanner.candidates}
+          columns={columns}
+          emptyTitle="No scanner candidates"
+          emptyBody="Scanner output will appear after a manual or scheduled run evaluates provider candidates."
+          getRowId={(candidate) => candidate.id}
+          searchPlaceholder="Filter scanner candidates"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -1096,14 +1119,22 @@ function ReasoningPanel({
         <Metric label="Skipped" value={String(reasoning.skippedCount)} />
         <Metric label="Failed" value={String(reasoning.failedCount)} />
       </div>
-      <DashboardDataGrid
-        rows={reasoning.outputs}
-        columns={columns}
-        emptyTitle="No reasoning output"
-        emptyBody="Reasoning rows will appear after accepted scanner candidates are sent to configured model providers."
-        getRowId={(output) => output.id}
-        searchPlaceholder="Filter reasoning output"
-      />
+      <Disclosure
+        title={
+          reasoning.outputs.length === 1
+            ? "View 1 reasoning output"
+            : `View ${reasoning.outputs.length} reasoning outputs`
+        }
+      >
+        <DashboardDataGrid
+          rows={reasoning.outputs}
+          columns={columns}
+          emptyTitle="No reasoning output"
+          emptyBody="Reasoning rows will appear after accepted scanner candidates are sent to configured model providers."
+          getRowId={(output) => output.id}
+          searchPlaceholder="Filter reasoning output"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -1175,22 +1206,38 @@ function StrategyConsensusPanel({
           value={formatDateTime(strategyConsensus.latestRun?.completedAt, timeZone)}
         />
       </div>
-      <DashboardDataGrid
-        rows={strategyConsensus.votes}
-        columns={voteColumns}
-        emptyTitle="No strategy votes"
-        emptyBody="Strategy votes will appear after scored reasoning output is evaluated by the consensus step."
-        getRowId={(vote) => vote.id}
-        searchPlaceholder="Filter strategy votes"
-      />
-      <DashboardDataGrid
-        rows={strategyConsensus.outputs}
-        columns={outputColumns}
-        emptyTitle="No consensus outputs"
-        emptyBody="Consensus outputs will appear after strategy votes are resolved for each scored candidate."
-        getRowId={(output) => output.id}
-        searchPlaceholder="Filter consensus outputs"
-      />
+      <Disclosure
+        title={
+          strategyConsensus.votes.length === 1
+            ? "View 1 strategy vote"
+            : `View ${strategyConsensus.votes.length} strategy votes`
+        }
+      >
+        <DashboardDataGrid
+          rows={strategyConsensus.votes}
+          columns={voteColumns}
+          emptyTitle="No strategy votes"
+          emptyBody="Strategy votes will appear after scored reasoning output is evaluated by the consensus step."
+          getRowId={(vote) => vote.id}
+          searchPlaceholder="Filter strategy votes"
+        />
+      </Disclosure>
+      <Disclosure
+        title={
+          strategyConsensus.outputs.length === 1
+            ? "View 1 consensus output"
+            : `View ${strategyConsensus.outputs.length} consensus outputs`
+        }
+      >
+        <DashboardDataGrid
+          rows={strategyConsensus.outputs}
+          columns={outputColumns}
+          emptyTitle="No consensus outputs"
+          emptyBody="Consensus outputs will appear after strategy votes are resolved for each scored candidate."
+          getRowId={(output) => output.id}
+          searchPlaceholder="Filter consensus outputs"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -1237,14 +1284,22 @@ function ExecutionPanel({
         <Metric label="Submitted" value={String(execution.submittedCount)} />
         <Metric label="Refused" value={String(execution.refusedCount)} />
       </div>
-      <DashboardDataGrid
-        rows={execution.intents}
-        columns={columns}
-        emptyTitle="No order intents"
-        emptyBody="Order intents will appear after approved consensus output passes risk gates."
-        getRowId={(intent) => intent.id}
-        searchPlaceholder="Filter order intents"
-      />
+      <Disclosure
+        title={
+          execution.intents.length === 1
+            ? "View 1 order intent"
+            : `View ${execution.intents.length} order intents`
+        }
+      >
+        <DashboardDataGrid
+          rows={execution.intents}
+          columns={columns}
+          emptyTitle="No order intents"
+          emptyBody="Order intents will appear after approved consensus output passes risk gates."
+          getRowId={(intent) => intent.id}
+          searchPlaceholder="Filter order intents"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -1291,14 +1346,22 @@ function ExitPanel({
         <Metric label="Simulated" value={String(exit.simulatedCount)} />
         <Metric label="Refused" value={String(exit.refusedCount)} />
       </div>
-      <DashboardDataGrid
-        rows={exit.intents}
-        columns={columns}
-        emptyTitle="No exit intents"
-        emptyBody="Exit intents will appear after open positions cross configured exit thresholds."
-        getRowId={(intent) => intent.id}
-        searchPlaceholder="Filter exit intents"
-      />
+      <Disclosure
+        title={
+          exit.intents.length === 1
+            ? "View 1 exit intent"
+            : `View ${exit.intents.length} exit intents`
+        }
+      >
+        <DashboardDataGrid
+          rows={exit.intents}
+          columns={columns}
+          emptyTitle="No exit intents"
+          emptyBody="Exit intents will appear after open positions cross configured exit thresholds."
+          getRowId={(intent) => intent.id}
+          searchPlaceholder="Filter exit intents"
+        />
+      </Disclosure>
     </section>
   );
 }
@@ -1353,14 +1416,22 @@ function BrokerHistoryPanel({
         <Metric label="Checkpoints" value={String(brokerHistory.counts.checkpoints)} />
         <Metric label="Updated" value={formatDateTime(brokerHistory.lastUpdatedAt, timeZone)} />
       </div>
-      <DashboardDataGrid
-        rows={brokerHistory.checkpoints}
-        columns={columns}
-        emptyTitle="No broker checkpoints"
-        emptyBody="Alpaca broker history checkpoints will appear after order, fill, position, or bar imports run."
-        getRowId={(checkpoint) => checkpoint.id}
-        searchPlaceholder="Filter broker checkpoints"
-      />
+      <Disclosure
+        title={
+          brokerHistory.checkpoints.length === 1
+            ? "View 1 broker checkpoint"
+            : `View ${brokerHistory.checkpoints.length} broker checkpoints`
+        }
+      >
+        <DashboardDataGrid
+          rows={brokerHistory.checkpoints}
+          columns={columns}
+          emptyTitle="No broker checkpoints"
+          emptyBody="Alpaca broker history checkpoints will appear after order, fill, position, or bar imports run."
+          getRowId={(checkpoint) => checkpoint.id}
+          searchPlaceholder="Filter broker checkpoints"
+        />
+      </Disclosure>
     </section>
   );
 }

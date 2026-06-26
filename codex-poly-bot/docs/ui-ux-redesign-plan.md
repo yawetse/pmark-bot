@@ -2,34 +2,36 @@
 
 Date: 2026-06-26
 
-This plan covers the `codex-poly-bot` dashboard experience in `frontend/app/dashboard/*` and `frontend/components/dashboard/*`. The app is a data-heavy internal trading operations dashboard built with Next.js, React, custom CSS tokens, and AG Grid. The redesign should keep the current dry-run and live-trading safety posture visible at all times.
+This plan covers the full `codex-poly-bot` web experience in `frontend/app/*` and `frontend/components/dashboard/*`, including login, access-denied, overview, operations, config, model, comparison, system, help, and model-detail routes. The app is a data-heavy internal trading operations dashboard built with Next.js, React, custom CSS tokens, AG Grid, Recharts, Radix primitives, and Lucide icons. The redesign should keep the dry-run and live-trading safety posture visible at all times, while moving exact records and advanced controls into clear detail regions.
 
-No external Claude skill or third-party package has been installed, enabled, downloaded, imported, or invoked for this plan. External skills and libraries below are recommendations only unless explicitly approved later.
+The 2026-06-26 second pass uses the installed external Claude skills and the already-approved third-party UI libraries available in this repo: Vercel web design guidelines, Vercel React best practices, Vercel composition patterns, Bencium controlled UX designer, UI/UX Pro Max, AccessLint scan/audit guidance, AG Grid, Recharts, Radix Accordion/Dialog, and Lucide icons.
 
 ## External Skills To Use
 
 | Snyk article skill | Use for this app | Why it applies | Use mode | Consent needed before install/use |
 | --- | --- | --- | --- | --- |
-| Vercel web design guidelines | Dashboard shell, nav, forms, status indicators, responsive behavior, focus states, and route structure | The app has many operator controls, links, tables, and state labels that need consistent layout, labels, focus, and touch behavior | Use local equivalent | No |
-| Bencium UX designer | Dashboard workflows, config editing, manual run triggers, operations review, kill switch, and error recovery | The app is an internal operations workflow with high-risk controls, progressive disclosure needs, and state recovery paths | Recommend | Yes |
-| AccessLint plugin | Color contrast, keyboard navigation, focus visibility, form labels, status colors, and color-only indicators | The app relies on status chips, dots, tables, form fields, and dangerous actions where accessibility failures can hide risk | Recommend | Yes |
-| UI/UX Pro Max | Visual system, density, palette, typography, spacing, elevation, and multi-page dashboard consistency | The app needs a product-appropriate operations aesthetic that is restrained, readable, and consistent across dashboard pages | Recommend | Yes |
-| Vercel React best practices | React and Next.js components in `components/dashboard/*`, data grids, dynamic model pages, and client-side state updates | The redesign will touch client components, grid rendering, form state, local preferences, and potentially expensive table views | Use local equivalent | No |
-| Vercel composition patterns | Shared panel, metric, status, form, table, and page layout components | Several views repeat similar panel and metric patterns through local markup instead of a small component system | Recommend | Yes |
-| Anthropic frontend-design | Optional later visual concept pass for the full dashboard system | A concept pass may help if a larger visual redesign is approved, but this is not a public marketing page | Recommend | Yes |
+| Vercel web design guidelines | All app routes, nav, forms, status indicators, responsive behavior, focus states, and route structure | The app has many operator controls, links, tables, and state labels that need consistent layout, labels, focus, and touch behavior | Use installed external skill | No |
+| Bencium UX designer | Dashboard workflows, config editing, manual run triggers, operations review, kill switch, and error recovery | The app is an internal operations workflow with high-risk controls, progressive disclosure needs, and state recovery paths | Use installed external skill | No |
+| AccessLint plugin | Color contrast, keyboard navigation, focus visibility, form labels, status colors, and color-only indicators | The app relies on status chips, dots, tables, form fields, and dangerous actions where accessibility failures can hide risk | Use installed external scan/audit guidance | No |
+| UI/UX Pro Max | Visual system, density, palette, typography, spacing, elevation, and multi-page dashboard consistency | The app needs a product-appropriate operations aesthetic that is restrained, readable, and consistent across dashboard pages | Use installed external skill | No |
+| Vercel React best practices | React and Next.js components in `components/dashboard/*`, data grids, dynamic model pages, and client-side state updates | The redesign touches client components, grid rendering, form state, local preferences, and table views | Use installed external skill | No |
+| Vercel composition patterns | Shared panel, metric, status, form, table, and page layout components | Several views repeat similar panel and metric patterns through local markup instead of a small component system | Use installed external skill | No |
+| Anthropic frontend-design | Optional later visual concept pass for a public product page | This is not a marketing page, so the controlled operations pattern is a better fit for this pass | Skip | No |
 | Vercel React Native Skills | Not applicable | This is a web app, not React Native or Expo | Skip | No |
 
 ## Current UI Findings
 
+- `frontend/app/login/page.tsx` and `frontend/app/access-denied/page.tsx`: the auth pages use the old bare panel style and should share the same shell quality, focus behavior, and operator-specific copy as the dashboard.
 - `frontend/app/dashboard/page.tsx` and `components/dashboard/operator-command-center.tsx`: the main route correctly puts dry-run state first, but it mixes state summary, loop telemetry, preferences, manual run, runtime status, next actions, market data, economics, and control links on one long page. The operator needs a clearer split between "act now", "monitor", and "inspect details".
 - `/tmp/polybot-dashboard-after-desktop.png`: the current first viewport is readable after the recent polish pass, but the loop monitor still dominates the screen before the operator sees next actions, manual run, and risk controls.
 - `/tmp/polybot-dashboard-after-mobile.png`: the mobile layout stacks cleanly, but the top navigation becomes a horizontal strip with limited visible context. This is acceptable for a first pass, but a compact mobile nav pattern would be better before adding more screens.
 - `components/dashboard/loop-monitor.tsx`: the loop monitor shows useful detail, but stages, data inputs, prompts, logic, calculations, gates, and records compete for attention. Long data such as stock universe symbols needs summary-first display with expandable detail.
 - `components/dashboard/config-controls.tsx`: config editing exposes powerful controls through text areas and a generic path/value editor. It needs safer grouped settings, preview of impact, stronger validation, and clearer conflict recovery.
-- `components/dashboard/operations-view.tsx`: operations contains pipeline runs, scanner, reasoning, strategy, execution, exit, historical import, broker history, market data, economics, order tables, and kill switch control. This should become a workflow-oriented operations console, not a single stacked report.
+- `components/dashboard/dashboard-nav.tsx`: Claude and OpenAI are top-level nav items even though they are peer detail views under one model workflow. The top-level IA should be task-based: Status, Operations, Config, Models, Performance, System, Help.
+- `components/dashboard/operations-view.tsx`: operations contains pipeline runs, scanner, reasoning, strategy, execution, exit, historical import, broker history, market data, economics, order tables, and kill switch control. This should become a workflow-oriented operations console, not a single stacked report. Exact rows should start in "View details" disclosures.
 - `components/dashboard/data-grid.tsx`: AG Grid is already a reasonable base for high-density tables. The custom wrapper should standardize search, empty states, table titles, column presets, row density, and horizontal scroll behavior.
 - `components/dashboard/economics-panel.tsx` and `components/dashboard/comparison-view.tsx`: economics and comparison currently lean on metrics and tables. They need trend and comparison views before tables, because the operator needs to know whether costs, P&L, usage, and provider performance are moving in the wrong direction.
-- `components/dashboard/model-summary.tsx`: model pages normalize arbitrary row objects into grids. This is flexible, but it can produce inconsistent column order and weak explanations for decisions, orders, and positions.
+- `components/dashboard/model-summary.tsx`: model pages normalize arbitrary row objects into grids. This is flexible, but the IA should expose a single Models top-level route with Claude/OpenAI as detail targets, not separate global nav items.
 - `frontend/app/globals.css`: the current CSS token layer is simple and workable. A deeper redesign should formalize tokens, component variants, responsive rules, and status semantics instead of adding one-off styles.
 
 ## Component Library Sanity Check
@@ -47,7 +49,7 @@ No external Claude skill or third-party package has been installed, enabled, dow
 
 - Direction: Treat Poly Bot as an operator console, not a marketing dashboard. The tone should be calm, dense, and explicit. The UI should make safe mode, blockers, live gates, risk, orders, costs, and next loop state easy to scan.
 - Layout: Move toward a three-level hierarchy. Level one is global state and action needed. Level two is core workflows: Monitor, Configure, Operate, Analyze. Level three is exact records and audit trails. Avoid putting every dataset into the first screen.
-- Navigation: Keep the top route nav for desktop, but add stronger route grouping: Status, Operations, Config, Models, Economics, Comparison, System, Help. For mobile, use a compact menu or scroll strip with clear selected state and enough tap target width.
+- Navigation: Keep a predictable top route nav for desktop, but make it task-based: Status, Operations, Config, Models, Performance, System, Help. Provider pages remain deep links under Models. For mobile, keep the scroll strip but add icons, better active state, and skip-to-content.
 - Typography: Use a tighter operations scale. Page titles should identify state or task. Panel headings should stay compact. Table cells and form labels should use deliberate sizes, not inherited defaults.
 - Color: Keep a neutral light/dark system with teal for safe/monitor state, red for blocked/danger, blue for waiting/informational state, and gray for idle/unknown state. Status should never rely on color alone.
 - Spacing: Use 8px radius or less, consistent 12/16/20px spacing, and stable card heights for metric and status summaries. Avoid nested card stacks unless the content is a repeated item.
@@ -57,8 +59,10 @@ No external Claude skill or third-party package has been installed, enabled, dow
 
 ## UX Redesign Plan
 
-- Primary dashboard flow: Start with "Current mode", "Action needed", "Next scheduled loop", and "Manual run" above the fold. Move lower-detail loop internals into expandable sections.
-- Operations flow: Split `/dashboard/operations` into workflow sections: Run Pipeline, Candidate Review, Model Reasoning, Strategy Decision, Execution, Exit, Imports, Orders, Kill Switch. Each section should have a short summary, table, and direct recovery action where appropriate.
+- Primary dashboard flow: Start with "Current mode", "Action needed", "Next scheduled loop", and "Manual run" above the fold. Move lower-detail loop internals, market records, and cost tables into expandable sections.
+- Operations flow: Split `/dashboard/operations` into workflow sections: Run Pipeline, Candidate Review, Model Reasoning, Strategy Decision, Execution, Exit, Imports, Orders, Kill Switch. Each section should show summary metrics first and place exact AG Grid records behind disclosure.
+- Model flow: Add `/dashboard/models` as the top-level model workspace. Keep `/dashboard/models/claude` and `/dashboard/models/openai` as provider detail routes. Detailed positions, decisions, and orders start collapsed.
+- Help flow: Keep architecture and run flow visible. Move component, storage, infrastructure, environment, and release reference tables into expandable sections.
 - Config flow: Replace the generic path-first experience with grouped controls for venue, live mode, risk, notifications, Alpaca universe, model budgets, and loop cadence. Keep an advanced JSON/path editor behind disclosure for rare edits.
 - Manual run behavior: Make each run mode show risk level, expected stages, whether live orders are possible, and audit impact before the operator triggers it.
 - Feedback: Standardize saved, conflict, failed, accepted, queued, and blocked messages. Each message should say what happened, whether the next loop is affected, and what the operator can do next.
@@ -110,10 +114,12 @@ Recommended first visualization library: Recharts, subject to approval before in
 
 ## UI/UX Polish Checklist
 
-- [ ] [Vercel web design guidelines] Capture baseline screenshots for `/dashboard`, `/dashboard/config`, `/dashboard/operations`, `/dashboard/models/claude`, `/dashboard/models/openai`, `/dashboard/comparison`, and `/dashboard/system`. Acceptance: screenshots show desktop and mobile layout, empty states, blocked states, and primary controls. Verify with browser or Playwright screenshots.
+- [ ] [Vercel web design guidelines] Capture baseline screenshots for `/login`, `/access-denied`, `/dashboard`, `/dashboard/config`, `/dashboard/operations`, `/dashboard/models`, `/dashboard/models/claude`, `/dashboard/models/openai`, `/dashboard/comparison`, `/dashboard/system`, and `/dashboard/help`. Acceptance: screenshots show desktop and mobile layout, empty states, blocked states, and primary controls. Verify with browser or Playwright screenshots.
 - [ ] [UI/UX Pro Max] Document the Poly Bot visual system. Acceptance: tokens for color, type, spacing, radius, elevation, status, forms, tables, and messages are written before code changes. Verify by reviewing `frontend/app/globals.css`.
 - [ ] [Bencium UX designer] Redesign the main dashboard around current state, action needed, manual run, next loop, and detail inspection. Acceptance: the first viewport answers "is the bot safe, what needs action, and what can I do now?" Verify with desktop and mobile screenshots.
 - [ ] [Bencium UX designer] Redesign `/dashboard/operations` into workflow sections for pipeline, scanner, reasoning, strategy, execution, exit, imports, orders, and kill switch. Acceptance: each section has summary, detail, and recovery action. Verify with interaction review and route screenshots.
+- [ ] [Bencium UX designer] Add `/dashboard/models` and demote provider routes from global navigation to model-workspace details. Acceptance: top-level nav is task-based and providers remain deep-linkable. Verify with route screenshots.
+- [ ] [Bencium UX designer] Add expandable details to model, operations, config, and help/reference surfaces. Acceptance: first view shows summary and action, exact records are available through disclosure. Verify with interaction review.
 - [ ] [Bencium UX designer] Redesign `/dashboard/config` into grouped setting sections with an advanced editor. Acceptance: common edits no longer require choosing raw config paths first. Verify with form interaction tests and conflict/error-state checks.
 - [ ] [AccessLint plugin] Check contrast, keyboard order, labels, focus states, ARIA, status indicators, and color-only cues across the touched routes. Acceptance: no obvious WCAG A/AA failures remain in the changed UI. Verify with keyboard pass and contrast checks.
 - [ ] [Vercel composition patterns] Extract shared primitives for panel, metric, status chip, message, form section, disclosure, and empty state. Acceptance: repeated route markup uses shared components without changing the data contracts. Verify with code review and typecheck.
@@ -123,9 +129,11 @@ Recommended first visualization library: Recharts, subject to approval before in
 - [ ] [AccessLint plugin] Design high-risk action confirmations for live mode and kill switch. Acceptance: irreversible or live-trading-affecting actions require clear scope and confirmation. Verify with interaction tests.
 - [ ] [Vercel web design guidelines] Run final responsive and interaction QA. Acceptance: desktop and mobile screenshots match the redesign plan, text fits containers, controls remain usable, and no framework overlay or console errors appear. Verify with Browser or Playwright plus `npm run typecheck`.
 
-## Consent Gates Before Implementation
+## Implementation Scope For Second Pass
 
-- Ask before installing or using external Claude skills from the Snyk article.
-- Ask before installing any new package, including `recharts`, `@radix-ui/*`, `react-hook-form`, `zod`, icon libraries, or other UI packages.
-- Keep AG Grid because it is already installed and appropriate for exact records and audit tables.
-- Keep this as a plan-only artifact until implementation is explicitly requested.
+- Use installed external Claude skills and already-present third-party libraries.
+- Do not add a new package unless a later task needs a specific missing primitive.
+- Keep AG Grid for exact records and audit tables.
+- Use Radix Accordion/Dialog for disclosure and high-risk confirmation.
+- Use Recharts only where charting already exists.
+- Keep the visual tone restrained and operational.

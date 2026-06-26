@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import {
@@ -300,10 +301,10 @@ function ControlLink({
   body: string;
 }) {
   return (
-    <a className="control-link" href={href}>
+    <Link className="control-link" href={href}>
       <strong>{title}</strong>
       <span>{body}</span>
-    </a>
+    </Link>
   );
 }
 

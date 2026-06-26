@@ -121,6 +121,7 @@ body {
   color: var(--foreground);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 a {
@@ -131,6 +132,55 @@ a {
 .page-shell {
   min-height: 100vh;
   padding: 28px 32px 44px;
+}
+
+.page-shell:focus {
+  outline: none;
+}
+
+.auth-shell {
+  align-items: start;
+  display: grid;
+  min-height: 100vh;
+  padding-top: clamp(28px, 7vh, 72px);
+}
+
+.auth-panel {
+  margin: 0 auto;
+  max-width: 560px;
+  width: 100%;
+}
+
+.auth-panel h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  margin: 0 0 12px;
+}
+
+.auth-panel .button {
+  margin-top: 18px;
+}
+
+.skip-link {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 800;
+  left: 16px;
+  padding: 10px 12px;
+  position: fixed;
+  top: 12px;
+  transform: translateY(-150%);
+  transition: transform 140ms ease;
+  z-index: 100;
+}
+
+.skip-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  transform: translateY(0);
 }
 
 .topbar {
@@ -202,11 +252,17 @@ a {
   display: inline-flex;
   font-size: 13px;
   font-weight: 600;
+  gap: 7px;
   justify-content: center;
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 13px;
   transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
   white-space: nowrap;
+}
+
+.nav a svg {
+  color: currentColor;
+  flex: 0 0 auto;
 }
 
 .nav a:hover,
@@ -808,6 +864,8 @@ textarea:focus-visible {
 
 .dashboard-disclosure {
   border-top: 1px solid var(--surface-strong);
+  display: grid;
+  gap: 0;
   padding-top: 2px;
 }
 
@@ -827,9 +885,15 @@ textarea:focus-visible {
   font-size: 13px;
   font-weight: 800;
   justify-content: space-between;
+  min-height: 44px;
   padding: 10px 0;
   text-align: left;
   width: 100%;
+}
+
+.dashboard-disclosure-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .dashboard-disclosure-trigger svg {
@@ -844,6 +908,7 @@ textarea:focus-visible {
 
 .dashboard-disclosure-content {
   overflow: hidden;
+  padding-bottom: 2px;
 }
 
 .loop-detail-section {
@@ -1334,6 +1399,7 @@ textarea:focus-visible {
 .comparison-summary-grid,
 .economics-visual-grid,
 .model-workflow-strip,
+.model-provider-grid,
 .operation-workflow-grid,
 .config-group-grid {
   display: grid;
@@ -1347,6 +1413,44 @@ textarea:focus-visible {
 .economics-visual-grid,
 .model-workflow-strip {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.model-provider-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.model-provider-card {
+  align-content: start;
+}
+
+.model-provider-card > .button {
+  justify-self: start;
+}
+
+.model-workflow-strip.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.breadcrumb-row {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.breadcrumb-row a {
+  color: var(--accent);
+}
+
+.breadcrumb-row a:hover,
+.breadcrumb-row a:focus-visible {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .operation-workflow-grid {
@@ -1864,6 +1968,7 @@ th {
   .operation-workflow-grid,
   .comparison-summary-grid,
   .config-group-grid,
+  .model-provider-grid,
   .model-workflow-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1922,6 +2027,10 @@ th {
     width: 100%;
   }
 
+  .nav a {
+    min-width: max-content;
+  }
+
   .content-grid {
     grid-template-columns: 1fr;
   }
@@ -1929,6 +2038,7 @@ th {
   .operator-hero,
   .operator-grid,
   .page-header,
+  .model-provider-grid,
   .state-summary-strip,
   .priority-grid,
   .status-card-grid,
@@ -2006,5 +2116,26 @@ th {
 
   .setting-help dl > div {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nav a {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
   }
 }

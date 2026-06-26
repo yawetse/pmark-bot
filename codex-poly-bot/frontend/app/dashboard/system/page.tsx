@@ -25,7 +25,7 @@ export default async function SystemPage() {
   return (
     <>
       <DashboardNav />
-      <main className="page-shell">
+      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
         <div className="content-grid">
           <StatusOverview items={summary.ok ? summary.data.status.items : undefined} />
           <WalletStatus credentials={summary.ok ? summary.data.wallet.credentials : undefined} />

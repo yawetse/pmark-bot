@@ -6,6 +6,7 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import {
   Bar,
   BarChart,
@@ -117,16 +118,24 @@ export function ComparisonView({
         )}
       </div>
       {loadError ? <p className="status-message">{loadError}</p> : null}
-      <DashboardDataGrid
-        rows={summary.metrics}
-        columns={columns}
-        emptyTitle="No comparison metrics yet"
-        emptyBody="The app needs recorded decisions, orders, position changes, and model costs before it can calculate P&L, win rate, drawdown, or return to risk."
-        getRowId={(metric) => `${metric.group}-${metric.metric}`}
-        title="Comparison detail"
-        description="Use the grid for exact metric caveats after the summary indicates where to look."
-        searchPlaceholder="Filter metrics"
-      />
+      <Disclosure
+        title={
+          summary.metrics.length === 1
+            ? "View 1 comparison metric"
+            : `View ${summary.metrics.length} comparison metrics`
+        }
+      >
+        <DashboardDataGrid
+          rows={summary.metrics}
+          columns={columns}
+          emptyTitle="No comparison metrics yet"
+          emptyBody="The app needs recorded decisions, orders, position changes, and model costs before it can calculate P&L, win rate, drawdown, or return to risk."
+          getRowId={(metric) => `${metric.group}-${metric.metric}`}
+          title="Comparison detail"
+          description="Use the grid for exact metric caveats after the summary indicates where to look."
+          searchPlaceholder="Filter metrics"
+        />
+      </Disclosure>
     </section>
   );
 }

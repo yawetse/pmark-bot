@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type { StatusItem } from "@/components/dashboard/status-overview";
 import {
   DEFAULT_WALLET_CREDENTIALS,
@@ -117,12 +119,12 @@ export function GettingStartedGuide({
           </li>
         </ol>
         <div className="guide-actions" aria-label="Dashboard next step links">
-          <a className="button" href="/dashboard/config">
+          <Link className="button" href="/dashboard/config">
             Review config
-          </a>
-          <a className="button" href="/dashboard/operations">
+          </Link>
+          <Link className="button" href="/dashboard/operations">
             Open operations
-          </a>
+          </Link>
         </div>
       </div>
     </section>

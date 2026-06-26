@@ -18,7 +18,7 @@ export default async function HelpPage() {
   return (
     <>
       <DashboardNav />
-      <main className="page-shell">
+      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
         <HelpAboutView />
       </main>
     </>
