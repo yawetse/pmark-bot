@@ -83,14 +83,26 @@ assert.doesNotMatch(operationsView, /FALLBACK_ORDER_EVENTS/);
 
 const nav = read("components/dashboard/dashboard-nav.tsx");
 for (const route of [
-  "/dashboard/models/claude",
-  "/dashboard/models/openai",
+  "/dashboard/models",
   "/dashboard/comparison",
   "/dashboard/operations",
   "/dashboard/help",
 ]) {
   assert.match(nav, new RegExp(route.replaceAll("/", "\\/")));
 }
+
+const modelsPage = read("app/dashboard/models/page.tsx");
+for (const token of [
+  "ModelsWorkspace",
+  "Promise.all",
+  "models/${provider}/summary",
+  "claude",
+  "openai",
+]) {
+  assert.ok(modelsPage.includes(token), `${token} missing from models page`);
+}
+assert.ok(modelSummary.includes("/dashboard/models/${provider}"));
+assert.match(modelSummary, /View .* Details/);
 
 const marketDataPanel = read("components/dashboard/market-data-panel.tsx");
 for (const token of [

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useId, useMemo, useState } from "react";
 import {
   AllCommunityModule,
   themeQuartz,
@@ -44,6 +44,8 @@ export function DashboardDataGrid<T extends object>({
   searchPlaceholder?: string;
 }) {
   const [quickFilterText, setQuickFilterText] = useState("");
+  const deferredQuickFilterText = useDeferredValue(quickFilterText);
+  const filterId = useId();
   const defaultColDef = useMemo<ColDef<T>>(
     () => ({
       autoHeight: true,
@@ -80,14 +82,22 @@ export function DashboardDataGrid<T extends object>({
         <label className="grid-filter">
           <span>Filter</span>
           <input
+            id={filterId}
+            name="dashboard-grid-filter"
             type="search"
             value={quickFilterText}
             onChange={(event) => setQuickFilterText(event.target.value)}
             placeholder={searchPlaceholder}
+            autoComplete="off"
           />
         </label>
       </div>
-      <div className="dashboard-data-grid" data-density={density} style={{ height: gridHeight }}>
+      <div
+        aria-label={title ?? "Dashboard data grid"}
+        className="dashboard-data-grid"
+        data-density={density}
+        style={{ height: gridHeight }}
+      >
         <AgGridProvider modules={GRID_MODULES}>
           <AgGridReact<T>
             columnDefs={columns}
@@ -100,9 +110,8 @@ export function DashboardDataGrid<T extends object>({
             pagination
             paginationPageSize={pageSize}
             paginationPageSizeSelector={[10, 25, 50]}
-            quickFilterText={quickFilterText}
+            quickFilterText={deferredQuickFilterText}
             rowData={rows}
-            suppressCellFocus
             theme={themeQuartz}
           />
         </AgGridProvider>

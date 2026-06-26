@@ -26,7 +26,7 @@ export default async function DashboardPage() {
   return (
     <>
       <DashboardNav />
-      <main className="page-shell">
+      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
         {summary.ok ? (
           <OperatorCommandCenter summary={summary.data} />
         ) : (

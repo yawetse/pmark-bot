@@ -24,7 +24,7 @@ export default async function ConfigPage() {
   return (
     <>
       <DashboardNav />
-      <main className="page-shell">
+      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
         <div className="content-grid">
           <ConfigControls
             initialSnapshot={currentConfig.ok ? currentConfig.data : undefined}

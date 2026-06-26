@@ -20,6 +20,7 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import { dashboardApi } from "@/lib/api";
 
 type AiProviderCostView = {
@@ -380,17 +381,25 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
           </div>
         </div>
       </div>
-      <DashboardDataGrid
-        rows={economics.ai.providers}
-        columns={providerColumns}
-        emptyTitle="No token spend recorded"
-        emptyBody="The backend has not recorded provider token usage rows yet."
-        getRowId={(provider) => provider.provider}
-        pageSize={10}
-        title="Provider token spend"
-        description="Exact provider usage, estimated rows, and import status."
-        searchPlaceholder="Filter providers"
-      />
+      <Disclosure
+        title={
+          economics.ai.providers.length === 1
+            ? "View 1 provider usage row"
+            : `View ${economics.ai.providers.length} provider usage rows`
+        }
+      >
+        <DashboardDataGrid
+          rows={economics.ai.providers}
+          columns={providerColumns}
+          emptyTitle="No token spend recorded"
+          emptyBody="The backend has not recorded provider token usage rows yet."
+          getRowId={(provider) => provider.provider}
+          pageSize={10}
+          title="Provider token spend"
+          description="Exact provider usage, estimated rows, and import status."
+          searchPlaceholder="Filter providers"
+        />
+      </Disclosure>
       <div className="economics-block">
         <h3>Provider usage imports</h3>
         <div className="manual-run-actions" role="group" aria-label="AI usage provider imports">
@@ -411,27 +420,43 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
         {importState.status === "done" ? <p className="status-message">{importState.message}</p> : null}
         {importState.status === "error" ? <p className="status-message">{importState.message}</p> : null}
       </div>
-      <DashboardDataGrid
-        rows={importRuns}
-        columns={importColumns}
-        emptyTitle="No provider usage imports"
-        emptyBody="Provider-side token usage imports will appear here after they run."
-        getRowId={(run) => run.id}
-        pageSize={10}
-        title="Provider usage import runs"
-        searchPlaceholder="Filter provider usage imports"
-      />
-      <DashboardDataGrid
-        rows={economics.history.snapshots ?? []}
-        columns={historyColumns}
-        emptyTitle="No cost history"
-        emptyBody="Economics snapshots will appear after summary reads store monthly profitability history."
-        getRowId={(snapshot) => snapshot.id}
-        pageSize={10}
-        title="Cost history"
-        description="Use this grid for exact values behind the visual summaries."
-        searchPlaceholder="Filter cost history"
-      />
+      <Disclosure
+        title={
+          importRuns.length === 1
+            ? "View 1 provider import run"
+            : `View ${importRuns.length} provider import runs`
+        }
+      >
+        <DashboardDataGrid
+          rows={importRuns}
+          columns={importColumns}
+          emptyTitle="No provider usage imports"
+          emptyBody="Provider-side token usage imports will appear here after they run."
+          getRowId={(run) => run.id}
+          pageSize={10}
+          title="Provider usage import runs"
+          searchPlaceholder="Filter provider usage imports"
+        />
+      </Disclosure>
+      <Disclosure
+        title={
+          (economics.history.snapshots ?? []).length === 1
+            ? "View 1 cost snapshot"
+            : `View ${(economics.history.snapshots ?? []).length} cost snapshots`
+        }
+      >
+        <DashboardDataGrid
+          rows={economics.history.snapshots ?? []}
+          columns={historyColumns}
+          emptyTitle="No cost history"
+          emptyBody="Economics snapshots will appear after summary reads store monthly profitability history."
+          getRowId={(snapshot) => snapshot.id}
+          pageSize={10}
+          title="Cost history"
+          description="Use this grid for exact values behind the visual summaries."
+          searchPlaceholder="Filter cost history"
+        />
+      </Disclosure>
     </section>
   );
 }

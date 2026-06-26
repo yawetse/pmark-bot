@@ -6,6 +6,7 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 
 export type MarketDataCandidateView = {
   id: string;
@@ -114,16 +115,24 @@ export function MarketDataPanel({
           </article>
         ))}
       </div>
-      <DashboardDataGrid
-        rows={candidates}
-        columns={columns}
-        emptyTitle="No candidates recorded"
-        emptyBody="The dashboard has not received priced candidate rows for the selected environment."
-        getRowId={(candidate) => candidate.id}
-        title="Candidate records"
-        description="Use the grid for exact pricing, liquidity, spread, history, source, and pull time."
-        searchPlaceholder="Filter candidates"
-      />
+      <Disclosure
+        title={
+          candidates.length === 1
+            ? "View 1 candidate record"
+            : `View ${candidates.length} candidate records`
+        }
+      >
+        <DashboardDataGrid
+          rows={candidates}
+          columns={columns}
+          emptyTitle="No candidates recorded"
+          emptyBody="The dashboard has not received priced candidate rows for the selected environment."
+          getRowId={(candidate) => candidate.id}
+          title="Candidate records"
+          description="Use the grid for exact pricing, liquidity, spread, history, source, and pull time."
+          searchPlaceholder="Filter candidates"
+        />
+      </Disclosure>
     </section>
   );
 }
