@@ -749,6 +749,29 @@ function PipelineRunsPanel({
       valueGetter: (params) => String(params.data?.metadata?.candidateCount ?? 0),
     },
   ];
+  const stepColumns: DashboardGridColumn<PipelineStepView>[] = [
+    { field: "order", headerName: "Step", minWidth: 90 },
+    { field: "label", headerName: "Name", minWidth: 180 },
+    { field: "status", headerName: "Status", minWidth: 130 },
+    {
+      field: "recordIds",
+      headerName: "Records",
+      minWidth: 140,
+      valueGetter: (params) => String(params.data?.recordIds?.length ?? 0),
+    },
+    {
+      field: "metrics",
+      headerName: "Metrics",
+      minWidth: 260,
+      valueGetter: (params) => JSON.stringify(params.data?.metrics ?? {}),
+    },
+    {
+      field: "completedAt",
+      headerName: "Completed",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
+  ];
 
   return (
     <section className="operator-panel span-2" aria-labelledby="pipeline-title">
@@ -783,6 +806,16 @@ function PipelineRunsPanel({
       ) : (
         <p className="panel-note">No manual or scheduled runs have been recorded yet.</p>
       )}
+      <p className="section-label">Pipeline detail</p>
+      <DashboardDataGrid
+        rows={latestSteps}
+        columns={stepColumns}
+        emptyTitle="No step records"
+        emptyBody="Pipeline step records will appear after a run starts."
+        getRowId={(step) => step.id}
+        pageSize={5}
+        searchPlaceholder="Filter run steps"
+      />
       <DashboardDataGrid
         rows={runs}
         columns={columns}
@@ -1298,13 +1331,14 @@ function formatDateTime(value: string | null | undefined, timeZone: string): str
 }
 
 function statusClass(status: string): "ok" | "idle" | "blocked" {
-  if (["blocked", "failed", "rate_limited", "skipped", "refused"].includes(status)) {
+  if (["blocked", "failed", "rate_limited", "refused"].includes(status)) {
     return "blocked";
   }
   if (
     [
       "waiting",
       "idle",
+      "skipped",
       "empty",
       "no_candidates_passed",
       "no_candidates",

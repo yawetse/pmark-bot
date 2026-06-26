@@ -41,6 +41,7 @@ for (const token of [
   "HistoricalImportPanel",
   "BrokerHistoryPanel",
   "Run pipeline",
+  "Pipeline detail",
   "Candidate filters",
   "No scanner candidates",
   "Filter scanner candidates",
@@ -73,6 +74,7 @@ for (const token of [
   "Degraded venue status",
   "Manual-review state",
   "useResolvedTimeZone",
+  "recordIds",
 ]) {
   assert.match(operationsView, new RegExp(token));
 }
@@ -104,6 +106,20 @@ assert.match(marketDataPanel, /DashboardDataGrid/);
 
 const economicsPanel = read("components/dashboard/economics-panel.tsx");
 assert.match(economicsPanel, /DashboardDataGrid/);
+for (const token of [
+  "Provider usage imports",
+  "triggerProviderImport",
+  "economics/ai-usage-import",
+  "Usage source",
+  "Cost source",
+  "Freshness",
+  "latestImportAt",
+  "errorState",
+  "No cost history",
+  "EconomicsSnapshotView",
+]) {
+  assert.match(economicsPanel, new RegExp(token));
+}
 
 const dataGrid = read("components/dashboard/data-grid.tsx");
 for (const token of ["AgGridReact", "paginationPageSizeSelector", "quickFilterText"]) {

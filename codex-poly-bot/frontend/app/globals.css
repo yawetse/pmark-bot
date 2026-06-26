@@ -212,6 +212,17 @@ a {
   color: var(--button-foreground);
 }
 
+.manual-run-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.manual-run-actions .button {
+  justify-content: center;
+  text-align: center;
+}
+
 .content-grid {
   display: grid;
   gap: 16px;

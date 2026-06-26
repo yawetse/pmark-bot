@@ -9,7 +9,7 @@ REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -451,6 +451,27 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "items": services.runtime_status.pipeline_runs(context.environment),
         }
 
+    @router.get("/api/operations/runs/{run_id}")
+    def operations_run_detail(
+        run_id: str,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return one loop run with step-linked records.
+
+        REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-005
+        """
+
+        payload = services.runtime_status.pipeline_run_detail(context.environment, run_id)
+        if payload is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error_code": "pipeline_run_not_found",
+                    "message": "pipeline run was not found for this environment",
+                },
+            )
+        return payload
+
     @router.post("/api/operations/manual-run")
     async def manual_run(
         request: Request,
@@ -464,12 +485,14 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
         payload = await request.json()
         environment = _parse_environment(payload.get("environment"), context.environment)
+        mode = str(payload.get("mode") or payload.get("run_mode") or "full_dry_run")
         config_snapshot = _current_config(environment)
         result = services.runtime_status.trigger_manual_run(
             username=context.actor.username,
             ip_address=context.actor.ip_address,
             environment=environment,
             config_payload=config_snapshot["settings"],
+            run_mode=mode,
         )
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=result)
 
@@ -524,6 +547,33 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             month_key=month,
             limit=limit,
         )
+
+    @router.post("/api/economics/ai-usage-import")
+    async def ai_usage_import(
+        request: Request,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+        _: None = Depends(require_mutation_context),
+    ) -> JSONResponse:
+        """Trigger provider-side token usage import.
+
+        REQ: REQ-LLM-002, REQ-UI-010, REQ-OBS-005
+        """
+
+        payload = await request.json()
+        environment = _parse_environment(payload.get("environment"), context.environment)
+        provider = _parse_model_provider(payload.get("provider"))
+        now = datetime.now(UTC)
+        period_start = _parse_api_datetime(payload.get("periodStart")) or now - timedelta(days=1)
+        period_end = _parse_api_datetime(payload.get("periodEnd")) or now
+        result = services.runtime_status.trigger_ai_usage_import(
+            username=context.actor.username,
+            ip_address=context.actor.ip_address,
+            environment=environment,
+            provider=provider,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=result)
 
     @router.get("/api/audit-events")
     def audit_events(
@@ -608,6 +658,38 @@ def _parse_environment(raw: Any, default: Environment) -> Environment:
                 "message": f"unsupported environment: {raw}",
             },
         ) from exc
+
+
+def _parse_model_provider(raw: Any) -> ModelProvider:
+    value = str(raw or ModelProvider.OPENAI.value).strip().lower()
+    try:
+        return ModelProvider(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error_code": "invalid_model_provider",
+                "message": f"unsupported model provider: {raw}",
+            },
+        ) from exc
+
+
+def _parse_api_datetime(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error_code": "invalid_datetime",
+                "message": f"invalid ISO datetime: {raw}",
+            },
+        ) from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _client_ip(request: Request) -> str:

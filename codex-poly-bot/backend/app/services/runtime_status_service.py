@@ -20,28 +20,36 @@ from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
 from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
 from app.services.llm_service import SCORING_SYSTEM_PROMPT
+from app.services.ai_usage_import_service import (
+    AiUsageImportService,
+    ProviderBackedAiUsageImportSource,
+)
 from app.services.market_data_provider import (
     MarketDataProvider,
     ProviderBackedMarketDataFetcher,
 )
 from app.services.scanner_service import (
     DEFAULT_SCANNER_CONFIG,
+    ScannerRunResult,
     ScannerService,
     scanner_run_payload,
 )
 from app.services.brain_service import (
     BrainService,
     DEFAULT_REASONING_CONFIG,
+    ReasoningRunResult,
     reasoning_run_payload,
 )
 from app.services.strategy_consensus_service import (
     DEFAULT_STRATEGY_CONSENSUS_CONFIG,
+    StrategyConsensusRunResult,
     StrategyConsensusService,
     strategy_consensus_run_payload,
 )
 from app.services.lifecycle_service import (
     DEFAULT_EXECUTION_CONFIG,
     DEFAULT_EXIT_CONFIG,
+    LifecycleRunResult,
     PipelineLifecycleService,
     execution_run_payload,
     exit_run_payload,
@@ -125,6 +133,7 @@ class RuntimeStatusService:
     EXIT_RUNS_TABLE = f"{SHARED_SCHEMA}.exit_runs"
     EXIT_INTENTS_TABLE = f"{SHARED_SCHEMA}.exit_intents"
     AI_USAGE_EVENTS_TABLE = f"{SHARED_SCHEMA}.ai_usage_events"
+    AI_USAGE_IMPORT_RUNS_TABLE = f"{SHARED_SCHEMA}.ai_usage_import_runs"
     ECONOMICS_SNAPSHOTS_TABLE = f"{SHARED_SCHEMA}.economics_snapshots"
     PIPELINE_STAGES = (
         ("data_fetch", 1, "Data Fetch"),
@@ -142,6 +151,7 @@ class RuntimeStatusService:
         billing_adapter: Any | None = None,
         market_data_fetcher: MarketDataProvider | None = None,
         stock_universe_refresher: StockUniverseRefreshService | None = None,
+        ai_usage_importer: AiUsageImportService | None = None,
     ) -> None:
         self.settings = settings
         self.registry = registry or RepositoryRegistry()
@@ -160,6 +170,10 @@ class RuntimeStatusService:
         self.lifecycle = PipelineLifecycleService(self.registry)
         self.stock_universe_refresher = stock_universe_refresher or StockUniverseRefreshService(
             self.registry
+        )
+        self.ai_usage_importer = ai_usage_importer or AiUsageImportService(
+            self.registry,
+            source=ProviderBackedAiUsageImportSource(getattr(settings, "runtime_env", {})),
         )
 
     def runtime_config_payload(self) -> dict[str, Any]:
@@ -387,6 +401,7 @@ class RuntimeStatusService:
         ip_address: str,
         environment: Environment,
         config_payload: dict[str, Any],
+        run_mode: str = "full_dry_run",
     ) -> dict[str, Any]:
         """Record an operator-triggered dry-run loop request for the dashboard.
 
@@ -395,9 +410,10 @@ class RuntimeStatusService:
 
         now = datetime.now(UTC)
         run_id = str(uuid4())
+        requested_mode = _manual_run_mode(run_mode)
         config_payload = self._with_latest_stock_universe(
             environment=environment,
-            config_payload=config_payload,
+            config_payload=_config_for_manual_mode(config_payload, requested_mode),
         )
         market_data_pulls = [
             self._fetch_and_record_market_data_pull(
@@ -415,54 +431,119 @@ class RuntimeStatusService:
             config_payload=config_payload,
         )
         market_data_pull_ids = [pull["id"] for pull in market_data_pulls]
-        scanner_run = self.scanner.run(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="manual",
-            market_data_pulls=market_data_pulls,
-            config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
-        )
-        reasoning_run = self.brain.run(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="manual",
-            scanner_run=scanner_run.payload,
-            config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
-        )
-        strategy_run = self.strategy_consensus.run(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="manual",
-            scanner_run=scanner_run.payload,
-            reasoning_run=reasoning_run.payload,
-            config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
-        )
-        execution_run = self.lifecycle.run_execution(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="manual",
-            strategy_run=strategy_run.payload,
-            market_data_pulls=market_data_pulls,
-            config_payload=config_payload,
-            credential_status=self._venue_credential_status(environment),
-            started_at=now,
-            completed_at=now,
-        )
-        exit_run = self.lifecycle.run_exit(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="manual",
-            market_data_pulls=market_data_pulls,
-            config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
-        )
+        if requested_mode == "data_import":
+            scanner_run = self._skipped_scanner_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                started_at=now,
+                reason="Manual data import mode stops after provider data fetch.",
+                source_pull_ids=market_data_pull_ids,
+            )
+            reasoning_run = self._skipped_reasoning_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                scanner_run_id=scanner_run.payload.get("id"),
+                started_at=now,
+                reason="Manual data import mode did not run scanner-to-brain scoring.",
+            )
+            strategy_run = self._skipped_strategy_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                reasoning_run_id=reasoning_run.payload.get("id"),
+                started_at=now,
+                reason="Manual data import mode did not run strategy consensus.",
+            )
+            execution_run = self._skipped_execution_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                strategy_consensus_run_id=strategy_run.payload.get("id"),
+                started_at=now,
+                reason="Manual data import mode did not run execution.",
+            )
+            exit_run = self._skipped_exit_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                started_at=now,
+                reason="Manual data import mode did not run exit monitoring.",
+            )
+        else:
+            scanner_run = self.scanner.run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                trigger="manual",
+                market_data_pulls=market_data_pulls,
+                config_payload=config_payload,
+                started_at=now,
+                completed_at=now,
+            )
+            if requested_mode == "scanner_only":
+                reasoning_run = self._skipped_reasoning_run(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    scanner_run_id=scanner_run.payload.get("id"),
+                    started_at=now,
+                    reason="Manual scanner-only mode stops before reasoning.",
+                )
+                strategy_run = self._skipped_strategy_run(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    reasoning_run_id=reasoning_run.payload.get("id"),
+                    started_at=now,
+                    reason="Manual scanner-only mode did not run strategy consensus.",
+                )
+                execution_run = self._skipped_execution_run(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    strategy_consensus_run_id=strategy_run.payload.get("id"),
+                    started_at=now,
+                    reason="Manual scanner-only mode did not run execution.",
+                )
+                exit_run = self._skipped_exit_run(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    started_at=now,
+                    reason="Manual scanner-only mode did not run exit monitoring.",
+                )
+            else:
+                reasoning_run = self.brain.run(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    trigger="manual",
+                    scanner_run=scanner_run.payload,
+                    config_payload=config_payload,
+                    started_at=now,
+                    completed_at=now,
+                )
+                strategy_run = self.strategy_consensus.run(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    trigger="manual",
+                    scanner_run=scanner_run.payload,
+                    reasoning_run=reasoning_run.payload,
+                    config_payload=config_payload,
+                    started_at=now,
+                    completed_at=now,
+                )
+                execution_run = self.lifecycle.run_execution(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    trigger="manual",
+                    strategy_run=strategy_run.payload,
+                    market_data_pulls=market_data_pulls,
+                    config_payload=config_payload,
+                    credential_status=self._venue_credential_status(environment),
+                    started_at=now,
+                    completed_at=now,
+                )
+                exit_run = self.lifecycle.run_exit(
+                    environment=environment,
+                    pipeline_run_id=run_id,
+                    trigger="manual",
+                    market_data_pulls=market_data_pulls,
+                    config_payload=config_payload,
+                    started_at=now,
+                    completed_at=now,
+                )
         self.registry.state.insert(
             f"{SHARED_SCHEMA}.job_runs",
             {
@@ -473,6 +554,7 @@ class RuntimeStatusService:
                 "metadata": {
                     "message": "manual loop request accepted",
                     "scheduled": False,
+                    "requested_mode": requested_mode,
                     "triggered_by": username,
                     "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
                     "market_data_pull_ids": market_data_pull_ids,
@@ -510,6 +592,7 @@ class RuntimeStatusService:
                 "metadata": {
                     "message": "manual dashboard run heartbeat",
                     "scheduled": False,
+                    "requested_mode": requested_mode,
                     "triggered_by": username,
                     "manual_run_id": run_id,
                 },
@@ -525,6 +608,7 @@ class RuntimeStatusService:
             success=True,
             metadata={
                 "ip_address": ip_address,
+                "requested_mode": requested_mode,
                 "venues": [pull["venue"] for pull in market_data_pulls],
                 "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
                 "market_data_pull_ids": market_data_pull_ids,
@@ -563,15 +647,20 @@ class RuntimeStatusService:
             execution_run=execution_run.payload,
             exit_run=exit_run.payload,
             actor=username,
+            requested_mode=requested_mode,
         )
         return {
             "environment": environment.value,
             "runId": run_id,
             "status": "accepted",
+            "requestedMode": requested_mode,
             "triggeredBy": username,
             "triggeredAt": now.isoformat(),
             "auditEventId": audit_event["id"],
-            "message": "Manual run accepted. Live order submission still depends on all configured gates.",
+            "message": (
+                f"Manual {requested_mode.replace('_', ' ')} run accepted. "
+                "Live order submission still depends on all configured gates."
+            ),
             "marketDataPull": market_data_pull,
             "marketDataPulls": market_data_pulls,
             "scannerRun": scanner_run.payload,
@@ -581,6 +670,139 @@ class RuntimeStatusService:
             "exitRun": exit_run.payload,
             "pipelineRun": pipeline_run,
         }
+
+    def _skipped_scanner_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        started_at: datetime,
+        reason: str,
+        source_pull_ids: list[str],
+    ) -> ScannerRunResult:
+        row = self.registry.shared().record_scanner_run(
+            environment=environment,
+            pipeline_run_id=pipeline_run_id,
+            trigger="manual",
+            status="skipped",
+            config={"skip_reason": reason},
+            source_pull_ids=source_pull_ids,
+            accepted_count=0,
+            rejected_count=0,
+            started_at=started_at,
+            completed_at=started_at,
+        )
+        payload = scanner_run_payload(row, [])
+        payload["message"] = reason
+        return ScannerRunResult(row=row, candidates=(), payload=payload)
+
+    def _skipped_reasoning_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        scanner_run_id: str | None,
+        started_at: datetime,
+        reason: str,
+    ) -> ReasoningRunResult:
+        row = self.registry.shared().record_reasoning_run(
+            environment=environment,
+            pipeline_run_id=pipeline_run_id,
+            scanner_run_id=scanner_run_id,
+            trigger="manual",
+            status="skipped",
+            config={"skip_reason": reason},
+            provider_count=0,
+            prompt_count=0,
+            scored_count=0,
+            skipped_count=0,
+            failed_count=0,
+            started_at=started_at,
+            completed_at=started_at,
+        )
+        payload = reasoning_run_payload(row, [])
+        payload["message"] = reason
+        return ReasoningRunResult(payload=payload)
+
+    def _skipped_strategy_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        reasoning_run_id: str | None,
+        started_at: datetime,
+        reason: str,
+    ) -> StrategyConsensusRunResult:
+        row = self.registry.shared().record_strategy_consensus_run(
+            environment=environment,
+            pipeline_run_id=pipeline_run_id,
+            reasoning_run_id=reasoning_run_id,
+            trigger="manual",
+            status="skipped",
+            config={"skip_reason": reason},
+            vote_count=0,
+            approved_count=0,
+            refused_count=0,
+            started_at=started_at,
+            completed_at=started_at,
+        )
+        payload = strategy_consensus_run_payload(row, [], [])
+        payload["message"] = reason
+        return StrategyConsensusRunResult(payload=payload)
+
+    def _skipped_execution_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        strategy_consensus_run_id: str | None,
+        started_at: datetime,
+        reason: str,
+    ) -> LifecycleRunResult:
+        row = self.registry.shared().record_execution_run(
+            environment=environment,
+            pipeline_run_id=pipeline_run_id,
+            strategy_consensus_run_id=strategy_consensus_run_id,
+            trigger="manual",
+            status="skipped",
+            config={"skip_reason": reason},
+            intent_count=0,
+            submitted_count=0,
+            simulated_count=0,
+            refused_count=0,
+            reconciliation_count=0,
+            started_at=started_at,
+            completed_at=started_at,
+        )
+        payload = execution_run_payload(row, [])
+        payload["message"] = reason
+        return LifecycleRunResult(payload=payload)
+
+    def _skipped_exit_run(
+        self,
+        *,
+        environment: Environment,
+        pipeline_run_id: str,
+        started_at: datetime,
+        reason: str,
+    ) -> LifecycleRunResult:
+        row = self.registry.shared().record_exit_run(
+            environment=environment,
+            pipeline_run_id=pipeline_run_id,
+            trigger="manual",
+            status="skipped",
+            config={"skip_reason": reason},
+            open_position_count=0,
+            triggered_count=0,
+            simulated_count=0,
+            submitted_count=0,
+            refused_count=0,
+            started_at=started_at,
+            completed_at=started_at,
+        )
+        payload = exit_run_payload(row, [])
+        payload["message"] = reason
+        return LifecycleRunResult(payload=payload)
 
     def trigger_scheduled_run(
         self,
@@ -1325,6 +1547,47 @@ class RuntimeStatusService:
             payloads.append(self._pipeline_run_payload(row, steps))
         return payloads
 
+    def pipeline_run_detail(
+        self,
+        environment: Environment,
+        run_id: str,
+    ) -> dict[str, Any] | None:
+        """Return one pipeline run and the records created by each step."""
+
+        try:
+            run_rows = [
+                row
+                for row in self.registry.state.rows(self.PIPELINE_RUNS_TABLE)
+                if row["environment"] == environment.value and row["id"] == run_id
+            ]
+            step_rows = [
+                row
+                for row in self.registry.state.rows(self.PIPELINE_STEPS_TABLE)
+                if row["environment"] == environment.value and row["run_id"] == run_id
+            ]
+        except PersistenceUnavailableError:
+            return None
+        if not run_rows:
+            return None
+        step_rows.sort(key=lambda step: step.get("step_order", 0))
+        return {
+            "environment": environment.value,
+            "run": self._pipeline_run_payload(run_rows[0], step_rows),
+            "records": [
+                {
+                    "stepKey": step["step_key"],
+                    "stepLabel": step["label"],
+                    "recordIds": step.get("record_ids", []),
+                    "recordCount": len(step.get("record_ids", [])),
+                    "items": self._pipeline_step_records(
+                        environment=environment,
+                        record_ids=step.get("record_ids", []),
+                    ),
+                }
+                for step in step_rows
+            ],
+        }
+
     def market_data_pull(
         self,
         *,
@@ -1386,12 +1649,15 @@ class RuntimeStatusService:
             created_at=now,
         )
         month_key = _month_key(now)
+        month_rows = self._economics_snapshot_rows(environment, month_key=month_key)
+        month_rows.sort(key=lambda row: row.get("created_at"), reverse=True)
         payload["history"] = {
             "source": self.ECONOMICS_SNAPSHOTS_TABLE,
             "stored": snapshot is not None,
             "latestSnapshotId": snapshot.get("id") if snapshot else None,
             "monthKey": month_key,
-            "snapshotsThisMonth": len(self._economics_snapshot_rows(environment, month_key=month_key)),
+            "snapshotsThisMonth": len(month_rows),
+            "snapshots": [self._economics_snapshot_payload(row) for row in month_rows[:31]],
             "message": (
                 "Economics snapshot stored for monthly cost history."
                 if snapshot
@@ -1427,6 +1693,46 @@ class RuntimeStatusService:
             "count": len(snapshots),
             "snapshots": snapshots,
         }
+
+    def trigger_ai_usage_import(
+        self,
+        *,
+        username: str,
+        ip_address: str,
+        environment: Environment,
+        provider: ModelProvider,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> dict[str, Any]:
+        """Run provider-side token usage import for one provider and period."""
+
+        result = self.ai_usage_importer.import_provider_usage(
+            environment=environment,
+            provider=provider,
+            period_start=period_start,
+            period_end=period_end,
+            triggered_by=username,
+        )
+        audit_event = self.registry.shared().record_audit_event(
+            event_type="ai_usage_import_trigger",
+            actor=username,
+            action="economics.ai_usage_import",
+            environment=environment,
+            entity_id=result.payload["id"],
+            success=result.payload["status"] == "completed",
+            metadata={
+                "ip_address": ip_address,
+                "provider": provider.value,
+                "status": result.payload["status"],
+                "period_start": period_start.isoformat(),
+                "period_end": period_end.isoformat(),
+                "imported_count": result.payload["importedCount"],
+                "error_code": result.payload["errorCode"],
+            },
+        )
+        payload = dict(result.payload)
+        payload["auditEventId"] = audit_event["id"]
+        return payload
 
     def loop_observability(
         self,
@@ -1888,6 +2194,7 @@ class RuntimeStatusService:
         execution_run: dict[str, Any],
         exit_run: dict[str, Any],
         actor: str,
+        requested_mode: str | None = None,
     ) -> dict[str, Any]:
         pull_status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
         candidate_count = sum(_as_int(pull.get("candidateCount")) for pull in market_data_pulls)
@@ -1902,6 +2209,7 @@ class RuntimeStatusService:
             "completed_at": completed_at,
             "metadata": {
                 "actor": actor,
+                "requestedMode": requested_mode or trigger,
                 "marketDataStatus": pull_status,
                 "candidateCount": candidate_count,
                 "scannerAcceptedCount": scanner_run["acceptedCount"],
@@ -1980,12 +2288,15 @@ class RuntimeStatusService:
             )
             if value
         ]
-        scanner_message = (
-            f"Scanner accepted {scanner_run['acceptedCount']} and rejected "
-            f"{scanner_run['rejectedCount']} candidate"
-            f"{'' if scanner_run['rejectedCount'] == 1 else 's'}."
-            if scanner_run.get("candidateCount")
-            else "No priced candidates reached the scanner from provider data."
+        scanner_message = str(
+            scanner_run.get("message")
+            or (
+                f"Scanner accepted {scanner_run['acceptedCount']} and rejected "
+                f"{scanner_run['rejectedCount']} candidate"
+                f"{'' if scanner_run['rejectedCount'] == 1 else 's'}."
+                if scanner_run.get("candidateCount")
+                else "No priced candidates reached the scanner from provider data."
+            )
         )
         reasoning_record_ids = [
             value
@@ -2135,6 +2446,49 @@ class RuntimeStatusService:
                 for step in steps
             ],
         }
+
+    def _pipeline_step_records(
+        self,
+        *,
+        environment: Environment,
+        record_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if not record_ids:
+            return []
+        wanted = set(record_ids)
+        tables = [
+            self.MARKET_DATA_PULLS_TABLE,
+            self.SCANNER_RUNS_TABLE,
+            self.SCANNER_CANDIDATES_TABLE,
+            self.REASONING_RUNS_TABLE,
+            self.REASONING_OUTPUTS_TABLE,
+            self.STRATEGY_CONSENSUS_RUNS_TABLE,
+            self.STRATEGY_VOTES_TABLE,
+            self.STRATEGY_CONSENSUS_OUTPUTS_TABLE,
+            self.EXECUTION_RUNS_TABLE,
+            self.ORDER_INTENTS_TABLE,
+            self.EXIT_RUNS_TABLE,
+            self.EXIT_INTENTS_TABLE,
+            self.AI_USAGE_EVENTS_TABLE,
+            self.ECONOMICS_SNAPSHOTS_TABLE,
+        ]
+        records: list[dict[str, Any]] = []
+        for table in tables:
+            try:
+                rows = self.registry.state.rows(table)
+            except PersistenceUnavailableError:
+                continue
+            for row in rows:
+                if row.get("id") in wanted and row.get("environment", environment.value) == environment.value:
+                    records.append(
+                        {
+                            "table": table,
+                            "id": row.get("id"),
+                            "record": _safe_record_payload(row),
+                        }
+                    )
+        records.sort(key=lambda row: record_ids.index(row["id"]) if row["id"] in wanted else len(record_ids))
+        return records
 
     def _fetch_and_record_market_data_pull(
         self,
@@ -2404,8 +2758,11 @@ class RuntimeStatusService:
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_cost = Decimal("0")
+        all_usage_rows: list[dict[str, Any]] = []
+        import_runs = self._ai_usage_import_rows(environment)
         for provider in ModelProvider:
             rows = self._ai_usage_rows(environment, provider)
+            all_usage_rows.extend(rows)
             prompt_tokens = sum(_as_int(row.get("prompt_tokens")) for row in rows)
             completion_tokens = sum(_as_int(row.get("completion_tokens")) for row in rows)
             provider_cost = sum((_as_money(row.get("cost_usd", "0")) for row in rows), Decimal("0"))
@@ -2413,17 +2770,44 @@ class RuntimeStatusService:
             total_completion_tokens += completion_tokens
             total_cost += provider_cost
             budget = config_payload.get("llm", {}).get(provider.value, {}).get("budget_usd", "0.00")
+            provider_imports = [row for row in import_runs if row.get("provider") == provider.value]
+            provider_imports.sort(key=_row_datetime_sort_key, reverse=True)
             providers.append(
                 {
                     "provider": provider.value,
+                    "models": sorted({str(row.get("model")) for row in rows if row.get("model")}),
                     "promptTokens": prompt_tokens,
                     "completionTokens": completion_tokens,
                     "totalTokens": prompt_tokens + completion_tokens,
                     "costUsd": _money(provider_cost),
                     "budgetUsd": _money(_as_money(budget)),
                     "events": len(rows),
+                    "importedEvents": len(
+                        [row for row in rows if row.get("usage_source") == "provider_backfill"]
+                    ),
+                    "estimatedEvents": len(
+                        [row for row in rows if str(row.get("usage_source", "")).startswith("estimated")]
+                    ),
+                    "usageSources": sorted(
+                        {str(row.get("usage_source", "recorded")) for row in rows}
+                    ),
+                    "costSources": sorted(
+                        {str(row.get("cost_source", "recorded")) for row in rows}
+                    ),
+                    "latestAt": _isoformat_or_none(
+                        max(
+                            (row.get("created_at") for row in rows if row.get("created_at")),
+                            default=None,
+                        )
+                    ),
+                    "latestImportStatus": provider_imports[0]["status"] if provider_imports else "not_configured",
+                    "latestImportMessage": provider_imports[0]["message"] if provider_imports else None,
                 }
             )
+        all_usage_rows.sort(key=_row_datetime_sort_key, reverse=True)
+        import_runs.sort(key=_row_datetime_sort_key, reverse=True)
+        latest_usage = all_usage_rows[0] if all_usage_rows else None
+        latest_import = import_runs[0] if import_runs else None
         return {
             "providers": providers,
             "promptTokens": total_prompt_tokens,
@@ -2431,19 +2815,53 @@ class RuntimeStatusService:
             "totalTokens": total_prompt_tokens + total_completion_tokens,
             "totalCostUsd": _money(total_cost),
             "source": self.AI_USAGE_EVENTS_TABLE,
+            "freshness": {
+                "latestUsageAt": _isoformat_or_none(latest_usage.get("created_at") if latest_usage else None),
+                "latestImportAt": _isoformat_or_none(
+                    latest_import.get("completed_at") if latest_import else None
+                ),
+                "status": "current" if latest_usage or latest_import else "empty",
+            },
+            "imports": {
+                "source": self.AI_USAGE_IMPORT_RUNS_TABLE,
+                "count": len(import_runs),
+                "runs": [self._ai_usage_import_payload(row) for row in import_runs[:25]],
+            },
+            "errorState": _ai_usage_error_state(import_runs),
         }
 
     def _ai_usage_rows(self, environment: Environment, provider: ModelProvider) -> list[dict[str, Any]]:
         try:
-            rows = self.registry.state.rows(self.AI_USAGE_EVENTS_TABLE)
+            rows = self.registry.shared().ai_usage_events(
+                environment=environment,
+                provider=provider,
+            )
         except PersistenceUnavailableError:
             return []
-        return [
-            row
-            for row in rows
-            if row.get("environment", environment.value) == environment.value
-            and row.get("provider") == provider.value
-        ]
+        return rows
+
+    def _ai_usage_import_rows(self, environment: Environment) -> list[dict[str, Any]]:
+        try:
+            return self.registry.shared().ai_usage_import_runs(environment=environment)
+        except PersistenceUnavailableError:
+            return []
+
+    def _ai_usage_import_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "environment": row["environment"],
+            "provider": row["provider"],
+            "status": row["status"],
+            "source": row["source"],
+            "periodStart": _isoformat_or_none(row.get("period_start")),
+            "periodEnd": _isoformat_or_none(row.get("period_end")),
+            "importedCount": _as_int(row.get("imported_count")),
+            "errorCode": row.get("error_code"),
+            "message": row.get("message"),
+            "startedAt": _isoformat_or_none(row.get("started_at")),
+            "completedAt": _isoformat_or_none(row.get("completed_at")),
+            "createdAt": _isoformat_or_none(row.get("created_at")),
+        }
 
     def _aws_cost_summary(
         self,
@@ -2683,6 +3101,19 @@ def _configured(value: str | None) -> bool:
     return value.strip() not in PLACEHOLDER_VALUES
 
 
+def _manual_run_mode(value: str | None) -> str:
+    normalized = str(value or "full_dry_run").strip().lower().replace("-", "_")
+    allowed = {"data_import", "scanner_only", "full_dry_run", "full_live_gated"}
+    return normalized if normalized in allowed else "full_dry_run"
+
+
+def _config_for_manual_mode(config_payload: dict[str, Any], run_mode: str) -> dict[str, Any]:
+    payload = deepcopy(config_payload)
+    if run_mode != "full_live_gated":
+        payload["live_enabled"] = False
+    return payload
+
+
 def _valid_email(value: str) -> bool:
     stripped = value.strip()
     if "@" not in stripped:
@@ -2838,6 +3269,61 @@ def _safe_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
         "volume": _optional_text(candidate.get("volume")),
         "active": bool(candidate.get("active", True)),
         "closed": bool(candidate.get("closed", False)),
+    }
+
+
+def _safe_record_payload(row: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in row.items():
+        if isinstance(value, Decimal):
+            payload[key] = str(value)
+        elif isinstance(value, datetime):
+            payload[key] = value.isoformat()
+        elif isinstance(value, dict):
+            payload[key] = _safe_record_payload(value)
+        elif isinstance(value, list):
+            payload[key] = [
+                _safe_record_payload(item)
+                if isinstance(item, dict)
+                else str(item)
+                if isinstance(item, Decimal)
+                else item
+                for item in value
+            ]
+        else:
+            payload[key] = value
+    return payload
+
+
+def _row_datetime_sort_key(row: dict[str, Any]) -> datetime:
+    for key in ("completed_at", "created_at", "started_at", "imported_at"):
+        parsed = _parse_datetime(row.get(key))
+        if parsed is not None:
+            return parsed
+    return datetime.min.replace(tzinfo=UTC)
+
+
+def _ai_usage_error_state(import_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    if not import_runs:
+        return {
+            "status": "not_configured",
+            "message": "No provider-side usage import has run yet.",
+            "latestRunId": None,
+            "errorCode": None,
+        }
+    latest = max(import_runs, key=_row_datetime_sort_key)
+    if latest.get("status") in {"failed", "unsupported"}:
+        return {
+            "status": latest.get("status"),
+            "message": latest.get("message"),
+            "latestRunId": latest.get("id"),
+            "errorCode": latest.get("error_code"),
+        }
+    return {
+        "status": "ok",
+        "message": latest.get("message"),
+        "latestRunId": latest.get("id"),
+        "errorCode": None,
     }
 
 
@@ -3024,6 +3510,8 @@ def _pipeline_run_status(market_data_status: str) -> str:
 
 
 def _pipeline_scanner_status(scanner_status: str) -> str:
+    if scanner_status == "skipped":
+        return "skipped"
     if scanner_status == "completed":
         return "completed"
     if scanner_status in {"blocked", "failed", "rate_limited"}:
@@ -3034,16 +3522,20 @@ def _pipeline_scanner_status(scanner_status: str) -> str:
 
 
 def _pipeline_reasoning_status(reasoning_status: str) -> str:
+    if reasoning_status == "skipped":
+        return "skipped"
     if reasoning_status == "completed":
         return "completed"
     if reasoning_status == "partial":
         return "partial"
-    if reasoning_status in {"failed", "blocked", "skipped"}:
+    if reasoning_status in {"failed", "blocked"}:
         return "blocked"
     return "waiting"
 
 
 def _pipeline_strategy_consensus_status(strategy_status: str) -> str:
+    if strategy_status == "skipped":
+        return "skipped"
     if strategy_status in {"approved", "refused", "partial"}:
         return "completed" if strategy_status != "partial" else "partial"
     if strategy_status in {"failed", "blocked", "unavailable"}:
@@ -3052,6 +3544,8 @@ def _pipeline_strategy_consensus_status(strategy_status: str) -> str:
 
 
 def _pipeline_lifecycle_status(execution_status: str) -> str:
+    if execution_status == "skipped":
+        return "skipped"
     if execution_status in {"completed", "refused"}:
         return "completed"
     if execution_status == "partial":
@@ -3062,6 +3556,8 @@ def _pipeline_lifecycle_status(execution_status: str) -> str:
 
 
 def _pipeline_exit_status(exit_status: str) -> str:
+    if exit_status == "skipped":
+        return "skipped"
     if exit_status in {"completed", "no_positions", "no_triggers", "refused"}:
         return "completed"
     if exit_status == "partial":
@@ -3076,7 +3572,7 @@ def _pipeline_reasoning_message(reasoning_run: dict[str, Any]) -> str:
     if status == "no_candidates":
         return "Reasoning had no accepted scanner candidates to score."
     if status == "skipped":
-        return "Reasoning skipped all prompts because provider credentials or budgets were unavailable."
+        return str(reasoning_run.get("message") or "Reasoning skipped for the requested run mode.")
     if status == "failed":
         return "Reasoning failed before any candidate was scored."
     scored = int(reasoning_run.get("scoredCount", 0))
@@ -3092,6 +3588,8 @@ def _pipeline_reasoning_message(reasoning_run: dict[str, Any]) -> str:
 
 def _pipeline_strategy_consensus_message(strategy_run: dict[str, Any]) -> str:
     status = str(strategy_run.get("status", "idle"))
+    if status == "skipped":
+        return str(strategy_run.get("message") or "Strategy consensus skipped for the requested run mode.")
     if status == "no_scores":
         return "Strategy consensus had no scored reasoning outputs to evaluate."
     if status == "no_votes":
@@ -3109,6 +3607,8 @@ def _pipeline_strategy_consensus_message(strategy_run: dict[str, Any]) -> str:
 
 def _pipeline_execution_message(execution_run: dict[str, Any]) -> str:
     status = str(execution_run.get("status", "idle"))
+    if status == "skipped":
+        return str(execution_run.get("message") or "Execution skipped for the requested run mode.")
     if status == "no_consensus":
         return "Execution had no approved strategy consensus output to size."
     if status == "no_intents":
@@ -3127,6 +3627,8 @@ def _pipeline_execution_message(execution_run: dict[str, Any]) -> str:
 
 def _pipeline_exit_message(exit_run: dict[str, Any]) -> str:
     status = str(exit_run.get("status", "idle"))
+    if status == "skipped":
+        return str(exit_run.get("message") or "Exit monitoring skipped for the requested run mode.")
     if status == "no_positions":
         return "Exit monitor found no open positions."
     if status == "no_triggers":

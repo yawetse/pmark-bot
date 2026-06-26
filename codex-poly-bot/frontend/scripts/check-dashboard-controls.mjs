@@ -104,6 +104,17 @@ for (const token of [
   assert.match(commandCenter, new RegExp(token));
 }
 
+const manualRunControl = read("components/dashboard/manual-run-control.tsx");
+for (const token of [
+  "data_import",
+  "scanner_only",
+  "full_dry_run",
+  "full_live_gated",
+  "ManualRunMode",
+]) {
+  assert.match(manualRunControl, new RegExp(token));
+}
+
 const dataGrid = read("components/dashboard/data-grid.tsx");
 for (const token of [
   "AgGridReact",
