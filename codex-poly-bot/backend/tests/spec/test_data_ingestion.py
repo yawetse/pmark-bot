@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 import json
+import logging
 
 import httpx
 import pytest
@@ -363,11 +364,60 @@ def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates(
     assert result.candidates[1]["price"] == "380.02"
 
 
-def test_req_dat_008_06_alpaca_provider_does_not_per_symbol_fallback_by_default() -> None:
+def test_req_dat_008_07_alpaca_provider_normalizes_class_share_symbols(caplog: pytest.LogCaptureFixture) -> None:
+    """TST-REQ-DAT-008-07: Validates REQ-DAT-008
+
+    Given: Alpaca symbols include class-share hyphen notation
+    When: provider-backed ingestion builds batch requests
+    Then: Alpaca API symbols use dot notation while dashboard candidates retain requested symbols
+    """
+
+    requested_symbols: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_symbols.append(str(request.url.params.get("symbols")))
+        if request.url.path == "/v2/stocks/snapshots":
+            return httpx.Response(
+                200,
+                json={
+                    "snapshots": {
+                        "BRK.B": {"latestQuote": {"t": "2026-06-24T18:00:00Z", "bp": 400, "ap": 400.2}},
+                        "BF.B": {"latestQuote": {"t": "2026-06-24T18:00:10Z", "bp": 60, "ap": 60.1}},
+                    },
+                },
+            )
+        if request.url.path == "/v2/stocks/bars":
+            return httpx.Response(200, json={"bars": {"BRK.B": [], "BF.B": []}})
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "ALPACA_KEY_ID": "key",
+            "ALPACA_SECRET_KEY": "secret",
+            "ALPACA_DATA_BASE_URL": "https://data.alpaca.test/v2",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = fetcher.fetch(
+            venue=Venue.ALPACA.value,
+            config_payload={"alpaca": {"symbol_universe": ["BRK-B", "BF-B"]}},
+            pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+        )
+
+    assert result.status == "pulled"
+    assert requested_symbols == ["BRK.B,BF.B", "BRK.B,BF.B"]
+    assert [candidate["symbol"] for candidate in result.candidates] == ["BRK.B", "BF.B"]
+    assert [candidate["requestedSymbol"] for candidate in result.candidates] == ["BRK-B", "BF-B"]
+    assert "provider_symbols_normalized" in caplog.text
+
+
+def test_req_dat_008_06_alpaca_provider_does_not_fallback_on_rate_limit() -> None:
     """TST-REQ-DAT-008-06: Validates REQ-DAT-008
 
     Given: Alpaca batch endpoints are rate limited for a large universe
-    When: provider-backed ingestion runs with default fallback settings
+    When: provider-backed ingestion runs with per-symbol fallback available
     Then: the fetcher reports the batch rate limit without issuing per-symbol quote calls
     """
 
@@ -401,6 +451,52 @@ def test_req_dat_008_06_alpaca_provider_does_not_per_symbol_fallback_by_default(
     assert "/v2/stocks/SYM0/quotes/latest" not in paths
     assert paths.count("/v2/stocks/snapshots") == 2
     assert paths.count("/v2/stocks/bars") == 2
+
+
+def test_req_dat_008_08_alpaca_provider_uses_capped_fallback_after_batch_400() -> None:
+    """TST-REQ-DAT-008-08: Validates REQ-DAT-008
+
+    Given: Alpaca batch endpoints reject a request with HTTP 400
+    When: provider-backed ingestion runs with default fallback settings
+    Then: capped per-symbol fallback rescues priced candidates and preserves partial status
+    """
+
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path in {"/v2/stocks/snapshots", "/v2/stocks/bars"}:
+            return httpx.Response(400, json={"message": "invalid symbol"})
+        if request.url.path == "/v2/stocks/SPY/quotes/latest":
+            return httpx.Response(
+                200,
+                json={"quote": {"t": "2026-06-24T18:00:00Z", "bp": 500, "ap": 500.2, "bs": 1, "as": 2}},
+            )
+        if request.url.path == "/v2/stocks/SPY/bars/latest":
+            return httpx.Response(200, json={"bar": {"t": "2026-06-24T18:00:00Z", "c": 500.1, "v": 1000}})
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "ALPACA_KEY_ID": "key",
+            "ALPACA_SECRET_KEY": "secret",
+            "ALPACA_DATA_BASE_URL": "https://data.alpaca.test/v2",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.ALPACA.value,
+        config_payload={"alpaca": {"symbol_universe": ["SPY"]}},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "partial"
+    assert result.error_code == "provider_http_400"
+    assert result.candidates[0]["symbol"] == "SPY"
+    assert result.candidates[0]["price"] == "500.1"
+    assert "/v2/stocks/SPY/quotes/latest" in paths
+    assert "/v2/stocks/SPY/bars/latest" in paths
 
 
 def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() -> None:
@@ -459,3 +555,134 @@ def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() 
     assert result.candidates[0]["spread"] == "0.02"
     assert result.candidates[0]["liquidity"] == "250"
     assert result.candidates[0]["tokenId"] == "yes-token"
+
+
+def test_req_dat_008_09_polymarket_order_book_retries_after_timeout() -> None:
+    """TST-REQ-DAT-008-09: Validates REQ-DAT-008
+
+    Given: the first Polymarket CLOB order book call times out
+    When: provider-backed ingestion retries the order book
+    Then: the retry succeeds and the pull remains healthy
+    """
+
+    book_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal book_calls
+        if request.url.path == "/markets":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "conditionId": "condition-1",
+                        "question": "Will rates fall?",
+                        "clobTokenIds": json.dumps(["yes-token"]),
+                        "outcomes": json.dumps(["Yes"]),
+                    }
+                ],
+            )
+        if request.url.path == "/book":
+            book_calls += 1
+            if book_calls == 1:
+                raise httpx.ReadTimeout("timed out", request=request)
+            return httpx.Response(
+                200,
+                json={
+                    "market": "condition-1",
+                    "asset_id": "yes-token",
+                    "timestamp": "1782324000",
+                    "bids": [{"price": "0.44", "size": "100"}],
+                    "asks": [{"price": "0.46", "size": "150"}],
+                },
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "POLYMARKET_GAMMA_BASE_URL": "https://gamma.polymarket.test",
+            "POLYMARKET_CLOB_BASE_URL": "https://clob.polymarket.test",
+            "POLYMARKET_ORDER_BOOK_RETRIES": "1",
+            "POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS": "0",
+            "POLYMARKET_ORDER_BOOK_CONCURRENCY": "1",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "pulled"
+    assert book_calls == 2
+    assert result.candidates[0]["tokenId"] == "yes-token"
+
+
+def test_req_dat_008_10_polymarket_order_book_uses_stale_cache_after_timeout() -> None:
+    """TST-REQ-DAT-008-10: Validates REQ-DAT-008
+
+    Given: a prior Polymarket CLOB order book succeeded
+    When: a later order book fetch times out
+    Then: the provider uses the short-lived cached book and reports a degraded pull
+    """
+
+    fail_books = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/markets":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "conditionId": "condition-1",
+                        "question": "Will rates fall?",
+                        "clobTokenIds": json.dumps(["yes-token"]),
+                        "outcomes": json.dumps(["Yes"]),
+                    }
+                ],
+            )
+        if request.url.path == "/book":
+            if fail_books:
+                raise httpx.ReadTimeout("timed out", request=request)
+            return httpx.Response(
+                200,
+                json={
+                    "market": "condition-1",
+                    "asset_id": "yes-token",
+                    "timestamp": "1782324000",
+                    "bids": [{"price": "0.44", "size": "100"}],
+                    "asks": [{"price": "0.46", "size": "150"}],
+                },
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "POLYMARKET_GAMMA_BASE_URL": "https://gamma.polymarket.test",
+            "POLYMARKET_CLOB_BASE_URL": "https://clob.polymarket.test",
+            "POLYMARKET_ORDER_BOOK_RETRIES": "1",
+            "POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS": "0",
+            "POLYMARKET_ORDER_BOOK_CONCURRENCY": "1",
+            "POLYMARKET_ORDER_BOOK_CACHE_TTL_SECONDS": "300",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+    fail_books = True
+    second = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={},
+        pulled_at=datetime(2026, 6, 24, 18, 1, tzinfo=UTC),
+    )
+
+    assert first.status == "pulled"
+    assert second.status == "partial"
+    assert second.error_code == "provider_http_error"
+    assert second.candidates[0]["orderBookStatus"] == "stale_cache"
+    assert second.candidates[0]["orderBookErrorCode"] == "provider_http_error"

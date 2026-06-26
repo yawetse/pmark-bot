@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -29,11 +30,13 @@ DEFAULT_TICK_SUMMARY_FALLBACK_MODEL = "gpt-4.1-nano"
 DEFAULT_TICK_SUMMARY_WINDOW_MINUTES = 10
 DEFAULT_TICK_SUMMARY_CACHE_SECONDS = 60
 DEFAULT_TICK_SUMMARY_PROMPT_VERSION = "tick-summary-v1"
+DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION = Decimal("0.05")
 DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
 DEFAULT_GPT_4_1_NANO_INPUT_COST_PER_MILLION = Decimal("0.10")
 DEFAULT_GPT_4_1_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[3] / "docs" / "tick-summary-system-prompt.md"
+LOGGER = logging.getLogger(__name__)
 DEFAULT_TICK_SUMMARY_SYSTEM_PROMPT = """# Tick Summary System Prompt
 
 You are summarizing Codex Poly Bot tick history for an operator dashboard.
@@ -192,6 +195,19 @@ class TickSummaryService:
                     message="AI summary generated from recent tick history.",
                 )
             except Exception as exc:
+                LOGGER.warning(
+                    "tick_summary_model_failed %s",
+                    json.dumps(
+                        {
+                            "event": "tick_summary_model_failed",
+                            "model": candidate_model,
+                            "error_type": exc.__class__.__name__,
+                            "message": _safe_error_message(exc),
+                            "input_hash": input_hash,
+                        },
+                        sort_keys=True,
+                    ),
+                )
                 failures.append((candidate_model, exc))
 
         failed_model, failure = failures[-1]
@@ -231,7 +247,7 @@ def _openai_summary_payload(
         "max_output_tokens": _int_env(
             environ,
             "OPENAI_TICK_SUMMARY_MAX_OUTPUT_TOKENS",
-            600,
+            DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS,
         ),
         "text": {
             "format": {
@@ -280,7 +296,7 @@ def _summary_input(request: TickSummaryRequest) -> dict[str, Any]:
         "window_minutes": request.window_minutes,
         "generated_at": request.generated_at.isoformat(),
         "run_count": len(request.runs),
-        "ticks": [_compact_run(run) for run in request.runs[-50:]],
+        "ticks": [_compact_run(run) for run in request.runs[-20:]],
     }
 
 
@@ -302,9 +318,9 @@ def _compact_run(run: dict[str, Any]) -> dict[str, Any]:
                     "key": step.get("key"),
                     "status": step.get("status"),
                     "message": step.get("message"),
-                    "inputs": step.get("inputs"),
-                    "outputs": step.get("outputs"),
-                    "decisions": step.get("decisions"),
+                    "inputs": _summary_payload_slice(step.get("inputs")),
+                    "outputs": _summary_payload_slice(step.get("outputs")),
+                    "decisions": _summary_payload_slice(step.get("decisions")),
                     "metrics": step.get("metrics"),
                 }
                 for step in run.get("steps", [])
@@ -314,7 +330,11 @@ def _compact_run(run: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _trim_payload(value: Any, *, max_text: int = 900, max_items: int = 20) -> Any:
+def _summary_payload_slice(value: Any) -> Any:
+    return _trim_payload(value, max_text=360, max_items=8)
+
+
+def _trim_payload(value: Any, *, max_text: int = 600, max_items: int = 12) -> Any:
     if isinstance(value, str):
         return value if len(value) <= max_text else value[:max_text] + "..."
     if isinstance(value, list):

@@ -19,7 +19,7 @@ case "${environment}" in
     alpaca_symbol_presets="${ALPACA_SYMBOL_PRESETS:-sp500,nasdaq100}"
     alpaca_custom_symbols="${ALPACA_CUSTOM_SYMBOLS:-}"
     alpaca_symbol_universe="${ALPACA_SYMBOL_UNIVERSE:-}"
-    alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-100}"
+    alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-50}"
     alpaca_historical_bar_limit="${ALPACA_HISTORICAL_BAR_LIMIT:-30}"
     ;;
   production)
@@ -37,7 +37,7 @@ case "${environment}" in
     alpaca_symbol_presets="${ALPACA_SYMBOL_PRESETS:-sp500,nasdaq100}"
     alpaca_custom_symbols="${ALPACA_CUSTOM_SYMBOLS:-}"
     alpaca_symbol_universe="${ALPACA_SYMBOL_UNIVERSE:-}"
-    alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-100}"
+    alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-50}"
     alpaca_historical_bar_limit="${ALPACA_HISTORICAL_BAR_LIMIT:-30}"
     ;;
   *)

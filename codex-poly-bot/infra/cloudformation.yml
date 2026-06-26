@@ -95,7 +95,7 @@ Parameters:
     Default: ""
   AlpacaSymbolChunkSize:
     Type: String
-    Default: "100"
+    Default: "50"
   AlpacaHistoricalBarLimit:
     Type: String
     Default: "30"

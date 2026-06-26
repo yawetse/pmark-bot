@@ -8,7 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
 import json
+import logging
+import threading
+import time
 from typing import Any, Protocol, Sequence
 
 import httpx
@@ -20,6 +25,13 @@ from app.services.stock_universe import resolve_alpaca_symbol_universe
 ALPACA_DATA_BASE_URL = "https://data.alpaca.markets/v2"
 POLYMARKET_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com"
+DEFAULT_ALPACA_SYMBOL_CHUNK_SIZE = 50
+DEFAULT_ALPACA_PER_SYMBOL_FALLBACK_LIMIT = 25
+DEFAULT_POLYMARKET_ORDER_BOOK_RETRIES = 2
+DEFAULT_POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS = 0.25
+DEFAULT_POLYMARKET_ORDER_BOOK_CONCURRENCY = 4
+DEFAULT_POLYMARKET_ORDER_BOOK_CACHE_TTL_SECONDS = 300.0
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -32,6 +44,37 @@ class MarketDataProviderResult:
     message: str
     candidates: list[dict[str, Any]]
     error_code: str | None = None
+
+
+@dataclass(frozen=True)
+class AlpacaSymbolPlan:
+    symbols: list[str]
+    requested_by_symbol: dict[str, str]
+    normalized_count: int
+    duplicate_count: int
+
+
+@dataclass(frozen=True)
+class CachedOrderBook:
+    payload: dict[str, Any] | list[Any]
+    cached_at: datetime
+
+
+@dataclass(frozen=True)
+class PolymarketBookRequest:
+    index: int
+    market: dict[str, Any]
+    token_id: str
+    outcome: str | None
+
+
+@dataclass(frozen=True)
+class PolymarketBookResult:
+    request: PolymarketBookRequest
+    book: dict[str, Any] | list[Any] | None
+    stale: bool
+    cached_at: datetime | None = None
+    error: ProviderHttpError | None = None
 
 
 class MarketDataProvider(Protocol):
@@ -50,11 +93,25 @@ class MarketDataProvider(Protocol):
 class ProviderHttpError(RuntimeError):
     """HTTP failure normalized for dashboard-safe status reporting."""
 
-    def __init__(self, *, status: str, error_code: str, message: str) -> None:
+    def __init__(
+        self,
+        *,
+        status: str,
+        error_code: str,
+        message: str,
+        operation: str | None = None,
+        status_code: int | None = None,
+        exception_type: str | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.error_code = error_code
         self.message = message
+        self.operation = operation
+        self.status_code = status_code
+        self.exception_type = exception_type
+        self.duration_ms = duration_ms
 
 
 class ProviderBackedMarketDataFetcher:
@@ -70,6 +127,8 @@ class ProviderBackedMarketDataFetcher:
         self.environ = source
         self.transport = transport
         self.timeout_seconds = _float_setting(source.get("MARKET_DATA_HTTP_TIMEOUT_SECONDS"), 8.0)
+        self._polymarket_order_book_cache: dict[str, CachedOrderBook] = {}
+        self._polymarket_order_book_cache_lock = threading.Lock()
         self.alpaca_data_base_url = _base_url(
             source.get("ALPACA_DATA_BASE_URL") or source.get("ALPACA_MARKET_DATA_BASE_URL"),
             ALPACA_DATA_BASE_URL,
@@ -91,7 +150,7 @@ class ProviderBackedMarketDataFetcher:
         )
         self.alpaca_symbol_chunk_size = _int_setting(
             source.get("ALPACA_SYMBOL_CHUNK_SIZE"),
-            100,
+            DEFAULT_ALPACA_SYMBOL_CHUNK_SIZE,
             minimum=1,
             maximum=200,
         )
@@ -103,13 +162,37 @@ class ProviderBackedMarketDataFetcher:
         )
         self.alpaca_per_symbol_fallback_enabled = _boolish(
             source.get("ALPACA_ENABLE_PER_SYMBOL_FALLBACK"),
-            default=False,
+            default=True,
         )
         self.alpaca_per_symbol_fallback_limit = _int_setting(
             source.get("ALPACA_PER_SYMBOL_FALLBACK_LIMIT"),
-            25,
+            DEFAULT_ALPACA_PER_SYMBOL_FALLBACK_LIMIT,
             minimum=1,
             maximum=100,
+        )
+        self.polymarket_order_book_retries = _int_setting(
+            source.get("POLYMARKET_ORDER_BOOK_RETRIES"),
+            DEFAULT_POLYMARKET_ORDER_BOOK_RETRIES,
+            minimum=0,
+            maximum=5,
+        )
+        self.polymarket_order_book_retry_backoff_seconds = _float_setting(
+            source.get("POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS"),
+            DEFAULT_POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS,
+            minimum=0.0,
+            maximum=5.0,
+        )
+        self.polymarket_order_book_concurrency = _int_setting(
+            source.get("POLYMARKET_ORDER_BOOK_CONCURRENCY"),
+            DEFAULT_POLYMARKET_ORDER_BOOK_CONCURRENCY,
+            minimum=1,
+            maximum=10,
+        )
+        self.polymarket_order_book_cache_ttl_seconds = _float_setting(
+            source.get("POLYMARKET_ORDER_BOOK_CACHE_TTL_SECONDS"),
+            DEFAULT_POLYMARKET_ORDER_BOOK_CACHE_TTL_SECONDS,
+            minimum=0.0,
+            maximum=3600.0,
         )
 
     def fetch(
@@ -138,7 +221,8 @@ class ProviderBackedMarketDataFetcher:
         config_payload: dict[str, Any],
         pulled_at: datetime,
     ) -> MarketDataProviderResult:
-        symbols = _alpaca_symbols(config_payload)
+        symbol_plan = _alpaca_symbol_plan(config_payload)
+        symbols = symbol_plan.symbols
         if not symbols:
             return MarketDataProviderResult(
                 venue=Venue.ALPACA.value,
@@ -160,6 +244,16 @@ class ProviderBackedMarketDataFetcher:
                 error_code="alpaca_credentials_missing",
             )
 
+        if symbol_plan.normalized_count or symbol_plan.duplicate_count:
+            _log_provider_event(
+                "provider_symbols_normalized",
+                provider="alpaca",
+                operation="alpaca symbol planning",
+                symbol_count=len(symbols),
+                normalized_count=symbol_plan.normalized_count,
+                duplicate_count=symbol_plan.duplicate_count,
+            )
+
         headers = {
             "APCA-API-KEY-ID": key_id,
             "APCA-API-SECRET-KEY": secret_key,
@@ -172,6 +266,7 @@ class ProviderBackedMarketDataFetcher:
                 chunk_candidates, chunk_errors = self._fetch_alpaca_chunk(
                     client=client,
                     symbols=chunk,
+                    requested_by_symbol=symbol_plan.requested_by_symbol,
                     headers=headers,
                     params=params,
                     pulled_at=pulled_at,
@@ -192,6 +287,7 @@ class ProviderBackedMarketDataFetcher:
         *,
         client: httpx.Client,
         symbols: list[str],
+        requested_by_symbol: dict[str, str],
         headers: dict[str, str],
         params: dict[str, str],
         pulled_at: datetime,
@@ -212,6 +308,8 @@ class ProviderBackedMarketDataFetcher:
                 headers=headers,
                 params=request_params,
                 operation="alpaca batch snapshots",
+                provider="alpaca",
+                log_context={"symbol_count": len(symbols)},
             )
         except ProviderHttpError as exc:
             errors.append(exc)
@@ -222,6 +320,8 @@ class ProviderBackedMarketDataFetcher:
                 headers=headers,
                 params=history_params,
                 operation="alpaca historical daily bars",
+                provider="alpaca",
+                log_context={"symbol_count": len(symbols)},
             )
         except ProviderHttpError as exc:
             errors.append(exc)
@@ -229,7 +329,7 @@ class ProviderBackedMarketDataFetcher:
         snapshots = _snapshot_by_symbol(snapshot_payload)
         bars_by_symbol = _bars_by_symbol(bars_payload)
         if not snapshots and not bars_by_symbol and errors:
-            if not self.alpaca_per_symbol_fallback_enabled:
+            if not self.alpaca_per_symbol_fallback_enabled or _dominant_error(errors).status == "rate_limited":
                 return [], errors
             fallback_candidates: list[dict[str, Any]] = []
             fallback_errors: list[ProviderHttpError] = []
@@ -239,6 +339,7 @@ class ProviderBackedMarketDataFetcher:
                         self._fetch_alpaca_symbol(
                             client=client,
                             symbol=symbol,
+                            requested_symbol=requested_by_symbol.get(symbol, symbol),
                             headers=headers,
                             params=params,
                             pulled_at=pulled_at,
@@ -259,13 +360,14 @@ class ProviderBackedMarketDataFetcher:
                     )
                 )
             if fallback_candidates:
-                return fallback_candidates, fallback_errors
+                return fallback_candidates, [*errors, *fallback_errors]
             return [], errors
 
         candidates = []
         for symbol in symbols:
             candidate = _alpaca_candidate_from_snapshot(
                 symbol=symbol,
+                requested_symbol=requested_by_symbol.get(symbol, symbol),
                 snapshot=snapshots.get(symbol),
                 bars=bars_by_symbol.get(symbol, []),
                 pulled_at=pulled_at,
@@ -279,6 +381,7 @@ class ProviderBackedMarketDataFetcher:
         *,
         client: httpx.Client,
         symbol: str,
+        requested_symbol: str,
         headers: dict[str, str],
         params: dict[str, str],
         pulled_at: datetime,
@@ -292,7 +395,9 @@ class ProviderBackedMarketDataFetcher:
                 f"{self.alpaca_data_base_url}/stocks/{symbol}/quotes/latest",
                 headers=headers,
                 params=params,
-                operation=f"alpaca latest quote {symbol}",
+                operation="alpaca latest quote",
+                provider="alpaca",
+                log_context={"symbol_hash": _short_hash(symbol)},
             )
         except ProviderHttpError as exc:
             errors.append(exc)
@@ -302,7 +407,9 @@ class ProviderBackedMarketDataFetcher:
                 f"{self.alpaca_data_base_url}/stocks/{symbol}/bars/latest",
                 headers=headers,
                 params=params,
-                operation=f"alpaca latest bar {symbol}",
+                operation="alpaca latest bar",
+                provider="alpaca",
+                log_context={"symbol_hash": _short_hash(symbol)},
             )
         except ProviderHttpError as exc:
             errors.append(exc)
@@ -321,7 +428,7 @@ class ProviderBackedMarketDataFetcher:
         bar_volume = _decimal_or_none(bar.get("v"))
         spread = ask - bid if ask is not None and bid is not None else None
         liquidity = _sum_decimal([bid_size, ask_size]) or bar_volume
-        return {
+        candidate = {
             "id": f"{Venue.ALPACA.value}:{symbol}",
             "venue": Venue.ALPACA.value,
             "symbol": symbol,
@@ -332,6 +439,9 @@ class ProviderBackedMarketDataFetcher:
             "pulledAt": _timestamp(quote.get("t") or bar.get("t"), pulled_at),
             "dataSource": "quote+bar" if quote and bar else "quote" if quote else "bar",
         }
+        if requested_symbol != symbol:
+            candidate["requestedSymbol"] = requested_symbol
+        return candidate
 
     def _fetch_polymarket(
         self,
@@ -363,32 +473,33 @@ class ProviderBackedMarketDataFetcher:
                     error_code=exc.error_code,
                 )
 
-            for market in _market_items(market_payload):
-                if len(candidates) >= self.polymarket_market_limit:
-                    break
-                for token_id, outcome in _polymarket_tokens(market):
-                    if len(candidates) >= self.polymarket_market_limit:
-                        break
-                    try:
-                        book = self._get_json(
-                            client,
-                            f"{self.polymarket_clob_base_url}/book",
-                            params={"token_id": token_id},
-                            operation=f"polymarket order book {token_id}",
-                        )
-                    except ProviderHttpError as exc:
-                        errors.append(exc)
-                        continue
-                    candidate = _polymarket_candidate(
-                        venue=venue,
-                        market=market,
-                        token_id=token_id,
-                        outcome=outcome,
-                        book=book,
-                        pulled_at=pulled_at,
-                    )
-                    if candidate is not None:
-                        candidates.append(candidate)
+            book_requests = _polymarket_book_requests(
+                market_payload,
+                request_limit=max(self.polymarket_market_limit * 2, self.polymarket_market_limit),
+            )
+
+        for result in self._fetch_polymarket_order_books(book_requests):
+            if len(candidates) >= self.polymarket_market_limit:
+                break
+            if result.error is not None:
+                errors.append(result.error)
+            if result.book is None:
+                continue
+            candidate = _polymarket_candidate(
+                venue=venue,
+                market=result.request.market,
+                token_id=result.request.token_id,
+                outcome=result.request.outcome,
+                book=result.book,
+                pulled_at=pulled_at,
+            )
+            if candidate is None:
+                continue
+            if result.stale:
+                candidate["orderBookStatus"] = "stale_cache"
+                candidate["orderBookCachedAt"] = result.cached_at.isoformat() if result.cached_at else None
+                candidate["orderBookErrorCode"] = result.error.error_code if result.error else None
+            candidates.append(candidate)
 
         return _venue_result(
             venue=venue,
@@ -399,6 +510,102 @@ class ProviderBackedMarketDataFetcher:
             empty_message="No priced Polymarket candidates were found in active markets.",
         )
 
+    def _fetch_polymarket_order_books(
+        self,
+        requests: list[PolymarketBookRequest],
+    ) -> list[PolymarketBookResult]:
+        if not requests:
+            return []
+        if self.polymarket_order_book_concurrency <= 1 or len(requests) == 1:
+            return [self._fetch_polymarket_order_book(request) for request in requests]
+
+        results: dict[int, PolymarketBookResult] = {}
+        with ThreadPoolExecutor(max_workers=self.polymarket_order_book_concurrency) as executor:
+            future_by_index = {
+                executor.submit(self._fetch_polymarket_order_book, request): request.index
+                for request in requests
+            }
+            for future in as_completed(future_by_index):
+                index = future_by_index[future]
+                results[index] = future.result()
+        return [results[index] for index in sorted(results)]
+
+    def _fetch_polymarket_order_book(
+        self,
+        request: PolymarketBookRequest,
+    ) -> PolymarketBookResult:
+        errors: list[ProviderHttpError] = []
+        for attempt_index in range(self.polymarket_order_book_retries + 1):
+            try:
+                with self._client() as client:
+                    book = self._get_json(
+                        client,
+                        f"{self.polymarket_clob_base_url}/book",
+                        params={"token_id": request.token_id},
+                        operation="polymarket order book",
+                        provider="polymarket",
+                        attempt=attempt_index + 1,
+                        retry_count=self.polymarket_order_book_retries,
+                        log_context={"token_hash": _short_hash(request.token_id)},
+                    )
+                with self._polymarket_order_book_cache_lock:
+                    self._polymarket_order_book_cache[request.token_id] = CachedOrderBook(
+                        payload=book,
+                        cached_at=datetime.now(UTC),
+                    )
+                return PolymarketBookResult(request=request, book=book, stale=False)
+            except ProviderHttpError as exc:
+                errors.append(exc)
+                if attempt_index < self.polymarket_order_book_retries and _retryable_provider_error(exc):
+                    _log_provider_event(
+                        "provider_request_retry",
+                        provider="polymarket",
+                        operation="polymarket order book",
+                        error_code=exc.error_code,
+                        exception_type=exc.exception_type,
+                        attempt=attempt_index + 1,
+                        retry_count=self.polymarket_order_book_retries,
+                        token_hash=_short_hash(request.token_id),
+                    )
+                    time.sleep(
+                        self.polymarket_order_book_retry_backoff_seconds * (2**attempt_index)
+                    )
+                    continue
+                break
+
+        error = errors[-1]
+        cached = self._cached_polymarket_order_book(request.token_id)
+        if cached is not None:
+            _log_provider_event(
+                "provider_stale_cache_used",
+                provider="polymarket",
+                operation="polymarket order book",
+                error_code=error.error_code,
+                exception_type=error.exception_type,
+                token_hash=_short_hash(request.token_id),
+                cache_age_seconds=int((datetime.now(UTC) - cached.cached_at).total_seconds()),
+            )
+            return PolymarketBookResult(
+                request=request,
+                book=cached.payload,
+                stale=True,
+                cached_at=cached.cached_at,
+                error=error,
+            )
+        return PolymarketBookResult(request=request, book=None, stale=False, error=error)
+
+    def _cached_polymarket_order_book(self, token_id: str) -> CachedOrderBook | None:
+        with self._polymarket_order_book_cache_lock:
+            cached = self._polymarket_order_book_cache.get(token_id)
+        if cached is None:
+            return None
+        age_seconds = (datetime.now(UTC) - cached.cached_at).total_seconds()
+        if age_seconds <= self.polymarket_order_book_cache_ttl_seconds:
+            return cached
+        with self._polymarket_order_book_cache_lock:
+            self._polymarket_order_book_cache.pop(token_id, None)
+        return None
+
     def _get_json(
         self,
         client: httpx.Client,
@@ -407,35 +614,85 @@ class ProviderBackedMarketDataFetcher:
         operation: str,
         headers: dict[str, str] | None = None,
         params: dict[str, str] | None = None,
+        provider: str | None = None,
+        log_context: dict[str, Any] | None = None,
+        attempt: int = 1,
+        retry_count: int = 0,
     ) -> dict[str, Any] | list[Any]:
+        started = time.monotonic()
         try:
             response = client.get(url, headers=headers, params=params)
         except httpx.HTTPError as exc:
-            raise ProviderHttpError(
+            duration_ms = _duration_ms(started)
+            error = ProviderHttpError(
                 status="failed",
                 error_code="provider_http_error",
                 message=f"{operation} failed: {type(exc).__name__}.",
-            ) from exc
+                operation=operation,
+                exception_type=type(exc).__name__,
+                duration_ms=duration_ms,
+            )
+            _log_provider_error(
+                error,
+                provider=provider,
+                attempt=attempt,
+                retry_count=retry_count,
+                context=log_context,
+            )
+            raise error from exc
+        duration_ms = _duration_ms(started)
         if response.status_code == 429:
-            raise ProviderHttpError(
+            error = ProviderHttpError(
                 status="rate_limited",
                 error_code="provider_rate_limited",
                 message=f"{operation} was rate limited by the provider.",
+                operation=operation,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
             )
+            _log_provider_error(
+                error,
+                provider=provider,
+                attempt=attempt,
+                retry_count=retry_count,
+                context=log_context,
+            )
+            raise error
         if response.status_code >= 400:
-            raise ProviderHttpError(
+            error = ProviderHttpError(
                 status="failed",
                 error_code=f"provider_http_{response.status_code}",
                 message=f"{operation} returned HTTP {response.status_code}.",
+                operation=operation,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
             )
+            _log_provider_error(
+                error,
+                provider=provider,
+                attempt=attempt,
+                retry_count=retry_count,
+                context=log_context,
+            )
+            raise error
         try:
             payload = response.json()
         except ValueError as exc:
-            raise ProviderHttpError(
+            error = ProviderHttpError(
                 status="failed",
                 error_code="provider_invalid_json",
                 message=f"{operation} returned invalid JSON.",
-            ) from exc
+                operation=operation,
+                duration_ms=duration_ms,
+            )
+            _log_provider_error(
+                error,
+                provider=provider,
+                attempt=attempt,
+                retry_count=retry_count,
+                context=log_context,
+            )
+            raise error from exc
         return payload
 
     def _client(self) -> httpx.Client:
@@ -501,12 +758,75 @@ def _dominant_error(errors: Sequence[ProviderHttpError]) -> ProviderHttpError:
     return errors[0]
 
 
-def _alpaca_symbols(config_payload: dict[str, Any]) -> list[str]:
-    return resolve_alpaca_symbol_universe(config_payload)
+def _retryable_provider_error(error: ProviderHttpError) -> bool:
+    if error.error_code in {"provider_http_error", "provider_invalid_json"}:
+        return True
+    return error.error_code in {
+        "provider_http_408",
+        "provider_http_500",
+        "provider_http_502",
+        "provider_http_503",
+        "provider_http_504",
+    }
+
+
+def _alpaca_symbol_plan(config_payload: dict[str, Any]) -> AlpacaSymbolPlan:
+    requested_by_symbol: dict[str, str] = {}
+    symbols: list[str] = []
+    normalized_count = 0
+    duplicate_count = 0
+    for requested_symbol in resolve_alpaca_symbol_universe(config_payload):
+        normalized = _normalize_alpaca_api_symbol(requested_symbol)
+        if not normalized:
+            continue
+        if normalized != str(requested_symbol).strip().upper():
+            normalized_count += 1
+        if normalized in requested_by_symbol:
+            duplicate_count += 1
+            continue
+        requested_by_symbol[normalized] = str(requested_symbol).strip().upper()
+        symbols.append(normalized)
+    return AlpacaSymbolPlan(
+        symbols=symbols,
+        requested_by_symbol=requested_by_symbol,
+        normalized_count=normalized_count,
+        duplicate_count=duplicate_count,
+    )
+
+
+def _normalize_alpaca_api_symbol(symbol: Any) -> str:
+    text = str(symbol).strip().upper()
+    if not text:
+        return ""
+    parts = text.split("-")
+    if len(parts) == 2 and parts[0] and parts[1] and len(parts[1]) <= 2:
+        return f"{parts[0]}.{parts[1]}"
+    return text
 
 
 def _chunks(values: list[str], size: int) -> list[list[str]]:
     return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _polymarket_book_requests(
+    payload: dict[str, Any] | list[Any],
+    *,
+    request_limit: int,
+) -> list[PolymarketBookRequest]:
+    requests: list[PolymarketBookRequest] = []
+    for market in _market_items(payload):
+        for token_id, outcome in _polymarket_tokens(market):
+            requests.append(
+                PolymarketBookRequest(
+                    index=len(requests),
+                    market=market,
+                    token_id=token_id,
+                    outcome=outcome,
+                )
+            )
+            if len(requests) >= request_limit:
+                return requests
+    return requests
 
 
 def _snapshot_by_symbol(payload: dict[str, Any] | list[Any] | None) -> dict[str, dict[str, Any]]:
@@ -535,6 +855,7 @@ def _bars_by_symbol(payload: dict[str, Any] | list[Any] | None) -> dict[str, lis
 def _alpaca_candidate_from_snapshot(
     *,
     symbol: str,
+    requested_symbol: str,
     snapshot: dict[str, Any] | None,
     bars: list[dict[str, Any]],
     pulled_at: datetime,
@@ -586,7 +907,7 @@ def _alpaca_candidate_from_snapshot(
     average_volume = _average_decimal(
         [_decimal_or_none(bar.get("v")) for bar in history_bars[:-1]]
     )
-    return {
+    candidate = {
         "id": f"{Venue.ALPACA.value}:{symbol}",
         "venue": Venue.ALPACA.value,
         "symbol": symbol,
@@ -607,6 +928,9 @@ def _alpaca_candidate_from_snapshot(
         "historyStart": history_start,
         "historyEnd": history_end,
     }
+    if requested_symbol != symbol:
+        candidate["requestedSymbol"] = requested_symbol
+    return candidate
 
 
 def _market_items(payload: dict[str, Any] | list[Any]) -> list[dict[str, Any]]:
@@ -900,12 +1224,21 @@ def _base_url(raw: str | None, default: str) -> str:
     return (value or default).rstrip("/")
 
 
-def _float_setting(raw: str | None, default: float) -> float:
+def _float_setting(
+    raw: str | None,
+    default: float,
+    *,
+    minimum: float = 1.0,
+    maximum: float | None = None,
+) -> float:
     try:
         value = float(raw) if raw is not None else default
     except ValueError:
-        return default
-    return max(1.0, value)
+        value = default
+    value = max(minimum, value)
+    if maximum is not None:
+        value = min(value, maximum)
+    return value
 
 
 def _int_setting(raw: str | None, default: int, *, minimum: int, maximum: int) -> int:
@@ -914,3 +1247,54 @@ def _int_setting(raw: str | None, default: int, *, minimum: int, maximum: int) -
     except ValueError:
         value = default
     return min(max(value, minimum), maximum)
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _short_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _log_provider_error(
+    error: ProviderHttpError,
+    *,
+    provider: str | None,
+    attempt: int,
+    retry_count: int,
+    context: dict[str, Any] | None,
+) -> None:
+    _log_provider_event(
+        "provider_request_failed",
+        provider=provider or "unknown",
+        operation=error.operation or "provider request",
+        status=error.status,
+        status_code=error.status_code,
+        error_code=error.error_code,
+        exception_type=error.exception_type,
+        duration_ms=error.duration_ms,
+        attempt=attempt,
+        retry_count=retry_count,
+        **(context or {}),
+    )
+
+
+def _log_provider_event(event_name: str, **metadata: Any) -> None:
+    payload = {
+        "event": event_name,
+        **{
+            key: value
+            for key, value in metadata.items()
+            if value is not None and not _looks_secret_field(key)
+        },
+    }
+    LOGGER.warning("provider_diagnostic %s", json.dumps(payload, sort_keys=True, default=str))
+
+
+def _looks_secret_field(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in ("secret", "token", "key", "credential", "password")) and key not in {
+        "token_hash",
+        "symbol_hash",
+    }
