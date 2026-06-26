@@ -72,6 +72,15 @@ from app.venues import (
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
+CURRENT_WORKER_HEARTBEAT_STATUSES = {
+    "ok",
+    "accepted",
+    "running",
+    "pulled",
+    "partial",
+    "rate_limited",
+    "empty",
+}
 
 
 @dataclass(frozen=True)
@@ -1000,13 +1009,17 @@ class RuntimeStatusService:
         latest = max(rows, key=lambda row: row["heartbeat_at"] or row["created_at"])
         heartbeat = latest["heartbeat_at"] or latest["created_at"]
         age_seconds = int((datetime.now(UTC) - heartbeat).total_seconds())
-        state = "ok" if latest["status"] == "ok" and age_seconds <= 180 else "blocked"
-        value = "Scheduler heartbeat current" if state == "ok" else "Worker heartbeat stale"
+        heartbeat_status = str(latest["status"])
+        state, value = _worker_heartbeat_state(
+            status=heartbeat_status,
+            age_seconds=age_seconds,
+        )
         return {
             "state": state,
             "value": value,
             "lastHeartbeatAt": heartbeat.isoformat(),
             "ageSeconds": age_seconds,
+            "heartbeatStatus": heartbeat_status,
         }
 
     def credential_rows(self, environment: Environment) -> list[dict[str, Any]]:
@@ -3413,6 +3426,14 @@ def _aggregate_market_data_pull_status(statuses: list[str]) -> str:
     if pulled:
         return "pulled"
     return "empty"
+
+
+def _worker_heartbeat_state(*, status: str, age_seconds: int) -> tuple[str, str]:
+    if age_seconds > 180:
+        return "blocked", "Worker heartbeat stale"
+    if status in CURRENT_WORKER_HEARTBEAT_STATUSES:
+        return "ok", "Scheduler heartbeat current"
+    return "blocked", f"Scheduler heartbeat {status}"
 
 
 def _empty_historical_import_counts() -> dict[str, int]:

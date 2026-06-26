@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -27,6 +27,66 @@ def _client() -> tuple[TestClient, str]:
     app = create_app(settings)
     token = app.state.services.auth.create_session_token(username="yaw")
     return TestClient(app), token
+
+
+def test_req_obs_005_worker_status_treats_completed_scheduler_statuses_as_current() -> None:
+    """TST-REQ-OBS-005-07: Validates REQ-OBS-005
+
+    Given: the scheduled worker records a completed market-data outcome
+    When: the dashboard evaluates scheduler liveness
+    Then: fresh non-failure outcomes keep the worker gate open
+    """
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    now = datetime.now(UTC)
+    app.state.services.registry.state.rows("shared.job_runs").clear()
+    app.state.services.registry.state.insert(
+        "shared.job_runs",
+        {
+            "id": "scheduled-partial",
+            "job_name": app.state.services.runtime_status.WORKER_JOB_NAME,
+            "status": "partial",
+            "heartbeat_at": now,
+            "metadata": {"message": "scheduled provider market data ingestion"},
+            "created_at": now,
+        },
+    )
+
+    worker = app.state.services.runtime_status.worker_status()
+
+    assert worker["state"] == "ok"
+    assert worker["value"] == "Scheduler heartbeat current"
+    assert worker["heartbeatStatus"] == "partial"
+
+
+def test_req_obs_005_worker_status_blocks_stale_scheduler_heartbeats() -> None:
+    """TST-REQ-OBS-005-08: Validates REQ-OBS-005
+
+    Given: the scheduled worker has not recorded a recent heartbeat
+    When: the dashboard evaluates scheduler liveness
+    Then: stale rows still block the live trading loop
+    """
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    stale = datetime.now(UTC) - timedelta(seconds=181)
+    app.state.services.registry.state.rows("shared.job_runs").clear()
+    app.state.services.registry.state.insert(
+        "shared.job_runs",
+        {
+            "id": "scheduled-stale",
+            "job_name": app.state.services.runtime_status.WORKER_JOB_NAME,
+            "status": "pulled",
+            "heartbeat_at": stale,
+            "metadata": {"message": "scheduled provider market data ingestion"},
+            "created_at": stale,
+        },
+    )
+
+    worker = app.state.services.runtime_status.worker_status()
+
+    assert worker["state"] == "blocked"
+    assert worker["value"] == "Worker heartbeat stale"
+    assert worker["heartbeatStatus"] == "pulled"
 
 
 class FakeAwsBillingAdapter:
@@ -951,6 +1011,7 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
         pull["id"] for pull in result["marketDataPulls"]
     ]
     assert result["marketDataPull"]["status"] == "partial"
+    assert app.state.services.runtime_status.worker_status()["state"] == "ok"
     assert {pull["status"] for pull in result["marketDataPull"]["venues"]} == {
         "rate_limited",
         "pulled",
