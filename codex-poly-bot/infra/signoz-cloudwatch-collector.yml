@@ -1,0 +1,38 @@
+# OpenTelemetry Collector config for forwarding codex-poly-bot CloudWatch logs to SigNoz.
+# REQ: REQ-OBS-002
+#
+# Required environment variables:
+# - AWS_REGION, for example us-east-1
+# - PROJECT_NAME, default codex-poly-bot
+# - ENVIRONMENT_NAME, for example development or production
+# - SIGNOZ_REGION, for example us, eu, or in
+# - SIGNOZ_INGESTION_KEY, the raw SigNoz ingestion key
+#
+# Run with otelcol-contrib because the awscloudwatch receiver is a contrib receiver.
+
+receivers:
+  awscloudwatch:
+    region: ${env:AWS_REGION}
+    logs:
+      poll_interval: 1m
+      groups:
+        named:
+          /aws/ecs/${env:PROJECT_NAME}/${env:ENVIRONMENT_NAME}:
+
+processors:
+  batch:
+
+exporters:
+  otlp:
+    endpoint: ingest.${env:SIGNOZ_REGION}.signoz.cloud:443
+    tls:
+      insecure: false
+    headers:
+      signoz-ingestion-key: ${env:SIGNOZ_INGESTION_KEY}
+
+service:
+  pipelines:
+    logs:
+      receivers: [awscloudwatch]
+      processors: [batch]
+      exporters: [otlp]

@@ -79,6 +79,11 @@ github_client_id="${GITHUB_CLIENT_ID:-${DASHBOARD_GITHUB_CLIENT_ID:-}}"
 github_client_secret="${GITHUB_CLIENT_SECRET:-${DASHBOARD_GITHUB_CLIENT_SECRET:-}}"
 enable_background_worker="${ENABLE_BACKGROUND_WORKER:-true}"
 worker_heartbeat_interval_seconds="${WORKER_HEARTBEAT_INTERVAL_SECONDS:-60}"
+signoz_enabled="${SIGNOZ_ENABLED:-false}"
+signoz_frontend_enabled="${SIGNOZ_FRONTEND_ENABLED:-${signoz_enabled}}"
+signoz_region="${SIGNOZ_REGION:-}"
+signoz_otlp_endpoint="${SIGNOZ_OTLP_ENDPOINT:-}"
+signoz_ingestion_key_secret_arn="${SIGNOZ_INGESTION_KEY_SECRET_ARN:-}"
 
 stack_exists="false"
 if aws cloudformation describe-stacks --stack-name "${stack_name}" >/dev/null 2>&1; then
@@ -128,6 +133,10 @@ parameter_overrides=(
   "NotificationRecipients=${notification_recipients}"
   "EnableBackgroundWorker=${enable_background_worker}"
   "WorkerHeartbeatIntervalSeconds=${worker_heartbeat_interval_seconds}"
+  "SignozEnabled=${signoz_enabled}"
+  "SignozFrontendEnabled=${signoz_frontend_enabled}"
+  "SignozRegion=${signoz_region}"
+  "SignozOtlpEndpoint=${signoz_otlp_endpoint}"
   "ManageSesIdentity=${manage_ses_identity}"
   "ApplicationDomainName=${application_domain_name}"
   "CertificateArn=${certificate_arn}"
@@ -194,6 +203,13 @@ add_secret_parameter_if_present \
 add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/anthropic/admin-api-key" \
   "AnthropicAdminApiKeySecretArn"
+if [[ -n "${signoz_ingestion_key_secret_arn}" ]]; then
+  parameter_overrides+=("SignozIngestionKeySecretArn=${signoz_ingestion_key_secret_arn}")
+else
+  add_secret_parameter_if_present \
+    "/codex-poly-bot/${environment}/signoz/ingestion-key" \
+    "SignozIngestionKeySecretArn"
+fi
 
 aws cloudformation deploy \
   --stack-name "${stack_name}" \

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
+from fastapi.testclient import TestClient
 
 from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
 from app.domain import (
@@ -13,6 +16,8 @@ from app.domain import (
     StructuredLogEvent,
     Venue,
 )
+from app.main import AppSettings, create_app
+from app.observability import build_observability_config
 from app.services import ActorContext, AuditService, CloudWatchLogSink, ConfigChange
 
 
@@ -117,6 +122,60 @@ def test_req_obs_002_02_cloudwatch_delivery_fails_app_logs_emitted_local_structu
     assert unavailable_result.degraded
     assert "health persistence failed" in (unavailable_result.error_message or "")
     assert unavailable_health.local_logs[0]["event_name"] == "deployment.health"
+
+def test_req_obs_002_03_signoz_exporter_config_resolves_cloud_endpoint_and_headers() -> None:
+    """TST-REQ-OBS-002-03: Validates REQ-OBS-002
+
+    Given: SigNoz Cloud environment config
+    When: observability config is resolved
+    Then: trace and log OTLP endpoints and headers are ready
+    """
+    config = build_observability_config(
+        {
+            "SIGNOZ_ENABLED": "true",
+            "SIGNOZ_REGION": "us",
+            "SIGNOZ_INGESTION_KEY": "ingest-key",
+            "APP_ENV": "development",
+            "OTEL_SERVICE_NAME": "polybot-api",
+        }
+    )
+
+    assert config.enabled
+    assert config.service_name == "polybot-api"
+    assert config.environment == "development"
+    assert config.traces_endpoint == "https://ingest.us.signoz.cloud:443/v1/traces"
+    assert config.logs_endpoint == "https://ingest.us.signoz.cloud:443/v1/logs"
+    assert config.headers == {"signoz-ingestion-key": "ingest-key"}
+
+def test_req_obs_001_03_http_response_logs_include_status_and_request_id(caplog) -> None:
+    """TST-REQ-OBS-001-03: Validates REQ-OBS-001
+
+    Given: backend HTTP response logging is enabled
+    When: a health request completes
+    Then: a structured response log and request id are emitted
+    """
+    app = create_app(
+        AppSettings(
+            runtime_env={
+                "APP_ENV": "local",
+                "HTTP_RESPONSE_LOGS_ENABLED": "true",
+                "SIGNOZ_ENABLED": "false",
+            }
+        )
+    )
+    client = TestClient(app)
+
+    with caplog.at_level(logging.INFO, logger="app.observability"):
+        response = client.get("/health", headers={"X-Request-ID": "req-test-1"})
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "req-test-1"
+    assert any(
+        "http_response" in record.message
+        and '"status_code": 200' in record.message
+        and '"request_id": "req-test-1"' in record.message
+        for record in caplog.records
+    )
 
 def test_req_obs_003_01_live_order_refused_submitted_filled_canceled_failed_order() -> None:
     """TST-REQ-OBS-003-01: Validates REQ-OBS-003
