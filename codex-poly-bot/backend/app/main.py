@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass, field
+import logging
 import os
 
 from fastapi import FastAPI
@@ -26,6 +27,9 @@ from app.services.stock_universe import (
     resolve_alpaca_symbol_universe,
 )
 from app.services.runtime_status_service import RuntimeStatusService
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -263,13 +267,24 @@ async def _worker_heartbeat_loop(
     interval_seconds: int,
 ) -> None:
     while True:
-        reload_result = services.config.config_for_next_loop(environment)
-        config_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
-        await asyncio.to_thread(
-            services.runtime_status.trigger_scheduled_run,
-            environment=environment,
-            config_payload=config_payload,
-        )
+        try:
+            services.runtime_status.record_worker_heartbeat(
+                status="running",
+                message="scheduler tick started",
+            )
+            reload_result = services.config.config_for_next_loop(environment)
+            config_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
+            await asyncio.to_thread(
+                services.runtime_status.trigger_scheduled_run,
+                environment=environment,
+                config_payload=config_payload,
+            )
+        except Exception:
+            LOGGER.exception("background scheduler tick failed")
+            services.runtime_status.record_worker_heartbeat(
+                status="failed",
+                message="scheduler tick failed",
+            )
         await asyncio.sleep(interval_seconds)
 
 
