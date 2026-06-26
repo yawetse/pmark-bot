@@ -184,6 +184,10 @@ def test_req_dep_003_03_workflow_develop_branch_deploys_development_after_build(
         "SIGNOZ_INGESTION_KEY_SECRET_ARN: ${{ vars.SIGNOZ_INGESTION_KEY_SECRET_ARN }}"
         in workflow_text
     )
+    assert (
+        "SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED: ${{ vars.SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED }}"
+        in workflow_text
+    )
 
 def test_req_dep_004_01_code_merged_main_github_actions_runs_production_deployment() -> None:
     """TST-REQ-DEP-004-01: Validates REQ-DEP-004
@@ -327,6 +331,7 @@ def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -
     assert "BACKEND_TOKEN_SIGNING_SECRET" in text
     assert "SIGNOZ_ENABLED" in text
     assert "SIGNOZ_FRONTEND_ENABLED" in text
+    assert "SignozCloudWatchReadPolicyEnabled" in text
     assert "SignozCloudWatchReadPolicy" in text
     assert "ApplicationUrl" in text
 
@@ -399,6 +404,7 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "SignozEnabled=${signoz_enabled}" in text
     assert "SignozFrontendEnabled=${signoz_frontend_enabled}" in text
     assert "SignozRegion=${signoz_region}" in text
+    assert "SignozCloudWatchReadPolicyEnabled=${signoz_cloudwatch_read_policy_enabled}" in text
     assert "/codex-poly-bot/${environment}/signoz/ingestion-key" in text
     assert "SignozIngestionKeySecretArn=${signoz_ingestion_key_secret_arn}" in text
 

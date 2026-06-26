@@ -200,6 +200,13 @@ Parameters:
     Type: String
     Default: ""
     Description: Optional Secrets Manager ARN whose value is the raw SigNoz ingestion key.
+  SignozCloudWatchReadPolicyEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Create an optional managed policy for external SigNoz CloudWatch collectors.
 
 Conditions:
   IsProduction: !Equals [!Ref EnvironmentName, production]
@@ -207,6 +214,9 @@ Conditions:
   SignozRegionConfigured: !Not [!Equals [!Ref SignozRegion, ""]]
   SignozEndpointConfigured: !Not [!Equals [!Ref SignozOtlpEndpoint, ""]]
   UseSignozIngestionKeySecret: !Not [!Equals [!Ref SignozIngestionKeySecretArn, ""]]
+  CreateSignozCloudWatchReadPolicy: !And
+    - !Condition UseSignoz
+    - !Equals [!Ref SignozCloudWatchReadPolicyEnabled, "true"]
   CreateSesIdentity: !Equals [!Ref ManageSesIdentity, "true"]
   UseCustomDomain: !Not [!Equals [!Ref ApplicationDomainName, ""]]
   UseHttps: !Not [!Equals [!Ref CertificateArn, ""]]
@@ -546,7 +556,7 @@ Resources:
 
   SignozCloudWatchReadPolicy:
     Type: AWS::IAM::ManagedPolicy
-    Condition: UseSignoz
+    Condition: CreateSignozCloudWatchReadPolicy
     Properties:
       ManagedPolicyName: !Sub "${ProjectName}-${EnvironmentName}-signoz-cloudwatch-read"
       Description: !Sub "Read ${ProjectName} ${EnvironmentName} ECS application logs for SigNoz ingestion."
@@ -860,7 +870,7 @@ Outputs:
   ApplicationLogGroupName:
     Value: !Ref ApplicationLogGroup
   SignozCloudWatchReadPolicyArn:
-    Condition: UseSignoz
+    Condition: CreateSignozCloudWatchReadPolicy
     Value: !Ref SignozCloudWatchReadPolicy
   SignozMcpUrl:
     Value: !If
