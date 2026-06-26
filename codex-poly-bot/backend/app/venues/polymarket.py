@@ -172,6 +172,9 @@ class PolymarketUsOrdersClient(Protocol):
     def preview(self, params: dict[str, Any]) -> Any:
         ...
 
+    def close_position(self, params: dict[str, Any]) -> Any:
+        ...
+
 
 class PolymarketUsMarketsClient(Protocol):
     """Subset of the official SDK markets resource used by the adapter."""
@@ -659,6 +662,30 @@ def _numeric_payload(
     return float(decimal)
 
 
+def _slippage_tolerance_payload(
+    *,
+    current_price: Decimal | str | int | float | None,
+    bips: int | None,
+    ticks: int | None,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    payload: dict[str, Any] = {}
+    price_payload = _amount_payload(current_price, "current_price", reasons)
+    if price_payload is not None:
+        payload["currentPrice"] = price_payload
+    if bips is not None:
+        if bips < 0:
+            reasons.append("slippage tolerance bips cannot be negative")
+        else:
+            payload["bips"] = bips
+    if ticks is not None:
+        if ticks < 0:
+            reasons.append("slippage tolerance ticks cannot be negative")
+        else:
+            payload["ticks"] = ticks
+    return {} if reasons else payload
+
+
 def _response_value(response: Any, key: str) -> Any:
     if isinstance(response, dict):
         return response.get(key)
@@ -753,6 +780,53 @@ class PolymarketLiveOrderAdapter:
         """
 
         return self._send_order(request, create=True)
+
+    def close_position(
+        self,
+        *,
+        market_slug: str,
+        current_price: Decimal | str | None = None,
+        slippage_tolerance_bips: int | None = None,
+        slippage_tolerance_ticks: int | None = None,
+    ) -> VenueCallResult:
+        """Close an existing Polymarket position through the official SDK."""
+
+        preflight = self._preflight(require_official_sdk=True)
+        if not preflight.ok:
+            return preflight
+        slug = market_slug.strip()
+        if not slug:
+            return VenueCallResult(ok=False, refusal_reasons=("close position requires market slug",))
+        payload: dict[str, Any] = {
+            "marketSlug": slug,
+            "manualOrderIndicator": "MANUAL_ORDER_INDICATOR_AUTOMATIC",
+            "synchronousExecution": True,
+        }
+        slippage = _slippage_tolerance_payload(
+            current_price=current_price,
+            bips=slippage_tolerance_bips,
+            ticks=slippage_tolerance_ticks,
+        )
+        if slippage:
+            payload["slippageTolerance"] = slippage
+        client = self._new_client()
+        try:
+            response = client.orders.close_position(payload)
+            venue_order_id = _response_value(response, "id")
+            return VenueCallResult(
+                ok=True,
+                payload={
+                    "client_boundary": self.config.client_boundary.value,
+                    "market_slug": slug,
+                    "operation": "close_position",
+                    "venue": self.config.venue.value,
+                    "venue_order_id": str(venue_order_id) if venue_order_id else None,
+                },
+            )
+        except Exception as exc:  # pragma: no cover - exact SDK exceptions vary by installed version.
+            return self._sdk_failure(exc, operation="close_position")
+        finally:
+            self._close_client(client)
 
     def _send_order(self, request: PolymarketLiveOrderRequest, *, create: bool) -> VenueCallResult:
         preflight = self._preflight(require_official_sdk=True)

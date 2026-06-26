@@ -20,7 +20,16 @@ class AlpacaVenueSubmitter(Protocol):
     REQ: REQ-ALP-006
     """
 
-    def submit_order(self, *, account_mode: str, symbol: str, notional: Decimal) -> str:
+    def submit_order(
+        self,
+        *,
+        account_mode: str,
+        symbol: str,
+        notional: Decimal | None = None,
+        quantity: Decimal | None = None,
+        side: str = "buy",
+        client_order_id: str | None = None,
+    ) -> str:
         ...
 
 
@@ -31,6 +40,20 @@ class PolymarketVenueSubmitter(Protocol):
     """
 
     def submit_order(self, request: PolymarketLiveOrderRequest) -> VenueCallResult:
+        ...
+
+
+class PolymarketPositionCloser(Protocol):
+    """Minimal Polymarket close-position boundary used by live exits."""
+
+    def close_position(
+        self,
+        *,
+        market_slug: str,
+        current_price: Decimal | str | None = None,
+        slippage_tolerance_bips: int | None = None,
+        slippage_tolerance_ticks: int | None = None,
+    ) -> VenueCallResult:
         ...
 
 
@@ -47,6 +70,7 @@ class AlpacaExecutionRequest:
     symbol: str
     notional: Decimal | str
     risk_refusal_reason: str | None = None
+    client_order_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,8 +155,18 @@ class FakeAlpacaVenueSubmitter:
     def __init__(self) -> None:
         self.submit_calls = 0
         self.submitted_modes: tuple[str, ...] = ()
+        self.submitted_orders: tuple[dict[str, str], ...] = ()
 
-    def submit_order(self, *, account_mode: str, symbol: str, notional: Decimal) -> str:
+    def submit_order(
+        self,
+        *,
+        account_mode: str,
+        symbol: str,
+        notional: Decimal | None = None,
+        quantity: Decimal | None = None,
+        side: str = "buy",
+        client_order_id: str | None = None,
+    ) -> str:
         """Record an approved submit call.
 
         REQ: REQ-ALP-006
@@ -140,6 +174,17 @@ class FakeAlpacaVenueSubmitter:
 
         self.submit_calls += 1
         self.submitted_modes = (*self.submitted_modes, account_mode)
+        self.submitted_orders = (
+            *self.submitted_orders,
+            {
+                "account_mode": account_mode,
+                "symbol": symbol,
+                "notional": str(notional) if notional is not None else "",
+                "quantity": str(quantity) if quantity is not None else "",
+                "side": side,
+                "client_order_id": client_order_id or "",
+            },
+        )
         return f"alpaca-{account_mode}-{symbol}-{self.submit_calls}"
 
 
@@ -363,11 +408,22 @@ def execute_alpaca_order(
             refusal_reason="LIVE_DISABLED",
         )
 
-    venue_order_id = submitter.submit_order(
-        account_mode=mode_result.payload["account_mode"],
-        symbol=symbol,
-        notional=notional,
-    )
+    try:
+        venue_order_id = submitter.submit_order(
+            account_mode=mode_result.payload["account_mode"],
+            symbol=symbol,
+            notional=notional,
+            side="buy",
+            client_order_id=request.client_order_id,
+        )
+    except Exception as exc:
+        return AlpacaExecutionResult(
+            status="refused",
+            order_recorded=False,
+            broker_submitted=False,
+            refusal_reason=_submit_exception_reason(exc),
+            payload=_submit_exception_payload(exc),
+        )
     return AlpacaExecutionResult(
         status="submitted",
         order_recorded=True,
@@ -379,3 +435,21 @@ def execute_alpaca_order(
             "venue_order_id": venue_order_id,
         },
     )
+
+
+def _submit_exception_reason(exc: Exception) -> str:
+    reason = getattr(exc, "refusal_reason", None)
+    if reason:
+        return str(reason)
+    return f"{type(exc).__name__}: broker submit failed"
+
+
+def _submit_exception_payload(exc: Exception) -> dict[str, Any]:
+    payload = getattr(exc, "payload", None)
+    if isinstance(payload, dict):
+        return dict(payload)
+    status_code = getattr(exc, "status_code", None)
+    result: dict[str, Any] = {"error_type": type(exc).__name__}
+    if status_code is not None:
+        result["status_code"] = status_code
+    return result

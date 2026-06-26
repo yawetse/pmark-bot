@@ -140,13 +140,15 @@ shows strategy consensus records before risk sizing and order intents.
 - [x] Support dry-run order recording for Polymarket and Alpaca.
 - [x] Wire approved Polymarket intents into the Polymarket execution adapter.
 - [x] Wire approved Alpaca intents into the Alpaca execution adapter.
+- [x] Attach concrete live submitters at runtime when live flags, venue flags, account status, and credentials are present.
 - [x] Reconcile unknown or partially filled order states before retrying.
 - [x] Show order intents, submitted orders, refusals, and reconciliation status in the dashboard.
 
 Implementation note: Phase 5 now persists `shared.execution_runs` and
 `shared.order_intents` from manual and scheduled runs. Dry-run records simulated
-orders. Live runs still require configured venue submitters and credentials; without
-them, the lifecycle records a refusal before venue submission.
+orders. Live runs attach Alpaca and Polymarket US submitters only when the runtime
+has live mode, venue enablement, active account state, and required credentials.
+Without those prerequisites, the lifecycle records a refusal before venue submission.
 
 ## Phase 6: Exit
 
@@ -165,11 +167,14 @@ Stocks:
 - [x] Apply stock profit-target, stop-loss, trailing-stop, stale-position, and market-hours exit logic.
 - [x] Persist stock exit intents and exit orders.
 - [x] Show exit status per open position in the dashboard.
+- [x] Submit live Alpaca exits as market sell orders for the tracked long quantity when exit gates pass.
+- [x] Submit live Polymarket exits through the official SDK close-position operation when exit gates pass.
 
 Implementation note: Phase 6 now persists `shared.exit_runs` and
 `shared.exit_intents` from manual and scheduled runs. The monitor reads the existing
 shared Polymarket wallet positions and Alpaca historical positions as the open-position
-source, then records simulated or refused exits with the configured trigger details.
+source, then records simulated, submitted, or refused exits with the configured trigger
+details.
 
 ## Phase 7: Stock Universe Refresh
 
@@ -227,15 +232,14 @@ uses the shared data grid for provider usage imports and cost history.
 - [x] A local dry-run records all five pipeline steps with real records behind each step.
 - [ ] Development deployment passes health checks.
 - [ ] Production deployment passes health checks.
-- [ ] Live trading remains gated until `docs/live-trading-checklist.md` is complete.
+- [ ] Live trading release evidence in `docs/live-trading-checklist.md` is complete for each venue.
 
 Live-trading enablement note: AWS production currently has `LIVE_ENABLED=true`,
 `TRADING_ACCOUNT_MODE=live`, `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true`,
-and `ALPACA_ACCOUNT_STATUS=active`, but actual autonomous live order submission is
-still not complete until concrete venue submitters are attached in the runtime
-service and every live-trading checklist item has release evidence. The current
-default lifecycle refuses live submissions with `LIVE_SUBMITTER_NOT_CONFIGURED`
-when a venue submitter is absent.
+and `ALPACA_ACCOUNT_STATUS=active`. The runtime now attaches concrete venue submitters
+when required credentials are present, so the remaining production gate is operational
+evidence: dry-run/live-gated proof, risk cap review, kill-switch proof, account
+balance/buying-power checks, and final operator approval.
 
 ## Current Next Slice
 

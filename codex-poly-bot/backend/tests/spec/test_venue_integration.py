@@ -40,6 +40,7 @@ class FakePolymarketOrders:
     def __init__(self) -> None:
         self.create_calls: list[dict] = []
         self.preview_calls: list[dict] = []
+        self.close_position_calls: list[dict] = []
 
     def create(self, params: dict) -> dict:
         self.create_calls.append(params)
@@ -48,6 +49,10 @@ class FakePolymarketOrders:
     def preview(self, params: dict) -> dict:
         self.preview_calls.append(params)
         return {"order": {"id": "pm-preview-1"}}
+
+    def close_position(self, params: dict) -> dict:
+        self.close_position_calls.append(params)
+        return {"id": "pm-close-1", "executions": []}
 
 
 class FakePolymarketMarkets:
@@ -336,6 +341,44 @@ def test_req_ven_004_06_polymarket_us_sdk_preview_does_not_create_live_order() -
     assert sdk.orders.create_calls == []
     assert sdk.orders.preview_calls[0]["request"]["marketSlug"] == "will-fed-cut"
     assert result.payload["operation"] == "preview_order"
+
+
+def test_req_ven_004_09_polymarket_us_sdk_close_position_uses_official_sdk() -> None:
+    """TST-REQ-VEN-004-09: Validates REQ-VEN-004 and REQ-EXT-006
+
+    Given: a Polymarket US adapter with credentials
+    When: a live exit closes a position
+    Then: the official SDK close-position operation is used
+    """
+    sdk = FakePolymarketSdkClient()
+    adapter = PolymarketLiveOrderAdapter(
+        config=PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+            base_url=POLYMARKET_US_API_BASE_URL,
+            credential_ref="/codex-poly-bot/production/polymarket/secret-key",
+        ),
+        credentials=PolymarketApiCredentials(key_id="pm-key", secret_key="pm-secret"),
+        client_factory=lambda: sdk,
+    )
+
+    result = adapter.close_position(
+        market_slug="will-fed-cut",
+        current_price="0.50",
+        slippage_tolerance_bips=200,
+    )
+
+    assert result.ok
+    assert sdk.orders.close_position_calls[0]["marketSlug"] == "will-fed-cut"
+    assert sdk.orders.close_position_calls[0]["slippageTolerance"]["currentPrice"] == {
+        "value": "0.50",
+        "currency": "USD",
+    }
+    assert sdk.orders.close_position_calls[0]["slippageTolerance"]["bips"] == 200
+    assert result.payload["operation"] == "close_position"
+    assert result.payload["venue_order_id"] == "pm-close-1"
 
 
 def test_req_ven_004_07_missing_polymarket_secret_blocks_before_sdk_call() -> None:

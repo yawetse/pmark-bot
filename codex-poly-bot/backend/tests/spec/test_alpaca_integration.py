@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import json
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -39,6 +41,7 @@ from app.venues import (
     AlpacaClientBoundary,
     AlpacaContractClient,
     AlpacaLiveAccountState,
+    AlpacaLiveOrderAdapter,
     AlpacaMarketDataStatus,
     AlpacaOrderIntent,
     AlpacaVenueConfig,
@@ -372,6 +375,88 @@ def test_req_alp_006_02_dry_run_mode_disabled_but_risk_check_fails() -> None:
     assert result.status == "refused"
     assert result.refusal_reason == "MAX_POSITION_LIMIT"
     assert submitter.submit_calls == 0
+
+
+def test_req_alp_006_03_live_adapter_posts_market_order_to_alpaca_trading_api() -> None:
+    """TST-REQ-ALP-006-03: Validates REQ-ALP-006
+
+    Given: Alpaca live credentials and an approved notional order
+    When: the live adapter submits the order
+    Then: it calls the documented `/v2/orders` endpoint with sanitized metadata
+    """
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(
+            {
+                "method": request.method,
+                "url": str(request.url),
+                "headers": dict(request.headers),
+                "json": json.loads(request.content.decode("utf-8")),
+            }
+        )
+        return httpx.Response(200, json={"id": "alpaca-order-1"})
+
+    adapter = AlpacaLiveOrderAdapter(
+        account_mode="live",
+        environ={"ALPACA_KEY_ID": "alpaca-key", "ALPACA_SECRET_KEY": "alpaca-secret"},
+        trading_base_url="https://api.alpaca.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    order_id = adapter.submit_order(
+        account_mode="live",
+        symbol="spy",
+        notional=Decimal("25.00"),
+        side="buy",
+        client_order_id="entry-prod-pipeline-spy",
+    )
+
+    assert order_id == "alpaca-order-1"
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "https://api.alpaca.test/v2/orders"
+    assert calls[0]["json"]["symbol"] == "SPY"
+    assert calls[0]["json"]["side"] == "buy"
+    assert calls[0]["json"]["notional"] == "25"
+    assert calls[0]["json"]["type"] == "market"
+    assert calls[0]["json"]["time_in_force"] == "day"
+    assert calls[0]["json"]["client_order_id"].startswith("codex-")
+    assert "alpaca-secret" not in str(calls[0]["json"])
+
+
+def test_req_alp_006_04_live_adapter_sells_quantity_for_exit_order() -> None:
+    """TST-REQ-ALP-006-04: Validates REQ-ALP-006 and REQ-EXT-006
+
+    Given: an approved exit for a long Alpaca position
+    When: the live adapter submits a sell quantity
+    Then: it sends a quantity market sell without exposing credentials
+    """
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"id": "alpaca-exit-1"})
+
+    adapter = AlpacaLiveOrderAdapter(
+        account_mode="live",
+        environ={"ALPACA_KEY_ID": "alpaca-key", "ALPACA_SECRET_KEY": "alpaca-secret"},
+        trading_base_url="https://api.alpaca.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    order_id = adapter.submit_order(
+        account_mode="live",
+        symbol="SPY",
+        quantity=Decimal("1.25"),
+        side="sell",
+        client_order_id="exit-prod-pipeline-spy",
+    )
+
+    assert order_id == "alpaca-exit-1"
+    assert calls[0]["symbol"] == "SPY"
+    assert calls[0]["side"] == "sell"
+    assert calls[0]["qty"] == "1.25"
+    assert "notional" not in calls[0]
 
 def test_req_alp_007_01_environment_dashboard_config_values_alpaca_account_mode_resolved() -> None:
     """TST-REQ-ALP-007-01: Validates REQ-ALP-007

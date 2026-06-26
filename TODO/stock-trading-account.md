@@ -48,6 +48,8 @@ Do not paste API keys, brokerage secrets, bank details, or account numbers into 
 - [x] Ask Codex to verify read-only paper account, buying power, positions, and market data after credentials are stored.
 - [ ] Run paper order checks before any live stock order.
 - [ ] Run dry-run live-account checks before enabling live stock orders.
+- [ ] Run a `Full live-gated` check with tiny risk caps and confirm Alpaca entries submit as notional market buys only when expected.
+- [ ] Run an exit-path check with a tiny tracked long position and confirm Alpaca exits submit as market sells for the tracked quantity.
 - [ ] Confirm kill switch and notification delivery before enabling live orders.
 
 ## Reference

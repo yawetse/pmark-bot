@@ -10,11 +10,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
+from hashlib import sha256
+import os
 from typing import Any, Iterable, Mapping, Sequence
+
+import httpx
 
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider, OrderSide, Venue
 from app.venues.polymarket import VenueCallResult
+
+
+ALPACA_LIVE_TRADING_BASE_URL = "https://api.alpaca.markets"
+ALPACA_PAPER_TRADING_BASE_URL = "https://paper-api.alpaca.markets"
 
 
 class AlpacaClientBoundary(str, Enum):
@@ -102,6 +110,22 @@ class AlpacaLiveAccountState:
     positions: Mapping[str, Decimal | str] | None
     open_orders: Sequence[str] | None
     buying_power: Decimal | str | None
+
+
+class AlpacaOrderSubmitError(RuntimeError):
+    """Sanitized Alpaca submit error safe for persistence and UI display."""
+
+    def __init__(
+        self,
+        refusal_reason: str,
+        *,
+        status_code: int | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(refusal_reason)
+        self.refusal_reason = refusal_reason
+        self.status_code = status_code
+        self.payload = payload or {}
 
 
 def _decimal(value: Decimal | str, field_name: str) -> Decimal:
@@ -502,3 +526,235 @@ class AlpacaContractClient:
         if result.ok:
             self.operation_calls = len(result.payload["operations"])
         return result
+
+
+class AlpacaLiveOrderAdapter:
+    """Submit approved Alpaca live or paper orders through the Trading API."""
+
+    def __init__(
+        self,
+        *,
+        account_mode: str,
+        environ: dict[str, str] | None = None,
+        trading_base_url: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> None:
+        self.account_mode = _account_mode(account_mode)
+        self.environ = environ if environ is not None else os.environ
+        self.trading_base_url = _base_url(
+            trading_base_url
+            or self.environ.get("ALPACA_TRADING_BASE_URL")
+            or (
+                self.environ.get("ALPACA_PAPER_TRADING_BASE_URL")
+                if self.account_mode == "paper"
+                else self.environ.get("ALPACA_LIVE_TRADING_BASE_URL")
+            ),
+            ALPACA_PAPER_TRADING_BASE_URL
+            if self.account_mode == "paper"
+            else ALPACA_LIVE_TRADING_BASE_URL,
+        )
+        self.transport = transport
+        self.timeout_seconds = max(0.5, float(timeout_seconds))
+
+    def submit_order(
+        self,
+        *,
+        account_mode: str,
+        symbol: str,
+        notional: Decimal | None = None,
+        quantity: Decimal | None = None,
+        side: str = "buy",
+        client_order_id: str | None = None,
+    ) -> str:
+        """Submit a market order and return the broker order id.
+
+        REQ: REQ-ALP-006, REQ-ALP-018
+        """
+
+        requested_mode = _account_mode(account_mode)
+        if requested_mode != self.account_mode:
+            raise AlpacaOrderSubmitError(
+                "Alpaca account mode mismatch",
+                payload={
+                    "configured_account_mode": self.account_mode,
+                    "requested_account_mode": requested_mode,
+                },
+            )
+        headers = self._headers()
+        if headers is None:
+            raise AlpacaOrderSubmitError(
+                "Alpaca credentials missing",
+                payload={"error_code": "alpaca_credentials_missing"},
+            )
+        payload = _alpaca_market_order_payload(
+            symbol=symbol,
+            side=side,
+            notional=notional,
+            quantity=quantity,
+            client_order_id=client_order_id,
+            extended_hours=_bool_env(self.environ.get("ALPACA_EXTENDED_HOURS")),
+        )
+        try:
+            with self._client() as client:
+                response = client.post(
+                    f"{self.trading_base_url}/v2/orders",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json=payload,
+                )
+        except httpx.HTTPError as exc:
+            raise AlpacaOrderSubmitError(
+                f"Alpaca order submit failed: {type(exc).__name__}",
+                payload={"error_code": "alpaca_http_error"},
+            ) from exc
+        if response.status_code == 429:
+            raise AlpacaOrderSubmitError(
+                "Alpaca order submit rate limited",
+                status_code=response.status_code,
+                payload={"error_code": "alpaca_rate_limited"},
+            )
+        if response.status_code >= 400:
+            raise AlpacaOrderSubmitError(
+                f"Alpaca order submit returned HTTP {response.status_code}",
+                status_code=response.status_code,
+                payload=_safe_alpaca_error_payload(response),
+            )
+        try:
+            response_payload = response.json()
+        except ValueError as exc:
+            raise AlpacaOrderSubmitError(
+                "Alpaca order submit returned invalid JSON",
+                payload={"error_code": "alpaca_invalid_json"},
+            ) from exc
+        order_id = _first_text(
+            response_payload.get("id") if isinstance(response_payload, dict) else None,
+            response_payload.get("client_order_id") if isinstance(response_payload, dict) else None,
+        )
+        if order_id is None:
+            raise AlpacaOrderSubmitError(
+                "Alpaca order submit did not return an order id",
+                payload={"error_code": "alpaca_missing_order_id"},
+            )
+        return order_id
+
+    def _headers(self) -> dict[str, str] | None:
+        key_id = self.environ.get("ALPACA_KEY_ID", "").strip()
+        secret_key = self.environ.get("ALPACA_SECRET_KEY", "").strip()
+        if not key_id or not secret_key:
+            return None
+        return {
+            "APCA-API-KEY-ID": key_id,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
+
+    def _client(self) -> httpx.Client:
+        return httpx.Client(timeout=self.timeout_seconds, transport=self.transport)
+
+
+def alpaca_live_order_adapter_from_env(
+    environ: dict[str, str] | None = None,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> AlpacaLiveOrderAdapter:
+    """Build an Alpaca order adapter from deployed runtime variables."""
+
+    source = environ if environ is not None else os.environ
+    return AlpacaLiveOrderAdapter(
+        account_mode=source.get("TRADING_ACCOUNT_MODE", "paper"),
+        environ=source,
+        transport=transport,
+    )
+
+
+def _alpaca_market_order_payload(
+    *,
+    symbol: str,
+    side: str,
+    notional: Decimal | None,
+    quantity: Decimal | None,
+    client_order_id: str | None,
+    extended_hours: bool,
+) -> dict[str, Any]:
+    normalized_symbol = symbol.strip().upper()
+    normalized_side = side.strip().lower()
+    if not normalized_symbol:
+        raise AlpacaOrderSubmitError("missing Alpaca symbol")
+    if normalized_side not in {"buy", "sell"}:
+        raise AlpacaOrderSubmitError("unsupported Alpaca order side")
+    payload: dict[str, Any] = {
+        "symbol": normalized_symbol,
+        "side": normalized_side,
+        "type": "market",
+        "time_in_force": "day",
+    }
+    if extended_hours:
+        payload["extended_hours"] = True
+    if client_order_id:
+        payload["client_order_id"] = _alpaca_client_order_id(client_order_id)
+    if quantity is not None:
+        parsed_quantity = _decimal(quantity, "quantity")
+        if parsed_quantity <= 0:
+            raise AlpacaOrderSubmitError("Alpaca order quantity must be positive")
+        payload["qty"] = _decimal_text(parsed_quantity)
+        return payload
+    if notional is None:
+        raise AlpacaOrderSubmitError("Alpaca order requires notional or quantity")
+    parsed_notional = _decimal(notional, "notional")
+    if parsed_notional <= 0:
+        raise AlpacaOrderSubmitError("Alpaca order notional must be positive")
+    payload["notional"] = _decimal_text(parsed_notional)
+    return payload
+
+
+def _safe_alpaca_error_payload(response: httpx.Response) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "error_code": f"alpaca_http_{response.status_code}",
+        "status_code": response.status_code,
+    }
+    try:
+        body = response.json()
+    except ValueError:
+        return payload
+    if isinstance(body, dict):
+        for key in ("code", "message", "error"):
+            value = body.get(key)
+            if value is not None:
+                payload[key] = str(value)
+    return payload
+
+
+def _alpaca_client_order_id(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    return f"codex-{sha256(normalized.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _decimal_text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _bool_env(value: str | None) -> bool:
+    return str(value or "").strip().lower() == "true"
+
+
+def _base_url(value: str | None, default: str) -> str:
+    text = (value or default).strip().rstrip("/")
+    return text or default
+
+
+def _account_mode(value: str) -> str:
+    text = value.strip().lower()
+    if text not in {"paper", "live"}:
+        raise ValueError("account_mode must be paper or live")
+    return text
