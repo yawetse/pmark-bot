@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
   AllCommunityModule,
@@ -20,18 +21,26 @@ export function DashboardDataGrid<T extends object>({
   columns,
   emptyTitle,
   emptyBody,
+  emptyAction,
   getRowId,
   pageSize = 10,
   height,
+  title,
+  description,
+  density = "standard",
   searchPlaceholder = "Filter rows",
 }: {
   rows: T[];
   columns: DashboardGridColumn<T>[];
   emptyTitle: string;
   emptyBody: string;
+  emptyAction?: ReactNode;
   getRowId?: (row: T) => string;
   pageSize?: number;
   height?: number;
+  title?: string;
+  description?: string;
+  density?: "compact" | "standard";
   searchPlaceholder?: string;
 }) {
   const [quickFilterText, setQuickFilterText] = useState("");
@@ -54,22 +63,31 @@ export function DashboardDataGrid<T extends object>({
       <div className="empty-state">
         <strong>{emptyTitle}</strong>
         <p>{emptyBody}</p>
+        {emptyAction ? <div className="empty-state-actions">{emptyAction}</div> : null}
       </div>
     );
   }
 
   return (
-    <div className="dashboard-grid-block">
-      <label className="grid-filter">
-        <span>Filter</span>
-        <input
-          type="search"
-          value={quickFilterText}
-          onChange={(event) => setQuickFilterText(event.target.value)}
-          placeholder={searchPlaceholder}
-        />
-      </label>
-      <div className="dashboard-data-grid" style={{ height: gridHeight }}>
+    <div className={`dashboard-grid-block ${density === "compact" ? "compact" : ""}`.trim()}>
+      <div className="dashboard-grid-heading">
+        {title || description ? (
+          <div>
+            {title ? <h3>{title}</h3> : null}
+            {description ? <p>{description}</p> : null}
+          </div>
+        ) : null}
+        <label className="grid-filter">
+          <span>Filter</span>
+          <input
+            type="search"
+            value={quickFilterText}
+            onChange={(event) => setQuickFilterText(event.target.value)}
+            placeholder={searchPlaceholder}
+          />
+        </label>
+      </div>
+      <div className="dashboard-data-grid" data-density={density} style={{ height: gridHeight }}>
         <AgGridProvider modules={GRID_MODULES}>
           <AgGridReact<T>
             columnDefs={columns}

@@ -1,5 +1,7 @@
 "use client";
 
+import { Disclosure } from "@/components/dashboard/dashboard-primitives";
+
 // REQ: REQ-UI-004, REQ-OBS-005
 
 type LoopState = "ok" | "blocked" | "idle" | "waiting";
@@ -110,21 +112,23 @@ export function LoopMonitor({
         ))}
       </ol>
 
-      <div className="loop-detail-grid">
-        <LoopDetailSection title="Data in use" items={loop.dataInputs} />
-        <LoopDetailSection title="Prompts" items={loop.prompts} />
-        <LoopDetailSection title="Decision logic" items={loop.logic} />
-        <LoopCalculationSection calculations={loop.calculations} />
-        <LoopGateSection gates={loop.gates} />
-        <section className="loop-detail-section" aria-labelledby="loop-records-title">
-          <h3 id="loop-records-title">Records</h3>
-          <div className="loop-record-grid">
-            <LoopMetric label="Order events" value={String(loop.records.orderEvents)} />
-            <LoopMetric label="Open orders" value={String(loop.records.openOrders)} />
-            <LoopMetric label="Audit events" value={String(loop.records.auditEvents)} />
-          </div>
-        </section>
-      </div>
+      <Disclosure title="Show loop inputs, prompts, gates, and records">
+        <div className="loop-detail-grid">
+          <LoopDetailSection title="Data in use" items={loop.dataInputs} />
+          <LoopDetailSection title="Prompts" items={loop.prompts} />
+          <LoopDetailSection title="Decision logic" items={loop.logic} />
+          <LoopCalculationSection calculations={loop.calculations} />
+          <LoopGateSection gates={loop.gates} />
+          <section className="loop-detail-section" aria-labelledby="loop-records-title">
+            <h3 id="loop-records-title">Records</h3>
+            <div className="loop-record-grid">
+              <LoopMetric label="Order events" value={String(loop.records.orderEvents)} />
+              <LoopMetric label="Open orders" value={String(loop.records.openOrders)} />
+              <LoopMetric label="Audit events" value={String(loop.records.auditEvents)} />
+            </div>
+          </section>
+        </div>
+      </Disclosure>
     </section>
   );
 }

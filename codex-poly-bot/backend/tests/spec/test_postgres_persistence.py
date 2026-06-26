@@ -146,6 +146,7 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.ai_usage_import_runs" in plan.table_names
     assert "shared.pipeline_runs" in plan.table_names
     assert "shared.pipeline_steps" in plan.table_names
+    assert "shared.tick_summaries" in plan.table_names
     assert "shared.scanner_runs" in plan.table_names
     assert "shared.scanner_candidates" in plan.table_names
     assert "shared.reasoning_runs" in plan.table_names

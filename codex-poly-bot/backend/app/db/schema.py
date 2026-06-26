@@ -462,6 +462,29 @@ def _shared_tables() -> list[Table]:
             schema=SHARED_SCHEMA,
         ),
         Table(
+            "tick_summaries",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("window_minutes", Integer, nullable=False),
+            Column("window_started_at", DateTime(timezone=True), nullable=False),
+            Column("window_ended_at", DateTime(timezone=True), nullable=False),
+            Column("latest_run_id", String, nullable=True),
+            Column("run_count", Integer, nullable=False),
+            Column("status", String, nullable=False),
+            Column("model", String, nullable=False),
+            Column("prompt_version", String, nullable=False),
+            Column("input_hash", String, nullable=False),
+            Column("summary_markdown", String, nullable=False),
+            Column("key_events", JSONB, nullable=False),
+            Column("warnings", JSONB, nullable=False),
+            Column("usage", JSONB, nullable=False),
+            Column("error_code", String, nullable=True),
+            Column("message", String, nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
             "economics_snapshots",
             metadata,
             Column("id", String, primary_key=True),
@@ -939,6 +962,12 @@ Index(
     metadata.tables["shared.ai_usage_import_runs"].c.environment,
     metadata.tables["shared.ai_usage_import_runs"].c.provider,
     metadata.tables["shared.ai_usage_import_runs"].c.completed_at,
+)
+
+Index(
+    "ix_tick_summaries_environment_created_at",
+    metadata.tables["shared.tick_summaries"].c.environment,
+    metadata.tables["shared.tick_summaries"].c.created_at,
 )
 
 Index(

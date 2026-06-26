@@ -1,5 +1,6 @@
 "use client";
 
+import { Database, GitBranch, SearchCheck, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
 import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
@@ -78,6 +79,9 @@ export type PipelineStepView = {
   completedAt?: string | null;
   message?: string | null;
   metrics?: Record<string, unknown>;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  decisions?: Record<string, unknown>;
   recordIds?: string[];
 };
 
@@ -98,12 +102,49 @@ type RunState =
   | { status: "accepted"; message: string; runId: string; mode: ManualRunMode }
   | { status: "error"; message: string };
 
-const RUN_MODES: { mode: ManualRunMode; label: string; title: string }[] = [
-  { mode: "data_import", label: "Data import", title: "Fetch provider market data only" },
-  { mode: "scanner_only", label: "Scanner only", title: "Fetch data and run scanner filters" },
-  { mode: "full_dry_run", label: "Full dry run", title: "Run all five steps with live orders disabled" },
-  { mode: "full_live_gated", label: "Full live-gated", title: "Run all five steps using configured live gates" },
+const RUN_MODES: {
+  mode: ManualRunMode;
+  label: string;
+  title: string;
+  detail: string;
+  risk: "lowest" | "low" | "medium" | "gated";
+}[] = [
+  {
+    mode: "data_import",
+    label: "Data import",
+    title: "Fetch provider market data only",
+    detail: "Updates candidate source data without scoring or order intent generation.",
+    risk: "lowest",
+  },
+  {
+    mode: "scanner_only",
+    label: "Scanner only",
+    title: "Fetch data and run scanner filters",
+    detail: "Runs deterministic candidate filters and records accepted or rejected candidates.",
+    risk: "low",
+  },
+  {
+    mode: "full_dry_run",
+    label: "Full dry run",
+    title: "Run all five steps with live orders disabled",
+    detail: "Runs data, scanner, reasoning, strategy, and simulated execution.",
+    risk: "medium",
+  },
+  {
+    mode: "full_live_gated",
+    label: "Full live-gated",
+    title: "Run all five steps using configured live gates",
+    detail: "Uses live gates, venue flags, credentials, risk limits, and kill switch state.",
+    risk: "gated",
+  },
 ];
+
+const RUN_MODE_ICONS = {
+  data_import: Database,
+  scanner_only: SearchCheck,
+  full_dry_run: GitBranch,
+  full_live_gated: ShieldCheck,
+} satisfies Record<ManualRunMode, typeof Database>;
 
 export function ManualRunControl({
   environment,
@@ -144,18 +185,13 @@ export function ManualRunControl({
       </p>
       <div className="manual-run-actions" role="group" aria-label="Manual run modes">
         {RUN_MODES.map((item) => (
-          <button
-            className={`button ${item.mode === "full_live_gated" ? "primary" : ""}`}
+          <ManualRunOption
             disabled={runState.status === "submitting"}
+            isSubmitting={runState.status === "submitting" && runState.mode === item.mode}
+            item={item}
             key={item.mode}
-            title={item.title}
-            type="button"
-            onClick={() => triggerManualRun(item.mode)}
-          >
-            {runState.status === "submitting" && runState.mode === item.mode
-              ? "Triggering"
-              : item.label}
-          </button>
+            onRun={triggerManualRun}
+          />
         ))}
       </div>
       {runState.status === "accepted" ? (
@@ -165,5 +201,38 @@ export function ManualRunControl({
       ) : null}
       {runState.status === "error" ? <p className="status-message">{runState.message}</p> : null}
     </section>
+  );
+}
+
+function ManualRunOption({
+  disabled,
+  isSubmitting,
+  item,
+  onRun,
+}: {
+  disabled: boolean;
+  isSubmitting: boolean;
+  item: (typeof RUN_MODES)[number];
+  onRun: (mode: ManualRunMode) => void;
+}) {
+  const Icon = RUN_MODE_ICONS[item.mode];
+  return (
+    <div className="manual-run-option">
+      <Icon aria-hidden="true" className="manual-run-icon" size={18} strokeWidth={2.3} />
+      <div>
+        <strong>{item.label}</strong>
+        <span>{item.detail}</span>
+        <small>Risk: {item.risk}</small>
+      </div>
+      <button
+        className={`button ${item.mode === "full_live_gated" ? "primary" : ""}`}
+        disabled={disabled}
+        title={item.title}
+        type="button"
+        onClick={() => onRun(item.mode)}
+      >
+        {isSubmitting ? "Triggering" : "Run"}
+      </button>
+    </div>
   );
 }

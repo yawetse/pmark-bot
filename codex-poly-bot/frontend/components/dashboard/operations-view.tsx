@@ -1,5 +1,7 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
+import { AlertTriangle } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 
 import {
@@ -20,6 +22,11 @@ import {
   MarketDataPanel,
   type MarketDataPullView,
 } from "@/components/dashboard/market-data-panel";
+import {
+  FALLBACK_TICK_SUMMARY,
+  TickSummaryPanel,
+  type TickSummaryView,
+} from "@/components/dashboard/tick-summary-panel";
 import { dashboardApi } from "@/lib/api";
 
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
@@ -342,6 +349,7 @@ export type OperationsSummaryView = {
   manualReviewState: string;
   orderEvents: OrderEventView[];
   pipelineRuns: PipelineRunView[];
+  tickSummary?: TickSummaryView;
   scanner?: ScannerSummaryView;
   reasoning?: ReasoningSummaryView;
   strategyConsensus?: StrategyConsensusSummaryView;
@@ -447,6 +455,7 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   manualReviewState: "unknown",
   orderEvents: [],
   pipelineRuns: [],
+  tickSummary: FALLBACK_TICK_SUMMARY,
   scanner: FALLBACK_SCANNER,
   reasoning: FALLBACK_REASONING,
   strategyConsensus: FALLBACK_STRATEGY_CONSENSUS,
@@ -471,6 +480,7 @@ export function OperationsView({
 }) {
   const [latestMarketData, setLatestMarketData] = useState(marketData);
   const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
+  const [tickSummary, setTickSummary] = useState(summary.tickSummary ?? FALLBACK_TICK_SUMMARY);
   const [scanner, setScanner] = useState(summary.scanner ?? FALLBACK_SCANNER);
   const [reasoning, setReasoning] = useState(summary.reasoning ?? FALLBACK_REASONING);
   const [strategyConsensus, setStrategyConsensus] = useState(
@@ -502,6 +512,10 @@ export function OperationsView({
             </span>
           )}
         </div>
+        <p className="panel-note">
+          Review the current operating gates first, then move through the run workflow from
+          candidate intake to execution, exits, imports, and emergency controls.
+        </p>
         {loadError ? <p className="status-message">{loadError}</p> : null}
         <div className="metric-grid">
           <Metric label="Open orders" value={String(summary.openOrders)} />
@@ -525,7 +539,32 @@ export function OperationsView({
         </ul>
       </section>
 
+      <section className="panel wide-panel" aria-labelledby="workflow-title">
+        <div className="panel-heading">
+          <div>
+            <p className="section-label">Workflow map</p>
+            <h2 id="workflow-title">Operate in sequence</h2>
+          </div>
+          <span className="status idle">dry-run safe</span>
+        </div>
+        <div className="operation-workflow-grid">
+          <WorkflowLink href="#pipeline-title" label="Run pipeline" value={String(pipelineRuns.length)} detail="Recorded runs" />
+          <WorkflowLink href="#scanner-title" label="Scanner" value={String(scanner.candidateCount)} detail="Candidates" />
+          <WorkflowLink href="#reasoning-title" label="Reasoning / Brain" value={String(reasoning.scoredCount)} detail="Scored" />
+          <WorkflowLink href="#strategy-consensus-title" label="Strategy" value={String(strategyConsensus.approvedCount)} detail="Approved" />
+          <WorkflowLink href="#execution-title" label="Execution" value={String(execution.intentCount)} detail="Intents" />
+          <WorkflowLink href="#exit-title" label="Exit" value={String(exit.triggeredCount)} detail="Triggered" />
+          <WorkflowLink href="#historical-import-title" label="Imports" value={String(summary.historicalImport?.counts.checkpoints ?? 0)} detail="Checkpoints" />
+          <WorkflowLink href="#kill-switch-title" label="Kill Switch" value={summary.killSwitch} detail="Emergency control" />
+        </div>
+      </section>
+
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
+
+      <TickSummaryPanel
+        summary={tickSummary}
+        timeZone={displayTimeZone}
+      />
 
       <PipelineRunsPanel runs={pipelineRuns} timeZone={displayTimeZone} />
 
@@ -650,6 +689,14 @@ export function OperationsView({
         intents: exitRun.intents ?? [],
       });
     }
+    void refreshTickSummary();
+  }
+
+  async function refreshTickSummary() {
+    const result = await dashboardApi<OperationsSummaryView>("operations/summary");
+    if (result.ok) {
+      setTickSummary(result.data.tickSummary ?? FALLBACK_TICK_SUMMARY);
+    }
   }
 }
 
@@ -702,6 +749,26 @@ function Metric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function WorkflowLink({
+  href,
+  label,
+  value,
+  detail,
+}: {
+  href: string;
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <a className="workflow-link" href={href}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </a>
   );
 }
 
@@ -763,7 +830,25 @@ function PipelineRunsPanel({
       field: "metrics",
       headerName: "Metrics",
       minWidth: 260,
-      valueGetter: (params) => JSON.stringify(params.data?.metrics ?? {}),
+      valueGetter: (params) => jsonSummary(params.data?.metrics),
+    },
+    {
+      field: "inputs",
+      headerName: "Inputs",
+      minWidth: 280,
+      valueGetter: (params) => jsonSummary(params.data?.inputs),
+    },
+    {
+      field: "outputs",
+      headerName: "Outputs",
+      minWidth: 280,
+      valueGetter: (params) => jsonSummary(params.data?.outputs),
+    },
+    {
+      field: "decisions",
+      headerName: "Decisions",
+      minWidth: 320,
+      valueGetter: (params) => jsonSummary(params.data?.decisions),
     },
     {
       field: "completedAt",
@@ -1294,6 +1379,14 @@ function scannerMetricSummary(metrics: Record<string, unknown> | undefined): str
   return parts.join("; ");
 }
 
+function jsonSummary(value: unknown): string {
+  if (!value || (typeof value === "object" && Object.keys(value as Record<string, unknown>).length === 0)) {
+    return "";
+  }
+  const text = JSON.stringify(value);
+  return text.length > 600 ? `${text.slice(0, 600)}...` : text;
+}
+
 function reasoningCheckSummary(checks: Array<Record<string, unknown>> | undefined): string {
   if (!checks?.length) {
     return "";
@@ -1358,6 +1451,7 @@ function statusClass(status: string): "ok" | "idle" | "blocked" {
 function KillSwitchControl({ active }: { active: boolean }) {
   const [reason, setReason] = useState("operator stop");
   const [confirmed, setConfirmed] = useState(false);
+  const [open, setOpen] = useState(false);
   const [state, setState] = useState<
     | { status: "idle" }
     | { status: "submitting" }
@@ -1388,37 +1482,72 @@ function KillSwitchControl({ active }: { active: boolean }) {
         ? "Kill switch active. Live trading is disabled."
         : "Kill switch request accepted.",
     });
+    setOpen(false);
   }
 
   return (
-    <form className="danger-zone" onSubmit={onSubmit}>
+    <div className="danger-zone">
       <div>
         <p className="section-label">Emergency control</p>
-        <h2>Kill Switch</h2>
+        <h2 id="kill-switch-title">Kill Switch</h2>
         <p>
           Stops new live orders and asks the backend to cancel known open live orders.
           Dry-run records can still be reviewed.
         </p>
       </div>
-      <label>
-        Reason
-        <input value={reason} onChange={(event) => setReason(event.target.value)} />
-      </label>
-      <label className="checkbox-row">
-        <input
-          checked={confirmed}
-          disabled={active}
-          type="checkbox"
-          onChange={(event) => setConfirmed(event.target.checked)}
-        />
-        <span>I understand this disables live trading.</span>
-      </label>
-      <button className="button danger" disabled={!confirmed || active || state.status === "submitting"} type="submit">
-        {active ? "Kill switch active" : "Activate kill switch"}
-      </button>
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Trigger asChild>
+          <button className="button danger" disabled={active || state.status === "submitting"} type="button">
+            {active ? "Kill switch active" : "Review kill switch"}
+          </button>
+        </Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="dialog-content" aria-describedby="kill-switch-dialog-body">
+            <div className="dialog-heading">
+              <AlertTriangle aria-hidden="true" size={22} strokeWidth={2.4} />
+              <div>
+                <Dialog.Title>Activate kill switch</Dialog.Title>
+                <Dialog.Description id="kill-switch-dialog-body">
+                  This disables live trading and asks the backend to cancel known live orders.
+                </Dialog.Description>
+              </div>
+            </div>
+            <form className="dialog-form" onSubmit={onSubmit}>
+              <label>
+                Reason
+                <input value={reason} onChange={(event) => setReason(event.target.value)} />
+              </label>
+              <label className="checkbox-row">
+                <input
+                  checked={confirmed}
+                  disabled={active}
+                  type="checkbox"
+                  onChange={(event) => setConfirmed(event.target.checked)}
+                />
+                <span>I understand this disables live trading.</span>
+              </label>
+              <div className="dialog-actions">
+                <Dialog.Close asChild>
+                  <button className="button" type="button">
+                    Cancel
+                  </button>
+                </Dialog.Close>
+                <button
+                  className="button danger"
+                  disabled={!confirmed || active || state.status === "submitting"}
+                  type="submit"
+                >
+                  {state.status === "submitting" ? "Activating" : "Activate kill switch"}
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       {state.status === "done" || state.status === "error" ? (
         <p className="status-message">{state.message}</p>
       ) : null}
-    </form>
+    </div>
   );
 }
