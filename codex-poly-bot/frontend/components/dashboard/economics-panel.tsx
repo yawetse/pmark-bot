@@ -402,6 +402,10 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
       </Disclosure>
       <div className="economics-block">
         <h3>Provider usage imports</h3>
+        <p className="panel-note">
+          These imports use provider admin usage APIs. Normal OpenAI and Claude scoring keys can score trades,
+          but usage backfill needs admin usage keys configured in the backend.
+        </p>
         <div className="manual-run-actions" role="group" aria-label="AI usage provider imports">
           {["openai", "claude"].map((provider) => (
             <button
@@ -413,7 +417,7 @@ export function EconomicsPanel({ economics }: { economics: EconomicsSummaryView 
             >
               {importState.status === "submitting" && importState.provider === provider
                 ? "Importing"
-                : `Import ${provider}`}
+                : `Import ${provider} usage`}
             </button>
           ))}
         </div>
