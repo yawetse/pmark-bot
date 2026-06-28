@@ -692,6 +692,37 @@ def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> No
     assert scanner_payload["pipelineRun"]["metadata"]["requestedMode"] == "scanner_only"
 
 
+def test_req_ui_004_12_daily_tick_summary_endpoint_supports_cached_and_forced_runs() -> None:
+    """TST-REQ-UI-004-12: Validates REQ-UI-004, REQ-UI-008, and REQ-OBS-005
+
+    Given: an authenticated dashboard user opens the consumer dashboard
+    When: daily tick summary endpoints are requested
+    Then: the dashboard receives a one-day summary and can force a refresh on demand
+    """
+    client, token = _client()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Origin": "http://localhost:3000",
+        "X-CSRF-Token": "csrf-token",
+    }
+
+    cached = client.get(
+        "/api/operations/tick-summary?window_minutes=1440",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    forced = client.post(
+        "/api/operations/tick-summary",
+        headers=headers,
+        json={"window_minutes": 1440},
+    )
+
+    assert cached.status_code == 200
+    assert cached.json()["windowMinutes"] == 1440
+    assert forced.status_code == 200
+    assert forced.json()["windowMinutes"] == 1440
+    assert "summaryMarkdown" in forced.json()
+
+
 def test_req_dat_009_11_operations_summary_exposes_historical_import_status() -> None:
     """TST-REQ-DAT-009-11: Validates REQ-DAT-009 and REQ-UI-004
 

@@ -124,7 +124,9 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
 
     assert result.status == "summarized"
     assert result.model == "gpt-4.1-nano"
-    assert result.warnings == ["Primary tick summary model failed (unavailable-model); used gpt-4.1-nano."]
+    assert result.warnings == [
+        "Primary tick summary model failed (unavailable-model: model not available); used gpt-4.1-nano."
+    ]
     assert [call["payload"]["model"] for call in transport.calls] == [
         "unavailable-model",
         "gpt-4.1-nano",

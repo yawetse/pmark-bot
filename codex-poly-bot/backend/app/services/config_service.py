@@ -418,6 +418,8 @@ class ConfigService:
             if not isinstance(value, dict) or not value:
                 raise ConfigValidationError("notification recipients must be a non-empty mapping")
             return value
+        if patch.path == "notifications.email_on_trade_placed":
+            return self._bool(value, patch.path)
         if parts[:2] == ["notifications", "thresholds"] and len(parts) == 3:
             return str(self._positive_decimal(value, patch.path))
         if patch.path == "notifications.digest_schedule_utc":
@@ -697,6 +699,7 @@ def default_config_payload() -> dict[str, Any]:
             "thresholds": {},
             "cooldown_seconds": 1800,
             "digest_schedule_utc": "13:00",
+            "email_on_trade_placed": True,
         },
     }
     payload["alpaca"]["preset_metadata"] = stock_universe_metadata(payload)

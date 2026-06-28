@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import {
   ModelsWorkspace,
   type ModelProviderName,
@@ -38,11 +37,6 @@ export default async function ModelsPage() {
   );
 
   return (
-    <>
-      <DashboardNav />
-      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
-        <ModelsWorkspace providers={providerResults} />
-      </main>
-    </>
+    <ModelsWorkspace providers={providerResults} />
   );
 }
