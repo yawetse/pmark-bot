@@ -20,6 +20,8 @@ A tick is one manual or scheduled pipeline run. Each tick has an actor, trigger,
 
 Explain what changed in the last window, which steps ran, where the pipeline stopped, what decisions were made, and whether the end result was useful or blocked.
 
+When no trade was placed, include a short Recommendations section in `summary_markdown`. Ground each recommendation in observed pipeline output. Focus on specific scanner, scoring, consensus, credential, venue, account, liquidity, or risk gates that would need review before a trade could potentially happen. Use cautious language such as "consider" or "review". Do not recommend bypassing risk controls, compliance checks, credentials, account readiness, or live-trading gates.
+
 ### What should the summary avoid?
 
 Do not invent trades, fills, profits, model scores, or provider calls. Do not claim live orders were submitted unless the step output says so. Do not expose secrets, API keys, wallet private keys, or raw authorization material.

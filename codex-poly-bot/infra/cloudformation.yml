@@ -171,6 +171,11 @@ Parameters:
   OpenAiAdminApiKeySecretArn:
     Type: String
     Default: ""
+  OpenAiTickSummaryTimeoutSeconds:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    Description: Read timeout in seconds for OpenAI tick-summary calls before trying fallback models.
   AnthropicAdminApiKeySecretArn:
     Type: String
     Default: ""
@@ -623,6 +628,8 @@ Resources:
               Value: "true"
             - Name: HTTP_RESPONSE_LOGS_ENABLED
               Value: "true"
+            - Name: OPENAI_TICK_SUMMARY_TIMEOUT_SECONDS
+              Value: !Ref OpenAiTickSummaryTimeoutSeconds
             - Name: SIGNOZ_ENABLED
               Value: !Ref SignozEnabled
             - Name: SIGNOZ_REGION
