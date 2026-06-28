@@ -69,6 +69,7 @@ export const ALLOWED_CONFIG_PATHS = [
   "notifications.thresholds.venue_degradation_minutes",
   "notifications.cooldown_seconds",
   "notifications.digest_schedule_utc",
+  "notifications.email_on_trade_placed",
 ] as const;
 
 export type AllowedConfigPath = (typeof ALLOWED_CONFIG_PATHS)[number];
@@ -486,5 +487,11 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "UTC time for the daily summary email.",
     valueHint: "HH:MM, such as 13:00",
     effect: "Uses UTC, not local workstation time.",
+  },
+  "notifications.email_on_trade_placed": {
+    label: "Email trade alerts",
+    description: "Sends an email when an actual live order is submitted.",
+    valueHint: "true or false",
+    effect: "Simulated and refused orders do not trigger this alert.",
   },
 };

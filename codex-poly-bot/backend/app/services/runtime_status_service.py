@@ -14,7 +14,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.adapters.aws import BillingUnavailableError, billing_adapter_from_env
+from app.adapters.aws import BillingUnavailableError, billing_adapter_from_env, ses_adapter_from_env
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
@@ -60,6 +60,7 @@ from app.services.lifecycle_service import (
     execution_run_payload,
     exit_run_payload,
 )
+from app.services.notification_service import NotificationDeliveryLedger
 from app.services.stock_universe import (
     DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
     DEFAULT_ALPACA_SYMBOL_PRESETS,
@@ -191,12 +192,18 @@ class RuntimeStatusService:
         self.strategy_consensus = StrategyConsensusService(self.registry)
         resolved_alpaca_submitter = alpaca_submitter or _alpaca_submitter_from_settings(settings)
         resolved_polymarket_submitter = polymarket_submitter or _polymarket_submitter_from_settings(settings)
+        self.notification_ledger = NotificationDeliveryLedger()
         self.lifecycle = PipelineLifecycleService(
             self.registry,
             alpaca_submitter=resolved_alpaca_submitter,
             alpaca_exit_submitter=resolved_alpaca_submitter,
             polymarket_submitter=resolved_polymarket_submitter,
             polymarket_position_closer=resolved_polymarket_submitter,
+            notification_adapter=ses_adapter_from_env(
+                getattr(settings, "runtime_env", {}),
+                source=getattr(settings, "ses_identity_email", ""),
+            ),
+            notification_ledger=self.notification_ledger,
         )
         self.stock_universe_refresher = stock_universe_refresher or StockUniverseRefreshService(
             self.registry
@@ -281,6 +288,7 @@ class RuntimeStatusService:
                 "cooldown_seconds": 1800,
                 "digest_schedule_utc": "13:00",
                 "ses_identity": self.settings.ses_identity_email,
+                "email_on_trade_placed": True,
             },
         }
         if "symbol_presets" in alpaca_payload or "custom_symbols" in alpaca_payload:
@@ -1629,26 +1637,28 @@ class RuntimeStatusService:
         environment: Environment,
         *,
         window_minutes: int = DEFAULT_TICK_SUMMARY_WINDOW_MINUTES,
+        force_refresh: bool = False,
     ) -> dict[str, Any]:
         """Return a cached AI summary of recent pipeline ticks."""
 
         now = datetime.now(UTC)
-        window_minutes = max(1, min(120, int(window_minutes)))
+        window_minutes = max(1, min(24 * 60, int(window_minutes)))
         window_started_at = now - timedelta(minutes=window_minutes)
         recent_runs = self._recent_pipeline_runs(
             environment=environment,
             since=window_started_at,
         )
         latest_run_id = recent_runs[-1]["id"] if recent_runs else None
-        cached = self._cached_tick_summary(
-            environment=environment,
-            window_minutes=window_minutes,
-            latest_run_id=latest_run_id,
-            run_count=len(recent_runs),
-            now=now,
-        )
-        if cached is not None:
-            return self._tick_summary_payload(cached)
+        if not force_refresh:
+            cached = self._cached_tick_summary(
+                environment=environment,
+                window_minutes=window_minutes,
+                latest_run_id=latest_run_id,
+                run_count=len(recent_runs),
+                now=now,
+            )
+            if cached is not None:
+                return self._tick_summary_payload(cached)
 
         result = TickSummaryService(
             registry=self.registry,
@@ -2708,9 +2718,14 @@ class RuntimeStatusService:
             ]
         except PersistenceUnavailableError:
             return None
+        default_cache_seconds = (
+            24 * 60 * 60
+            if window_minutes >= 24 * 60
+            else DEFAULT_TICK_SUMMARY_CACHE_SECONDS
+        )
         cache_seconds = _positive_int(
             getattr(self.settings, "runtime_env", {}).get("OPENAI_TICK_SUMMARY_CACHE_SECONDS"),
-            DEFAULT_TICK_SUMMARY_CACHE_SECONDS,
+            default_cache_seconds,
         )
         fresh_rows = []
         for row in rows:

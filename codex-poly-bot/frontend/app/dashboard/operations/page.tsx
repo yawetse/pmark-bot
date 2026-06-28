@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import type { EconomicsSummaryView } from "@/components/dashboard/economics-panel";
 import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
 import { OperationsView } from "@/components/dashboard/operations-view";
@@ -19,35 +18,32 @@ export default async function OperationsPage() {
   if (sessionCheck.status === "denied") {
     redirect("/access-denied");
   }
-  const operations = await serverDashboardApi<OperationsSummaryView>(
-    "operations/summary",
-    sessionCheck.session.username,
-  );
-  const marketData = await serverDashboardApi<MarketDataPullView>(
-    "market-data/latest",
-    sessionCheck.session.username,
-  );
-  const economics = await serverDashboardApi<EconomicsSummaryView>(
-    "economics/summary",
-    sessionCheck.session.username,
-  );
-  const preferences = await serverDashboardApi<UserPreferencesView>(
-    "preferences",
-    sessionCheck.session.username,
-  );
+  const [operations, marketData, economics, preferences] = await Promise.all([
+    serverDashboardApi<OperationsSummaryView>(
+      "operations/summary",
+      sessionCheck.session.username,
+    ),
+    serverDashboardApi<MarketDataPullView>(
+      "market-data/latest",
+      sessionCheck.session.username,
+    ),
+    serverDashboardApi<EconomicsSummaryView>(
+      "economics/summary",
+      sessionCheck.session.username,
+    ),
+    serverDashboardApi<UserPreferencesView>(
+      "preferences",
+      sessionCheck.session.username,
+    ),
+  ]);
 
   return (
-    <>
-      <DashboardNav />
-      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
-        <OperationsView
-          summary={operations.ok ? operations.data : undefined}
-          marketData={marketData.ok ? marketData.data : undefined}
-          economics={economics.ok ? economics.data : undefined}
-          loadError={operations.ok ? undefined : operations.message}
-          timeZone={preferences.ok ? preferences.data.settings.timeZone : "system"}
-        />
-      </main>
-    </>
+    <OperationsView
+      summary={operations.ok ? operations.data : undefined}
+      marketData={marketData.ok ? marketData.data : undefined}
+      economics={economics.ok ? economics.data : undefined}
+      loadError={operations.ok ? undefined : operations.message}
+      timeZone={preferences.ok ? preferences.data.settings.timeZone : "system"}
+    />
   );
 }

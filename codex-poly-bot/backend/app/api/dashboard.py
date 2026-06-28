@@ -437,6 +437,39 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         )
         return operations
 
+    @router.get("/api/operations/tick-summary")
+    def tick_summary(
+        window_minutes: int = 24 * 60,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return a cached daily or custom-window tick summary.
+
+        REQ: REQ-UI-004, REQ-UI-008, REQ-OBS-005
+        """
+
+        return services.runtime_status.tick_summary(
+            context.environment,
+            window_minutes=window_minutes,
+        )
+
+    @router.post("/api/operations/tick-summary")
+    async def refresh_tick_summary(
+        request: Request,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+        _: None = Depends(require_mutation_context),
+    ) -> dict[str, Any]:
+        """Force a tick summary refresh on operator request.
+
+        REQ: REQ-UI-004, REQ-UI-008, REQ-OBS-004, REQ-OBS-005
+        """
+
+        payload = await request.json()
+        return services.runtime_status.tick_summary(
+            context.environment,
+            window_minutes=int(payload.get("window_minutes", 24 * 60)),
+            force_refresh=True,
+        )
+
     @router.get("/api/operations/runs")
     def operations_runs(
         context: DashboardRequestContext = Depends(require_dashboard_access),

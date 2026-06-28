@@ -56,6 +56,7 @@ class NotificationSettings:
     digest_schedule_utc: str = "13:00"
     cooldown_seconds: int = 1800
     retry_delay_seconds: int = 300
+    email_on_trade_placed: bool = True
 
     @classmethod
     def from_config(cls, payload: dict[str, Any]) -> NotificationSettings:
@@ -74,6 +75,7 @@ class NotificationSettings:
             digest_schedule_utc=str(payload.get("digest_schedule_utc", "13:00")),
             cooldown_seconds=int(payload.get("cooldown_seconds", 1800)),
             retry_delay_seconds=int(payload.get("retry_delay_seconds", 300)),
+            email_on_trade_placed=bool(payload.get("email_on_trade_placed", True)),
         )
 
     @property
@@ -155,6 +157,24 @@ class DailyPnlSummary:
 
     realized_pnl: Decimal
     unrealized_pnl: Decimal
+
+
+@dataclass(frozen=True)
+class TradePlacedAlert:
+    """Submitted trade notification input.
+
+    REQ: REQ-NOT-006, REQ-OBS-001
+    """
+
+    venue: str
+    side: str
+    instrument_id: str
+    order_type: str
+    notional_usd: Decimal | str | None = None
+    quantity: Decimal | str | None = None
+    venue_order_id: str | None = None
+    idempotency_key: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -386,6 +406,62 @@ def send_large_movement_alert(
     return result
 
 
+def send_trade_placed_alert(
+    *,
+    settings: NotificationSettings,
+    trade: TradePlacedAlert,
+    now: datetime,
+    ses_adapter: Any,
+    delivery_ledger: NotificationDeliveryLedger,
+) -> NotificationSendResult:
+    """Send a notification after a live order is submitted.
+
+    REQ: REQ-NOT-006, REQ-OBS-001, REQ-EXE-016, REQ-EXT-006
+    """
+
+    subject = f"Trade placed: {trade.venue} {trade.side} {trade.instrument_id}"
+    body = "\n".join(
+        line
+        for line in (
+            f"Venue: {trade.venue}",
+            f"Side: {trade.side}",
+            f"Instrument: {trade.instrument_id}",
+            f"Order type: {trade.order_type}",
+            f"Notional USD: {_string_or_na(trade.notional_usd)}",
+            f"Quantity: {_string_or_na(trade.quantity)}",
+            f"Venue order id: {_string_or_na(trade.venue_order_id)}",
+            f"Idempotency key: {_string_or_na(trade.idempotency_key)}",
+            f"Reason: {_string_or_na(trade.reason)}",
+        )
+    )
+    message = EmailMessage(
+        recipients=settings.recipient_emails,
+        subject=subject,
+        body=body,
+    )
+    if not settings.email_on_trade_placed:
+        return _record_notification_result(
+            delivery_ledger=delivery_ledger,
+            delivery=EmailDeliveryResult(
+                sent=False,
+                attempt_recorded=False,
+                skipped_reason="trade placed email disabled",
+            ),
+            message=message,
+            notification_type="trade_placed",
+            now=now,
+            retry_delay_seconds=settings.retry_delay_seconds,
+        )
+    return _deliver_notification(
+        delivery_ledger=delivery_ledger,
+        delivery=ses_adapter.send_alert(message),
+        message=message,
+        notification_type="trade_placed",
+        now=now,
+        retry_delay_seconds=settings.retry_delay_seconds,
+    )
+
+
 def detect_daily_pnl_alert(
     summary: DailyPnlSummary,
     *,
@@ -517,3 +593,9 @@ def _as_decimal(value: Any) -> Decimal:
     if not decimal.is_finite():
         raise ValueError("value must be finite")
     return decimal
+
+
+def _string_or_na(value: Any) -> str:
+    if value is None or str(value).strip() == "":
+        return "not recorded"
+    return str(value)

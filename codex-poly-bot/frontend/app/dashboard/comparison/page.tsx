@@ -4,7 +4,6 @@ import {
   ComparisonView,
   type ComparisonSummaryView,
 } from "@/components/dashboard/comparison-view";
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
 import { getDashboardSession } from "@/lib/server/session";
 
@@ -24,14 +23,9 @@ export default async function ComparisonPage() {
   );
 
   return (
-    <>
-      <DashboardNav />
-      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
-        <ComparisonView
-          summary={comparison.ok ? comparison.data : undefined}
-          loadError={comparison.ok ? undefined : comparison.message}
-        />
-      </main>
-    </>
+    <ComparisonView
+      summary={comparison.ok ? comparison.data : undefined}
+      loadError={comparison.ok ? undefined : comparison.message}
+    />
   );
 }

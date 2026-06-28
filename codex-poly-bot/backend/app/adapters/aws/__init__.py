@@ -11,7 +11,13 @@ from app.adapters.aws.billing import (
     CostExplorerBillingAdapter,
     billing_adapter_from_env,
 )
-from app.adapters.aws.ses import EmailDeliveryResult, EmailMessage, InMemorySesEmailAdapter
+from app.adapters.aws.ses import (
+    BotoSesEmailAdapter,
+    EmailDeliveryResult,
+    EmailMessage,
+    InMemorySesEmailAdapter,
+    ses_adapter_from_env,
+)
 from app.adapters.aws.secrets import (
     InMemorySecretsAdapter,
     SecretRef,
@@ -31,6 +37,7 @@ from app.adapters.aws.s3 import (
 __all__ = [
     "AwsBillingCost",
     "BillingUnavailableError",
+    "BotoSesEmailAdapter",
     "CostExplorerBillingAdapter",
     "EmailDeliveryResult",
     "EmailMessage",
@@ -46,5 +53,6 @@ __all__ = [
     "SnapshotStorageError",
     "billing_adapter_from_env",
     "build_snapshot_key",
+    "ses_adapter_from_env",
     "store_snapshot_batch",
 ]

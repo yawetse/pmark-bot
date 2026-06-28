@@ -81,6 +81,10 @@ for (const token of [
 assert.doesNotMatch(operationsView, /order-submitted/);
 assert.doesNotMatch(operationsView, /FALLBACK_ORDER_EVENTS/);
 
+const operationsPage = read("app/dashboard/operations/page.tsx");
+assert.match(operationsPage, /Promise\.all/);
+assert.doesNotMatch(operationsPage, /DashboardNav/);
+
 const nav = read("components/dashboard/dashboard-nav.tsx");
 for (const route of [
   "/dashboard/models",
