@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import type { DashboardSummaryView } from "@/components/dashboard/operator-command-center";
 import { StatusOverview } from "@/components/dashboard/status-overview";
 import { WalletStatus } from "@/components/dashboard/wallet-status";
@@ -23,20 +22,15 @@ export default async function SystemPage() {
   );
 
   return (
-    <>
-      <DashboardNav />
-      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
-        <div className="content-grid">
-          <StatusOverview items={summary.ok ? summary.data.status.items : undefined} />
-          <WalletStatus credentials={summary.ok ? summary.data.wallet.credentials : undefined} />
-          {summary.ok ? null : (
-            <section className="panel">
-              <h2>System API</h2>
-              <p>{summary.message}</p>
-            </section>
-          )}
-        </div>
-      </main>
-    </>
+    <div className="content-grid">
+      <StatusOverview items={summary.ok ? summary.data.status.items : undefined} />
+      <WalletStatus credentials={summary.ok ? summary.data.wallet.credentials : undefined} />
+      {summary.ok ? null : (
+        <section className="panel">
+          <h2>System API</h2>
+          <p>{summary.message}</p>
+        </section>
+      )}
+    </div>
   );
 }

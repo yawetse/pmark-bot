@@ -219,7 +219,10 @@ class TickSummaryService:
                     )
                     warnings = []
                     if failures:
-                        failed_models = ", ".join(model for model, _ in failures)
+                        failed_models = ", ".join(
+                            f"{model}: {_safe_error_message(failure)}"
+                            for model, failure in failures
+                        )
                         warnings.append(
                             f"Primary tick summary model failed ({failed_models}); used {candidate_model}."
                         )

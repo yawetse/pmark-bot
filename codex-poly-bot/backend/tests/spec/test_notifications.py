@@ -18,12 +18,14 @@ from app.services import (
     NotificationDeliveryLedger,
     NotificationSettings,
     PositionMovement,
+    TradePlacedAlert,
     alert_allowed_by_cooldown,
     detect_daily_pnl_alert,
     detect_large_movement_alert,
     render_daily_digest,
     send_large_movement_alert,
     send_scheduled_daily_digest,
+    send_trade_placed_alert,
 )
 
 
@@ -316,6 +318,7 @@ def test_req_not_006_01_authorized_dashboard_user_changes_recipients_thresholds_
             ConfigPatchOperation("replace", "notifications.thresholds.drawdown_usd", "25.00"),
             ConfigPatchOperation("replace", "notifications.digest_schedule_utc", "14:30"),
             ConfigPatchOperation("replace", "notifications.cooldown_seconds", 1200),
+            ConfigPatchOperation("replace", "notifications.email_on_trade_placed", False),
         ],
     )
     payload = result.mutation.config_version["payload"]["notifications"]
@@ -324,6 +327,7 @@ def test_req_not_006_01_authorized_dashboard_user_changes_recipients_thresholds_
     assert payload["thresholds"]["drawdown_usd"] == "25.00"
     assert payload["digest_schedule_utc"] == "14:30"
     assert payload["cooldown_seconds"] == 1200
+    assert payload["email_on_trade_placed"] is False
 
 
 def test_req_not_006_02_notification_settings_change_applies_on_next_loop() -> None:
@@ -346,6 +350,7 @@ def test_req_not_006_02_notification_settings_change_applies_on_next_loop() -> N
             ConfigPatchOperation("replace", "notifications.thresholds.position_usd", "30.00"),
             ConfigPatchOperation("replace", "notifications.digest_schedule_utc", "15:15"),
             ConfigPatchOperation("replace", "notifications.cooldown_seconds", 600),
+            ConfigPatchOperation("replace", "notifications.email_on_trade_placed", True),
         ],
     )
 
@@ -356,6 +361,60 @@ def test_req_not_006_02_notification_settings_change_applies_on_next_loop() -> N
     assert settings.thresholds["position_usd"] == Decimal("30.00")
     assert settings.digest_schedule_utc == "15:15"
     assert settings.cooldown_seconds == 600
+    assert settings.email_on_trade_placed is True
+
+
+def test_req_not_006_03_trade_placed_notification_defaults_on_and_can_be_disabled() -> None:
+    """TST-REQ-NOT-006-03: Validates REQ-NOT-006 and REQ-EXE-016
+
+    Given: a live order is submitted and trade emails are enabled by default
+    When: trade-placed notification delivery runs
+    Then: the recipient gets an email unless the user setting disables it
+    """
+    adapter = InMemorySesEmailAdapter()
+    ledger = NotificationDeliveryLedger()
+    now = datetime(2026, 5, 10, 15, 0, tzinfo=UTC)
+
+    result = send_trade_placed_alert(
+        settings=NotificationSettings.from_config({"recipients": {"yaw": "yaw@example.com"}}),
+        trade=TradePlacedAlert(
+            venue="alpaca",
+            side="buy",
+            instrument_id="alpaca:SPY",
+            order_type="market",
+            notional_usd="50.00",
+            venue_order_id="alpaca-buy-SPY-1",
+            idempotency_key="entry-key",
+        ),
+        now=now,
+        ses_adapter=adapter,
+        delivery_ledger=ledger,
+    )
+
+    assert result.sent
+    assert adapter.sent_count == 1
+    assert adapter.attempts[0].subject == "Trade placed: alpaca buy alpaca:SPY"
+    assert "Notional USD: 50.00" in adapter.attempts[0].body
+    assert ledger.records[0].notification_type == "trade_placed"
+
+    disabled = send_trade_placed_alert(
+        settings=NotificationSettings.from_config(
+            {"recipients": {"yaw": "yaw@example.com"}, "email_on_trade_placed": False}
+        ),
+        trade=TradePlacedAlert(
+            venue="alpaca",
+            side="buy",
+            instrument_id="alpaca:SPY",
+            order_type="market",
+        ),
+        now=now,
+        ses_adapter=adapter,
+        delivery_ledger=ledger,
+    )
+
+    assert not disabled.sent
+    assert disabled.skipped_reason == "trade placed email disabled"
+    assert adapter.sent_count == 1
 
 
 def test_req_not_007_01_ses_delivery_fails_retry_policy_runs_failure_recorded() -> None:

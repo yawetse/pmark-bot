@@ -1,6 +1,5 @@
 import { notFound, redirect } from "next/navigation";
 
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import {
   ModelProviderName,
   ModelSummaryPanel,
@@ -34,16 +33,11 @@ export default async function ModelPage({ params }: ModelPageProps) {
   );
 
   return (
-    <>
-      <DashboardNav />
-      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
-        <ModelSummaryPanel
-          provider={provider}
-          summary={summary.ok ? summary.data : undefined}
-          loadError={summary.ok ? undefined : summary.message}
-        />
-      </main>
-    </>
+    <ModelSummaryPanel
+      provider={provider}
+      summary={summary.ok ? summary.data : undefined}
+      loadError={summary.ok ? undefined : summary.message}
+    />
   );
 }
 

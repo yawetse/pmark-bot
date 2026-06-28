@@ -57,6 +57,12 @@ from app.services.risk_engine import (
     evaluate_live_order_gates,
     evaluate_polymarket_risk_limits,
 )
+from app.services.notification_service import (
+    NotificationDeliveryLedger,
+    NotificationSettings,
+    TradePlacedAlert,
+    send_trade_placed_alert,
+)
 from app.venues.polymarket import PolymarketLiveOrderRequest, VenueCallResult
 
 
@@ -107,12 +113,16 @@ class PipelineLifecycleService:
         polymarket_submitter: PolymarketVenueSubmitter | None = None,
         alpaca_exit_submitter: AlpacaVenueSubmitter | None = None,
         polymarket_position_closer: PolymarketPositionCloser | None = None,
+        notification_adapter: Any | None = None,
+        notification_ledger: NotificationDeliveryLedger | None = None,
     ) -> None:
         self.registry = registry
         self.alpaca_submitter = alpaca_submitter
         self.polymarket_submitter = polymarket_submitter
         self.alpaca_exit_submitter = alpaca_exit_submitter or alpaca_submitter
         self.polymarket_position_closer = polymarket_position_closer
+        self.notification_adapter = notification_adapter
+        self.notification_ledger = notification_ledger or NotificationDeliveryLedger()
 
     def run_execution(
         self,
@@ -414,6 +424,21 @@ class PipelineLifecycleService:
             status=status,
             message=_order_event_message(status, refusal_reason),
         )
+        if status == "submitted":
+            self._send_trade_placed_notification(
+                config_payload=config_payload,
+                trade=TradePlacedAlert(
+                    venue=venue,
+                    side=side,
+                    instrument_id=instrument_id,
+                    order_type=order_type,
+                    notional_usd=notional,
+                    venue_order_id=venue_order_id,
+                    idempotency_key=idempotency_key,
+                    reason="entry order submitted",
+                ),
+                now=created_at,
+            )
         return intent
 
     def _existing_order_intent(self, idempotency_key: str) -> dict[str, Any] | None:
@@ -741,6 +766,22 @@ class PipelineLifecycleService:
             status=status,
             message=_exit_event_message(status, exit_trigger, result.refusal_reason),
         )
+        if status == "submitted":
+            self._send_trade_placed_notification(
+                config_payload=config_payload,
+                trade=TradePlacedAlert(
+                    venue=venue,
+                    side=OrderSide.SELL.value,
+                    instrument_id=position["instrument_id"],
+                    order_type=OrderType.MARKET.value,
+                    notional_usd=notional,
+                    quantity=position.get("quantity"),
+                    venue_order_id=result.payload.get("venue_order_id"),
+                    idempotency_key=idempotency_key,
+                    reason=f"exit submitted after {exit_trigger.trigger_type.value}",
+                ),
+                now=created_at,
+            )
         return intent
 
     def _execute_exit_order(
@@ -929,6 +970,27 @@ class PipelineLifecycleService:
                 environment=environment,
             )
         except PersistenceUnavailableError:
+            return
+
+    def _send_trade_placed_notification(
+        self,
+        *,
+        config_payload: dict[str, Any],
+        trade: TradePlacedAlert,
+        now: datetime,
+    ) -> None:
+        if self.notification_adapter is None:
+            return
+        settings = NotificationSettings.from_config(config_payload.get("notifications", {}))
+        try:
+            send_trade_placed_alert(
+                settings=settings,
+                trade=trade,
+                now=now,
+                ses_adapter=self.notification_adapter,
+                delivery_ledger=self.notification_ledger,
+            )
+        except Exception:
             return
 
 

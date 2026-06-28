@@ -6,6 +6,8 @@ REQ: REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-007
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -87,3 +89,83 @@ class InMemorySesEmailAdapter:
         """
 
         return self.send_email(alert)
+
+
+class BotoSesEmailAdapter:
+    """SES adapter used by deployed runtime notification paths."""
+
+    def __init__(
+        self,
+        *,
+        source: str,
+        region_name: str | None = None,
+        client: object | None = None,
+    ) -> None:
+        self.source = source
+        self.region_name = region_name
+        if client is not None:
+            self.client = client
+            return
+        import boto3
+
+        self.client = boto3.client("ses", region_name=region_name)
+
+    def send_email(self, message: EmailMessage) -> EmailDeliveryResult:
+        """Send an email through AWS SES and return retry metadata."""
+
+        if not message.recipients:
+            return EmailDeliveryResult(
+                sent=False,
+                attempt_recorded=False,
+                skipped_reason="no recipients",
+            )
+        try:
+            response = self.client.send_email(
+                Source=self.source,
+                Destination={"ToAddresses": list(message.recipients)},
+                Message={
+                    "Subject": {"Data": message.subject, "Charset": "UTF-8"},
+                    "Body": {"Text": {"Data": message.body, "Charset": "UTF-8"}},
+                },
+            )
+        except Exception as exc:
+            return EmailDeliveryResult(
+                sent=False,
+                attempt_recorded=True,
+                retryable=True,
+                error_summary=str(exc)[:240],
+            )
+        message_id = response.get("MessageId") if isinstance(response, dict) else None
+        return EmailDeliveryResult(
+            sent=True,
+            attempt_recorded=True,
+            message_id=str(message_id) if message_id else None,
+        )
+
+    def send_digest(self, digest: EmailMessage) -> EmailDeliveryResult:
+        """Send a daily digest email."""
+
+        return self.send_email(digest)
+
+    def send_alert(self, alert: EmailMessage) -> EmailDeliveryResult:
+        """Send an alert email."""
+
+        return self.send_email(alert)
+
+
+def ses_adapter_from_env(
+    environ: Mapping[str, str] | None = None,
+    *,
+    source: str | None = None,
+) -> BotoSesEmailAdapter | None:
+    """Build a real SES adapter when an identity is configured."""
+
+    env = environ or os.environ
+    ses_source = (source or env.get("SES_IDENTITY_EMAIL", "")).strip()
+    if not ses_source:
+        return None
+    region = (env.get("AWS_REGION") or env.get("AWS_DEFAULT_REGION") or "us-east-1").strip()
+    try:
+        return BotoSesEmailAdapter(source=ses_source, region_name=region)
+    except ImportError:
+        return None

@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
-import { DashboardNav } from "@/components/dashboard/dashboard-nav";
 import { HelpAboutView } from "@/components/dashboard/help-about-view";
 import { getDashboardSession } from "@/lib/server/session";
 
@@ -15,12 +14,5 @@ export default async function HelpPage() {
     redirect("/access-denied");
   }
 
-  return (
-    <>
-      <DashboardNav />
-      <main className="page-shell" id="dashboard-main" tabIndex={-1}>
-        <HelpAboutView />
-      </main>
-    </>
-  );
+  return <HelpAboutView />;
 }

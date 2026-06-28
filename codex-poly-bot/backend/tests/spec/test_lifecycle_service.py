@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from app.adapters.aws import InMemorySesEmailAdapter
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider, OrderSide, OrderType, PositionState, Venue
-from app.services import PipelineLifecycleService
+from app.services import NotificationDeliveryLedger, PipelineLifecycleService
 from app.venues import PolymarketLiveOrderRequest, VenueCallResult
 
 
@@ -166,6 +167,86 @@ def test_req_exe_016_06_live_execution_submits_when_submitters_are_configured() 
     assert alpaca.calls[0]["symbol"] == "SPY"
     assert alpaca.calls[0]["side"] == "buy"
     assert len(alpaca.calls[0]["client_order_id"]) == 64
+
+
+def test_req_not_006_04_live_execution_trade_submission_sends_email_notification() -> None:
+    """TST-REQ-NOT-006-04: Validates REQ-NOT-006 and REQ-EXE-016
+
+    Given: live execution submits approved orders and trade emails are enabled
+    When: execution records submitted intents
+    Then: trade-placed notifications are sent for actual submitted orders only
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    alpaca = RecordingAlpacaSubmitter()
+    polymarket = RecordingPolymarketSubmitter()
+    adapter = InMemorySesEmailAdapter()
+    ledger = NotificationDeliveryLedger()
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_submitter=alpaca,
+        polymarket_submitter=polymarket,
+        notification_adapter=adapter,
+        notification_ledger=ledger,
+    ).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-live-email",
+        trigger="manual",
+        strategy_run=_strategy_run_with_outputs(registry, now),
+        market_data_pulls=_market_data_pulls(now),
+        config_payload={
+            **_config(live_enabled=True),
+            "notifications": {
+                "recipients": {"yaw": "yaw@example.com"},
+                "email_on_trade_placed": True,
+            },
+        },
+        credential_status={Venue.POLYMARKET_US.value: True, Venue.ALPACA.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 2
+    assert adapter.sent_count == 2
+    assert {record.notification_type for record in ledger.records} == {"trade_placed"}
+    assert "polymarket_us" in adapter.attempts[0].subject
+    assert "alpaca" in adapter.attempts[1].subject
+
+
+def test_req_not_006_05_dry_run_execution_does_not_send_trade_email() -> None:
+    """TST-REQ-NOT-006-05: Validates REQ-NOT-006 and REQ-EXE-016
+
+    Given: dry-run execution records simulated intents
+    When: a notification adapter is configured
+    Then: no trade-placed email is sent because no actual order was submitted
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    adapter = InMemorySesEmailAdapter()
+
+    result = PipelineLifecycleService(
+        registry,
+        notification_adapter=adapter,
+    ).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-dry-email",
+        trigger="manual",
+        strategy_run=_strategy_run_with_outputs(registry, now),
+        market_data_pulls=_market_data_pulls(now),
+        config_payload={
+            **_config(live_enabled=False),
+            "notifications": {
+                "recipients": {"yaw": "yaw@example.com"},
+                "email_on_trade_placed": True,
+            },
+        },
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["simulatedCount"] == 2
+    assert adapter.sent_count == 0
 
 
 def test_req_exe_016_05_execution_reconciles_existing_nonterminal_intent_before_retry() -> None:

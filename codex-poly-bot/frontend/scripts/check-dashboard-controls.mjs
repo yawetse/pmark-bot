@@ -32,6 +32,7 @@ for (const path of [
   "alpaca.custom_presets",
   "notifications.recipients",
   "notifications.cooldown_seconds",
+  "notifications.email_on_trade_placed",
 ]) {
   assert.match(configPaths, new RegExp(path.replaceAll(".", "\\.")));
 }
@@ -71,7 +72,31 @@ assert.doesNotMatch(walletStatus, /private/i);
 assert.doesNotMatch(walletStatus, /secret/i);
 
 const dashboardPage = read("app/dashboard/page.tsx");
-assert.match(dashboardPage, /OperatorCommandCenter/);
+assert.match(dashboardPage, /ConsumerDashboard/);
+assert.match(dashboardPage, /operations\/tick-summary\?window_minutes=1440/);
+
+const dashboardLayout = read("app/dashboard/layout.tsx");
+for (const token of [
+  "DashboardNav",
+  "getDashboardSession",
+  "page-shell",
+  "dashboard-main",
+]) {
+  assert.match(dashboardLayout, new RegExp(token));
+}
+
+const dashboardLoadingPage = read("app/dashboard/loading.tsx");
+assert.match(dashboardLoadingPage, /DashboardLoadingPanels/);
+
+const dashboardLoading = read("components/dashboard/dashboard-loading.tsx");
+for (const token of [
+  "DashboardPanelLoading",
+  "loading-panel",
+  "aria-busy",
+  "loading",
+]) {
+  assert.match(dashboardLoading, new RegExp(token));
+}
 
 const dashboardNav = read("components/dashboard/dashboard-nav.tsx");
 assert.match(dashboardNav, /ThemePreferenceControl/);
@@ -102,6 +127,23 @@ for (const token of [
   "No orders recorded",
 ]) {
   assert.match(commandCenter, new RegExp(token));
+}
+
+const consumerDashboard = read("components/dashboard/consumer-dashboard.tsx");
+for (const token of [
+  "P&L over time",
+  "Five steps",
+  "Daily summary",
+  "Run summary now",
+  "Conservative",
+  "Balanced",
+  "Aggressive",
+  "notifications.email_on_trade_placed",
+  "Reset defaults",
+  "currentValue",
+  "nextValue",
+]) {
+  assert.match(consumerDashboard, new RegExp(token.replaceAll("?", "\\?")));
 }
 
 const manualRunControl = read("components/dashboard/manual-run-control.tsx");
