@@ -36,6 +36,7 @@ DEFAULT_TICK_SUMMARY_WINDOW_MINUTES = 10
 DEFAULT_TICK_SUMMARY_CACHE_SECONDS = 60
 DEFAULT_TICK_SUMMARY_PROMPT_VERSION = "tick-summary-v1"
 DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS = 60.0
 DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION = Decimal("0.05")
 DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
 DEFAULT_GPT_4_1_NANO_INPUT_COST_PER_MILLION = Decimal("0.10")
@@ -63,6 +64,8 @@ A tick is one manual or scheduled pipeline run. Each tick has an actor, trigger,
 ### What should the summary explain?
 
 Explain what changed in the last window, which steps ran, where the pipeline stopped, what decisions were made, and whether the end result was useful or blocked.
+
+When no trade was placed, include a short Recommendations section in summary_markdown. Ground each recommendation in observed pipeline output. Focus on specific scanner, scoring, consensus, credential, venue, account, liquidity, or risk gates that would need review before a trade could potentially happen. Use cautious language such as "consider" or "review". Do not recommend bypassing risk controls, compliance checks, credentials, account readiness, or live-trading gates.
 
 ### What should the summary avoid?
 
@@ -125,7 +128,13 @@ class TickSummaryService:
     ) -> None:
         self.registry = registry
         self.environ = environ
-        self.transport = transport or HttpxProviderTransport(timeout_seconds=20.0)
+        self.transport = transport or HttpxProviderTransport(
+            timeout_seconds=_float_env(
+                environ,
+                "OPENAI_TICK_SUMMARY_TIMEOUT_SECONDS",
+                DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS,
+            )
+        )
 
     def summarize(self, request: TickSummaryRequest) -> TickSummaryResult:
         model = _summary_model_candidates(self.environ)[0]
@@ -569,5 +578,12 @@ def _usage_int(usage: Mapping[str, Any], *keys: str) -> int:
 def _int_env(environ: Mapping[str, str], name: str, default: int) -> int:
     try:
         return max(1, int(str(environ.get(name) or default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_env(environ: Mapping[str, str], name: str, default: float) -> float:
+    try:
+        return max(1.0, float(str(environ.get(name) or default)))
     except (TypeError, ValueError):
         return default

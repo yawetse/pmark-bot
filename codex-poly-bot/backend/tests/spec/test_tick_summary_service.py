@@ -12,6 +12,7 @@ from app.db import RepositoryRegistry
 from app.domain import Environment
 from app.services.tick_summary_service import (
     DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS,
+    DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS,
     TickSummaryRequest,
     TickSummaryService,
 )
@@ -211,6 +212,28 @@ def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -
     user_payload = json.loads(payload["input"][1]["content"])
 
     assert payload["max_output_tokens"] == DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS == 4096
+    assert "Recommendations section" in payload["input"][0]["content"]
     assert len(user_payload["ticks"]) == 20
     assert len(user_payload["ticks"][0]["steps"][0]["outputs"]) == 8
     assert user_payload["ticks"][0]["steps"][0]["outputs"][0]["body"].endswith("...")
+
+
+def test_req_obs_005_tick_summary_timeout_is_configurable() -> None:
+    """TST-REQ-OBS-005-11: Validates REQ-OBS-005
+
+    Given: GPT-5 nano tick summaries may take longer than one short provider read window
+    When: the operator configures a tick-summary timeout
+    Then: the OpenAI transport uses that timeout without requiring code changes
+    """
+
+    configured = TickSummaryService(
+        registry=RepositoryRegistry(),
+        environ={"OPENAI_TICK_SUMMARY_TIMEOUT_SECONDS": "75.5"},
+    )
+    defaulted = TickSummaryService(
+        registry=RepositoryRegistry(),
+        environ={"OPENAI_TICK_SUMMARY_TIMEOUT_SECONDS": "not-a-number"},
+    )
+
+    assert configured.transport.timeout_seconds == 75.5
+    assert defaulted.transport.timeout_seconds == DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS == 60.0

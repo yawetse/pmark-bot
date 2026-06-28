@@ -85,6 +85,7 @@ signoz_region="${SIGNOZ_REGION:-}"
 signoz_otlp_endpoint="${SIGNOZ_OTLP_ENDPOINT:-}"
 signoz_ingestion_key_secret_arn="${SIGNOZ_INGESTION_KEY_SECRET_ARN:-}"
 signoz_cloudwatch_read_policy_enabled="${SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED:-false}"
+openai_tick_summary_timeout_seconds="${OPENAI_TICK_SUMMARY_TIMEOUT_SECONDS:-60}"
 
 stack_exists="false"
 if aws cloudformation describe-stacks --stack-name "${stack_name}" >/dev/null 2>&1; then
@@ -134,6 +135,7 @@ parameter_overrides=(
   "NotificationRecipients=${notification_recipients}"
   "EnableBackgroundWorker=${enable_background_worker}"
   "WorkerHeartbeatIntervalSeconds=${worker_heartbeat_interval_seconds}"
+  "OpenAiTickSummaryTimeoutSeconds=${openai_tick_summary_timeout_seconds}"
   "SignozEnabled=${signoz_enabled}"
   "SignozFrontendEnabled=${signoz_frontend_enabled}"
   "SignozRegion=${signoz_region}"
