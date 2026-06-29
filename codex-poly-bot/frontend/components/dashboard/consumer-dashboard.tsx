@@ -256,7 +256,7 @@ export function ConsumerDashboard() {
   }> {
     const requestedVersion = nextConfigVersion(snapshot.version);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
-      method: "PUT",
+      method: "POST",
       body: JSON.stringify({
         environment: snapshot.environment,
         version: requestedVersion,

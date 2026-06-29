@@ -47,6 +47,7 @@ for (const token of [
 const configControls = read("components/dashboard/config-controls.tsx");
 assert.match(configControls, /isAllowedConfigPath/);
 assert.match(configControls, /dashboardApi<ConfigUpdateResponse>\("config"/);
+assert.match(configControls, /method: "POST"/);
 assert.match(configControls, /JSON\.parse/);
 assert.match(configControls, /Alpaca stock universe/);
 assert.match(configControls, /Save stock universe/);
@@ -150,6 +151,7 @@ for (const token of [
   "nextValue",
   "refreshConfigSnapshot",
   "result.status === 409",
+  'method: "POST"',
   "finalizeConfigSave",
 ]) {
   assert.match(consumerDashboard, new RegExp(token.replaceAll("?", "\\?")));
