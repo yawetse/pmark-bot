@@ -1471,6 +1471,59 @@ def test_req_str_003_05_config_api_saves_scanner_thresholds() -> None:
     assert reasoning["alpaca"]["prompt_version"] == "stock-brain-v2"
 
 
+def test_req_str_003_06_config_api_posts_recommendation_thresholds_for_production_bootstrap() -> None:
+    """TST-REQ-STR-003-06: Validates REQ-STR-003 and REQ-UI-005
+
+    Given: the production dashboard is still on the bootstrap config version
+    When: an operator applies the balanced recommendation through the POST save path
+    Then: the saved scanner and confidence settings are available to the next loop
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.PRODUCTION,
+        trusted_origins=("https://codex-poly-bot.repetere.net",),
+    )
+    app = create_app(settings)
+    token = app.state.services.auth.create_session_token(username="yaw")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/config",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "https://codex-poly-bot.repetere.net",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "environment": "production",
+            "version": "ui-recommendation-test",
+            "expected_version": None,
+            "patches": [
+                {"op": "replace", "path": "scanner.polymarket.max_hours_to_resolution", "value": "210"},
+                {"op": "replace", "path": "scanner.polymarket.max_spread", "value": "0.0625"},
+                {"op": "replace", "path": "scanner.alpaca.max_spread", "value": "0.625"},
+                {"op": "replace", "path": "scanner.alpaca.min_quote_liquidity", "value": "0.8"},
+                {"op": "replace", "path": "reasoning.polymarket.min_confidence", "value": "0.72"},
+                {"op": "replace", "path": "reasoning.alpaca.min_confidence", "value": "0.57"},
+            ],
+        },
+    )
+    current = client.get("/api/config/current", headers={"Authorization": f"Bearer {token}"})
+    settings_payload = current.json()["settings"]
+
+    assert response.status_code == 200
+    assert current.json()["version"] == "ui-recommendation-test"
+    assert settings_payload["scanner"]["polymarket"]["max_hours_to_resolution"] == "210"
+    assert settings_payload["scanner"]["polymarket"]["max_spread"] == "0.0625"
+    assert settings_payload["scanner"]["alpaca"]["max_spread"] == "0.625"
+    assert settings_payload["scanner"]["alpaca"]["min_quote_liquidity"] == "0.8"
+    assert settings_payload["reasoning"]["polymarket"]["min_confidence"] == "0.72"
+    assert settings_payload["reasoning"]["alpaca"]["min_confidence"] == "0.57"
+
+
 def test_req_ui_008_03_kill_switch_api_disables_live_and_returns_progress() -> None:
     """TST-REQ-UI-008-03: Validates REQ-UI-008
 

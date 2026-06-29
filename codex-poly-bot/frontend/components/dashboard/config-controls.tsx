@@ -161,7 +161,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   async function saveConfigPatches(patches: ConfigPatchDraft[]) {
     const nextVersion = nextConfigVersion(currentVersion);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
-      method: "PUT",
+      method: "POST",
       body: JSON.stringify({
         environment: initialSnapshot?.environment ?? process.env.NEXT_PUBLIC_APP_ENV ?? "local",
         version: nextVersion,

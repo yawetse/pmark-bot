@@ -239,6 +239,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
         return _current_config(context.environment)
 
+    @router.post("/api/config")
     @router.put("/api/config")
     async def update_config(
         request: Request,
