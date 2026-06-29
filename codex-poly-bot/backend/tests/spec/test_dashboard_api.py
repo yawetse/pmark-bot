@@ -616,6 +616,106 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert len(tick_summary_rows) == 1
 
 
+def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtime() -> None:
+    """TST-REQ-UI-008-07: Validates REQ-UI-008, REQ-DAT-008, and REQ-OBS-005
+
+    Given: an authorized dashboard user has recorded a manual tick
+    When: tick timing, data explorer, scenario, and realtime endpoints are called
+    Then: the dashboard can inspect the run without unsafe write access or refresh-only state
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+        polymarket_us_enabled=True,
+    )
+    app = create_app(settings)
+    app.state.services.runtime_status.market_data_fetcher = FakeMarketDataFetcher(
+        {
+            "polymarket_us": MarketDataProviderResult(
+                venue="polymarket_us",
+                status="pulled",
+                source="polymarket gamma and clob api",
+                message="Fetched 1 Polymarket priced candidate.",
+                candidates=[
+                    {
+                        "id": "polymarket_us:market-2:yes-token",
+                        "venue": "polymarket_us",
+                        "market": "Will inflation fall? - Yes",
+                        "price": "0.47",
+                        "liquidity": "250",
+                        "spread": "0.02",
+                        "state": "priced",
+                        "pulledAt": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            )
+        }
+    )
+    token = app.state.services.auth.create_session_token(username="yaw")
+    client = TestClient(app)
+    auth_headers = {"Authorization": f"Bearer {token}", "X-Environment": "development"}
+    mutation_headers = {
+        **auth_headers,
+        "Origin": "http://localhost:3000",
+        "X-CSRF-Token": "csrf-token",
+    }
+
+    manual = client.post(
+        "/api/operations/manual-run",
+        headers=mutation_headers,
+        json={"environment": "development", "mode": "scanner_only"},
+    )
+    run_id = manual.json()["runId"]
+    schedule = client.get("/api/operations/tick-schedule", headers=auth_headers)
+    explorer = client.get("/api/data/explorer", headers=auth_headers)
+    data_query = client.post(
+        "/api/data/query",
+        headers=auth_headers,
+        json={
+            "query": "select id, venue, candidate_count from market_data_pulls where venue = 'polymarket_us' limit 5"
+        },
+    )
+    rejected_query = client.post(
+        "/api/data/query",
+        headers=auth_headers,
+        json={"query": "delete from market_data_pulls"},
+    )
+    scenario = client.post(
+        "/api/scenario/analyze",
+        headers=auth_headers,
+        json={
+            "runId": run_id,
+            "stepKey": "scanner",
+            "prompt": "Why did this stop before trading?",
+            "configOverrides": [{"path": "scanner.polymarket.max_spread", "value": "0.08"}],
+        },
+    )
+    realtime = client.get("/api/dashboard/realtime-snapshot", headers=auth_headers)
+
+    assert manual.status_code == 202
+    assert schedule.status_code == 200
+    assert schedule.json()["lastTickRunId"] == run_id
+    assert schedule.json()["lastTickSource"] == "pipeline_run"
+    assert schedule.json()["nextTickAt"]
+    assert explorer.status_code == 200
+    assert "market_data_pulls" in {dataset["id"] for dataset in explorer.json()["datasets"]}
+    assert data_query.status_code == 200
+    assert data_query.json()["dataset"]["id"] == "market_data_pulls"
+    assert data_query.json()["rows"][0]["candidate_count"] == 1
+    assert rejected_query.status_code == 422
+    assert scenario.status_code == 200
+    assert scenario.json()["run"]["id"] == run_id
+    assert scenario.json()["selectedStepKey"] == "scanner"
+    assert scenario.json()["answer"]["title"] == "Scenario help"
+    assert scenario.json()["configTests"][0]["path"] == "scanner.polymarket.max_spread"
+    assert realtime.status_code == 200
+    assert realtime.json()["tickSchedule"]["lastTickRunId"] == run_id
+    assert realtime.json()["operations"]["pipelineRuns"][0]["id"] == run_id
+
+
 def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> None:
     """TST-REQ-UI-008-05: Validates REQ-UI-008, REQ-DAT-008, and REQ-OBS-005
 
