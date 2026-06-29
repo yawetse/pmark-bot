@@ -42,6 +42,9 @@ async function errorMessage(response: Response): Promise<string> {
     if (typeof parsed.detail === "string") {
       return parsed.detail;
     }
+    if ("error_code" in parsed && parsed.error_code === "config_version_conflict") {
+      return text;
+    }
     return parsed.message ?? parsed.error ?? text;
   } catch {
     return text;

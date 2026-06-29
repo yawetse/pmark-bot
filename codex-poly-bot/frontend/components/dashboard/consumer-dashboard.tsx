@@ -10,7 +10,7 @@ import {
   RotateCcw,
   Settings2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -21,9 +21,11 @@ import {
   YAxis,
 } from "recharts";
 
-import type { DashboardSummaryView } from "@/components/dashboard/operator-command-center";
+import type { EconomicsSummaryView } from "@/components/dashboard/economics-panel";
+import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
+import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
 import { FALLBACK_TICK_SUMMARY, type TickSummaryView } from "@/components/dashboard/tick-summary-panel";
-import { dashboardApi } from "@/lib/api";
+import { dashboardApi, type ApiClientResult } from "@/lib/api";
 import { CONFIG_PATH_DETAILS, type AllowedConfigPath } from "@/lib/config-paths";
 
 // REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-NOT-006, REQ-OBS-005
@@ -42,6 +44,19 @@ type ConfigUpdateResponse = {
   applies_on_next_loop?: boolean;
 };
 
+type NotificationSettingsView = {
+  environment: string;
+  state?: string;
+  value?: string;
+  recipientCount?: number;
+  settings?: Record<string, unknown>;
+};
+
+type PanelState<T> =
+  | { status: "loading" }
+  | { status: "ready"; data: T }
+  | { status: "error"; message: string };
+
 type SaveState =
   | { status: "idle" }
   | { status: "submitting"; label: string }
@@ -49,7 +64,7 @@ type SaveState =
   | { status: "error"; message: string };
 
 type SummaryState =
-  | { status: "idle" }
+  | { status: "loading" }
   | { status: "submitting" }
   | { status: "done" }
   | { status: "error"; message: string };
@@ -79,40 +94,93 @@ const RECOMMENDATION_DEFAULTS: Partial<Record<AllowedConfigPath, ConfigValue>> =
   "reasoning.alpaca.min_confidence": "0.60",
 };
 
-export function ConsumerDashboard({
-  summary,
-  dailySummary,
-  dailySummaryError,
-}: {
-  summary: DashboardSummaryView;
-  dailySummary?: TickSummaryView;
-  dailySummaryError?: string;
-}) {
-  const [settings, setSettings] = useState<Record<string, unknown>>(
-    summary.config.settings as Record<string, unknown>,
-  );
-  const [configVersion, setConfigVersion] = useState(summary.config.version);
-  const [expectedVersion, setExpectedVersion] = useState(summary.config.version);
-  const [tradeEmailEnabled, setTradeEmailEnabled] = useState(
-    valueAtPath(summary.config.settings, "notifications.email_on_trade_placed") !== false,
-  );
+export function ConsumerDashboard() {
+  const [configState, setConfigState] = useState<PanelState<ConfigSnapshot>>({ status: "loading" });
+  const [operationsState, setOperationsState] = useState<PanelState<OperationsSummaryView>>({ status: "loading" });
+  const [economicsState, setEconomicsState] = useState<PanelState<EconomicsSummaryView>>({ status: "loading" });
+  const [marketDataState, setMarketDataState] = useState<PanelState<MarketDataPullView>>({ status: "loading" });
+  const [notificationsState, setNotificationsState] = useState<PanelState<NotificationSettingsView>>({ status: "loading" });
+  const [settings, setSettings] = useState<Record<string, unknown>>({});
+  const [configVersion, setConfigVersion] = useState("");
+  const [tradeEmailEnabled, setTradeEmailEnabled] = useState(true);
   const [activePlanId, setActivePlanId] = useState<RecommendationPlan["id"] | null>("balanced");
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
-  const [summaryState, setSummaryState] = useState<SummaryState>(
-    dailySummaryError ? { status: "error", message: dailySummaryError } : { status: "idle" },
+  const [summaryState, setSummaryState] = useState<SummaryState>({ status: "loading" });
+  const [currentDailySummary, setCurrentDailySummary] = useState<TickSummaryView>(FALLBACK_TICK_SUMMARY);
+
+  useEffect(() => {
+    let active = true;
+
+    void dashboardApi<ConfigSnapshot>("config/current").then((result) => {
+      if (!active) {
+        return;
+      }
+      if (result.ok) {
+        commitConfigSnapshot(result.data);
+      } else {
+        setConfigState({ status: "error", message: result.message });
+      }
+    });
+
+    void loadPanel("operations/summary", setOperationsState, () => active);
+    void loadPanel("economics/summary", setEconomicsState, () => active);
+    void loadPanel("market-data/latest", setMarketDataState, () => active);
+    void loadPanel("notifications/settings", setNotificationsState, () => active);
+
+    void dashboardApi<TickSummaryView>(`operations/tick-summary?window_minutes=${DAILY_WINDOW_MINUTES}`).then((result) => {
+      if (!active) {
+        return;
+      }
+      if (result.ok) {
+        setCurrentDailySummary(result.data);
+        setSummaryState({ status: "done" });
+      } else {
+        setSummaryState({ status: "error", message: result.message });
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const operations = operationsState.status === "ready" ? operationsState.data : null;
+  const economics = economicsState.status === "ready" ? economicsState.data : null;
+  const marketData = marketDataState.status === "ready" ? marketDataState.data : null;
+  const notifications = notificationsState.status === "ready" ? notificationsState.data : null;
+  const pnlData = useMemo(() => (economics ? pnlChartData(economics) : []), [economics]);
+  const timelineSteps = useMemo(
+    () => tickTimelineSteps(operations, marketData),
+    [operations, marketData],
   );
-  const [currentDailySummary, setCurrentDailySummary] = useState<TickSummaryView>(
-    dailySummary ?? summary.operations.tickSummary ?? FALLBACK_TICK_SUMMARY,
+  const lastTick = useMemo(
+    () => lastTickResult(operations, currentDailySummary),
+    [operations, currentDailySummary],
   );
-  const pnlData = useMemo(() => pnlChartData(summary), [summary]);
-  const timelineSteps = useMemo(() => tickTimelineSteps(summary), [summary]);
-  const lastTick = useMemo(() => lastTickResult(summary), [summary]);
   const plans = useMemo(
-    () => recommendationPlans(settings, currentDailySummary, summary),
-    [settings, currentDailySummary, summary],
+    () => recommendationPlans(settings, currentDailySummary, operations),
+    [settings, currentDailySummary, operations],
   );
   const activePlan = plans.find((plan) => plan.id === activePlanId) ?? plans[1];
   const generatedAt = formatDateTime(currentDailySummary.generatedAt);
+  const canEditConfig = configState.status === "ready" && saveState.status !== "submitting";
+
+  function commitConfigSnapshot(snapshot: ConfigSnapshot) {
+    setConfigState({ status: "ready", data: snapshot });
+    setSettings(snapshot.settings);
+    setConfigVersion(snapshot.version);
+    setTradeEmailEnabled(valueAtPath(snapshot.settings, "notifications.email_on_trade_placed") !== false);
+  }
+
+  async function refreshConfigSnapshot(): Promise<ConfigSnapshot | null> {
+    const result = await dashboardApi<ConfigSnapshot>("config/current");
+    if (!result.ok) {
+      setConfigState({ status: "error", message: result.message });
+      return null;
+    }
+    commitConfigSnapshot(result.data);
+    return result.data;
+  }
 
   async function refreshDailySummary() {
     setSummaryState({ status: "submitting" });
@@ -160,26 +228,68 @@ export function ConsumerDashboard({
     savedLabel: string,
   ): Promise<boolean> {
     setSaveState({ status: "submitting", label: savedLabel });
-    const nextVersion = nextConfigVersion(configVersion);
+    const latestSnapshot = await refreshConfigSnapshot();
+    if (!latestSnapshot) {
+      setSaveState({ status: "error", message: "Could not load the latest config before saving." });
+      return false;
+    }
+
+    const firstAttempt = await submitConfigPatches(latestSnapshot, patches);
+    if (!firstAttempt.result.ok && firstAttempt.result.status === 409) {
+      const conflictSnapshot = await refreshConfigSnapshot();
+      if (!conflictSnapshot) {
+        setSaveState({ status: "error", message: "Config changed, and the latest version could not be loaded." });
+        return false;
+      }
+      const retry = await submitConfigPatches(conflictSnapshot, patches);
+      return finalizeConfigSave(retry, patches, savedLabel, true);
+    }
+    return finalizeConfigSave(firstAttempt, patches, savedLabel, false);
+  }
+
+  async function submitConfigPatches(
+    snapshot: ConfigSnapshot,
+    patches: Array<{ path: AllowedConfigPath; value: ConfigValue }>,
+  ): Promise<{
+    result: ApiClientResult<ConfigUpdateResponse>;
+    requestedVersion: string;
+  }> {
+    const requestedVersion = nextConfigVersion(snapshot.version);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "PUT",
       body: JSON.stringify({
-        environment: summary.environment,
-        version: nextVersion,
-        expected_version: expectedVersion || null,
+        environment: snapshot.environment,
+        version: requestedVersion,
+        expected_version: expectedVersionFromSnapshot(snapshot) || null,
         patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
       }),
     });
-    if (!result.ok) {
-      setSaveState({ status: "error", message: result.message });
+    return { result, requestedVersion };
+  }
+
+  async function finalizeConfigSave(
+    attempt: {
+      result: ApiClientResult<ConfigUpdateResponse>;
+      requestedVersion: string;
+    },
+    patches: Array<{ path: AllowedConfigPath; value: ConfigValue }>,
+    savedLabel: string,
+    retried: boolean,
+  ): Promise<boolean> {
+    if (!attempt.result.ok) {
+      setSaveState({
+        status: "error",
+        message:
+          retried && attempt.result.status === 409
+            ? "Config changed while saving. I refreshed it and retried, but it changed again. Try Apply once more."
+            : readableConfigError(attempt.result.message),
+      });
       return false;
     }
+
     const refreshed = await dashboardApi<ConfigSnapshot>("config/current");
     if (refreshed.ok) {
-      setSettings(refreshed.data.settings);
-      setConfigVersion(refreshed.data.version);
-      setExpectedVersion(refreshed.data.version);
-      setTradeEmailEnabled(valueAtPath(refreshed.data.settings, "notifications.email_on_trade_placed") !== false);
+      commitConfigSnapshot(refreshed.data);
     } else {
       setSettings((current) =>
         patches.reduce(
@@ -187,8 +297,7 @@ export function ConsumerDashboard({
           current,
         ),
       );
-      setConfigVersion(result.data.new_version ?? nextVersion);
-      setExpectedVersion(result.data.new_version ?? nextVersion);
+      setConfigVersion(attempt.result.data.new_version ?? attempt.requestedVersion);
     }
     setSaveState({ status: "saved", label: savedLabel });
     return true;
@@ -217,30 +326,38 @@ export function ConsumerDashboard({
             </div>
             <LineChartIcon aria-hidden="true" size={20} />
           </div>
-          <div className="consumer-metric-strip">
-            <Metric label="Trading P&L" value={formatUsd(summary.economics.trading.totalPnlUsd)} />
-            <Metric label="Net after costs" value={formatUsd(summary.economics.profitability.netAfterRecordedCostsUsd)} />
-            <Metric label="Open positions" value={String(summary.economics.trading.openPositions)} />
-          </div>
-          <div className="consumer-chart" aria-label="Profit and loss over time">
-            {pnlData.length > 1 ? (
-              <ResponsiveContainer height="100%" width="100%">
-                <LineChart data={pnlData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="label" tickLine={false} />
-                  <YAxis tickFormatter={(value) => `$${value}`} tickLine={false} width={58} />
-                  <Tooltip formatter={(value) => formatUsd(String(value))} />
-                  <Line dataKey="trading" dot={false} name="Trading P&L" stroke="var(--accent)" strokeWidth={2.5} />
-                  <Line dataKey="net" dot={false} name="Net after costs" stroke="var(--focus)" strokeWidth={2.5} />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="consumer-empty-chart">
-                <strong>{formatUsd(summary.economics.trading.totalPnlUsd)}</strong>
-                <span>Waiting for more P&L snapshots.</span>
+          {economicsState.status === "loading" ? (
+            <PanelLoadingRows />
+          ) : economicsState.status === "error" ? (
+            <p className="status-message blocked">{economicsState.message}</p>
+          ) : (
+            <>
+              <div className="consumer-metric-strip">
+                <Metric label="Trading P&L" value={formatUsd(economicsState.data.trading.totalPnlUsd)} />
+                <Metric label="Net after costs" value={formatUsd(economicsState.data.profitability.netAfterRecordedCostsUsd)} />
+                <Metric label="Open positions" value={String(economicsState.data.trading.openPositions)} />
               </div>
-            )}
-          </div>
+              <div className="consumer-chart" aria-label="Profit and loss over time">
+                {pnlData.length > 1 ? (
+                  <ResponsiveContainer height="100%" width="100%">
+                    <LineChart data={pnlData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                      <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="label" tickLine={false} />
+                      <YAxis tickFormatter={(value) => `$${value}`} tickLine={false} width={58} />
+                      <Tooltip formatter={(value) => formatUsd(String(value))} />
+                      <Line dataKey="trading" dot={false} name="Trading P&L" stroke="var(--accent)" strokeWidth={2.5} />
+                      <Line dataKey="net" dot={false} name="Net after costs" stroke="var(--focus)" strokeWidth={2.5} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="consumer-empty-chart">
+                    <strong>{formatUsd(economicsState.data.trading.totalPnlUsd)}</strong>
+                    <span>Waiting for more P&L snapshots.</span>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </section>
 
         <section className="consumer-panel" aria-labelledby="last-tick-title">
@@ -251,15 +368,23 @@ export function ConsumerDashboard({
             </div>
             <span className={`status ${lastTick.tone}`}>{lastTick.status}</span>
           </div>
-          <div className="last-tick-result">
-            <strong>{lastTick.headline}</strong>
-            <p>{lastTick.detail}</p>
-          </div>
-          <div className="consumer-metric-list">
-            <Metric label="Accepted" value={String(summary.operations.scanner?.acceptedCount ?? 0)} />
-            <Metric label="Submitted" value={String(summary.operations.execution?.submittedCount ?? 0)} />
-            <Metric label="Simulated" value={String(summary.operations.execution?.simulatedCount ?? 0)} />
-          </div>
+          {operationsState.status === "loading" ? (
+            <PanelLoadingRows compact />
+          ) : operationsState.status === "error" ? (
+            <p className="status-message blocked">{operationsState.message}</p>
+          ) : (
+            <>
+              <div className="last-tick-result">
+                <strong>{lastTick.headline}</strong>
+                <p>{lastTick.detail}</p>
+              </div>
+              <div className="consumer-metric-list">
+                <Metric label="Accepted" value={String(operationsState.data.scanner?.acceptedCount ?? 0)} />
+                <Metric label="Submitted" value={String(operationsState.data.execution?.submittedCount ?? 0)} />
+                <Metric label="Simulated" value={String(operationsState.data.execution?.simulatedCount ?? 0)} />
+              </div>
+            </>
+          )}
         </section>
 
         <section className="consumer-panel span-3" aria-labelledby="timeline-title">
@@ -268,7 +393,7 @@ export function ConsumerDashboard({
               <p className="section-label">Tick process</p>
               <h2 id="timeline-title">Five steps</h2>
             </div>
-            <span className="status idle">{summary.operations.pipelineRuns[0]?.status ?? "waiting"}</span>
+            <span className="status idle">{operations?.pipelineRuns[0]?.status ?? "loading"}</span>
           </div>
           <div className="consumer-timeline">
             {timelineSteps.map((step, index) => (
@@ -299,22 +424,31 @@ export function ConsumerDashboard({
               <RefreshCw aria-hidden="true" size={17} />
             </button>
           </div>
-          <div className="summary-copy">
-            {markdownLines(currentDailySummary.summaryMarkdown).map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-          </div>
-          {currentDailySummary.warnings?.length ? (
-            <div className="summary-warnings">
-              {currentDailySummary.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
-              ))}
-            </div>
+          {summaryState.status === "loading" ? (
+            <PanelLoadingRows />
+          ) : (
+            <>
+              <div className="summary-copy">
+                {markdownLines(currentDailySummary.summaryMarkdown).map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </div>
+              {currentDailySummary.warnings?.length ? (
+                <div className="summary-warnings">
+                  {currentDailySummary.warnings.map((warning) => (
+                    <p key={warning}>{warning}</p>
+                  ))}
+                </div>
+              ) : null}
+              <div className="summary-footer">
+                <span>Generated {generatedAt}</span>
+                <span>{currentDailySummary.model ?? "model unavailable"}</span>
+              </div>
+            </>
+          )}
+          {summaryState.status === "submitting" ? (
+            <p className="status-message waiting">Generating summary.</p>
           ) : null}
-          <div className="summary-footer">
-            <span>Generated {generatedAt}</span>
-            <span>{currentDailySummary.model ?? "model unavailable"}</span>
-          </div>
           {summaryState.status === "error" ? (
             <p className="status-message blocked">{summaryState.message}</p>
           ) : null}
@@ -328,19 +462,32 @@ export function ConsumerDashboard({
             </div>
             <Bell aria-hidden="true" size={20} />
           </div>
-          <label className="consumer-toggle">
-            <input
-              checked={tradeEmailEnabled}
-              onChange={(event) => void updateTradeEmail(event.target.checked)}
-              type="checkbox"
-            />
-            <span>Email me when a real trade is placed</span>
-          </label>
-          <p className="panel-note">
-            {summary.notifications?.recipientCount
-              ? `${summary.notifications.recipientCount} recipient configured.`
-              : "Add a recipient in Config before emails can send."}
-          </p>
+          {configState.status === "loading" ? (
+            <PanelLoadingRows compact />
+          ) : configState.status === "error" ? (
+            <p className="status-message blocked">{configState.message}</p>
+          ) : (
+            <>
+              <label className="consumer-toggle">
+                <input
+                  checked={tradeEmailEnabled}
+                  disabled={!canEditConfig}
+                  onChange={(event) => void updateTradeEmail(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>Email me when a real trade is placed</span>
+              </label>
+              <p className="panel-note">
+                {notificationsState.status === "loading"
+                  ? "Loading recipients."
+                  : notificationsState.status === "error"
+                    ? notificationsState.message
+                    : notifications?.recipientCount
+                      ? `${notifications.recipientCount} recipient configured.`
+                      : "Add a recipient in Config before emails can send."}
+              </p>
+            </>
+          )}
         </section>
 
         <section className="consumer-panel span-3" aria-labelledby="recommendation-title">
@@ -351,52 +498,60 @@ export function ConsumerDashboard({
             </div>
             <Settings2 aria-hidden="true" size={20} />
           </div>
-          <div className="recommendation-options">
-            {plans.map((plan) => (
-              <article className={`recommendation-option ${plan.id}`} key={plan.id}>
-                <div>
-                  <span className={`status ${plan.tone}`}>{plan.id}</span>
-                  <h3>{plan.title}</h3>
-                  <p>{plan.summary}</p>
-                </div>
-                <div className="recommendation-actions">
-                  <button className="button subtle" type="button" onClick={() => setActivePlanId(plan.id)}>
-                    <ChevronDown aria-hidden="true" size={16} />
-                    View detail
-                  </button>
-                  <button className="button" type="button" onClick={() => void applyPlan(plan)}>
-                    Apply
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-
-          <div className="recommendation-detail">
-            <div className="recommendation-detail-heading">
-              <strong>{activePlan.title}</strong>
-              <button className="button subtle" type="button" onClick={() => void resetDefaults()}>
-                <RotateCcw aria-hidden="true" size={16} />
-                Reset defaults
-              </button>
-            </div>
-            <div className="recommendation-table">
-              <div className="recommendation-row header">
-                <span>Setting</span>
-                <span>Current</span>
-                <span>New</span>
-                <span>Why</span>
+          {configState.status === "loading" ? (
+            <PanelLoadingRows />
+          ) : configState.status === "error" ? (
+            <p className="status-message blocked">{configState.message}</p>
+          ) : (
+            <>
+              <div className="recommendation-options">
+                {plans.map((plan) => (
+                  <article className={`recommendation-option ${plan.id}`} key={plan.id}>
+                    <div>
+                      <span className={`status ${plan.tone}`}>{plan.id}</span>
+                      <h3>{plan.title}</h3>
+                      <p>{plan.summary}</p>
+                    </div>
+                    <div className="recommendation-actions">
+                      <button className="button subtle" type="button" onClick={() => setActivePlanId(plan.id)}>
+                        <ChevronDown aria-hidden="true" size={16} />
+                        View detail
+                      </button>
+                      <button className="button" disabled={!canEditConfig} type="button" onClick={() => void applyPlan(plan)}>
+                        Apply
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
-              {activePlan.patches.map((patch) => (
-                <div className="recommendation-row" key={`${activePlan.id}-${patch.path}`}>
-                  <span>{CONFIG_PATH_DETAILS[patch.path].label}</span>
-                  <span>{formatConfigValue(patch.currentValue)}</span>
-                  <span>{formatConfigValue(patch.nextValue)}</span>
-                  <span>{patch.why}</span>
+
+              <div className="recommendation-detail">
+                <div className="recommendation-detail-heading">
+                  <strong>{activePlan.title}</strong>
+                  <button className="button subtle" disabled={!canEditConfig} type="button" onClick={() => void resetDefaults()}>
+                    <RotateCcw aria-hidden="true" size={16} />
+                    Reset defaults
+                  </button>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="recommendation-table">
+                  <div className="recommendation-row header">
+                    <span>Setting</span>
+                    <span>Current</span>
+                    <span>New</span>
+                    <span>Why</span>
+                  </div>
+                  {activePlan.patches.map((patch) => (
+                    <div className="recommendation-row" key={`${activePlan.id}-${patch.path}`}>
+                      <span>{CONFIG_PATH_DETAILS[patch.path].label}</span>
+                      <span>{formatConfigValue(patch.currentValue)}</span>
+                      <span>{formatConfigValue(patch.nextValue)}</span>
+                      <span>{patch.why}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
           {saveState.status === "submitting" ? (
             <p className="status-message waiting">Saving {saveState.label.toLowerCase()}.</p>
           ) : null}
@@ -406,10 +561,23 @@ export function ConsumerDashboard({
           {saveState.status === "error" ? (
             <p className="status-message blocked">{saveState.message}</p>
           ) : null}
+          {configVersion ? <p className="panel-note">Config version {configVersion}</p> : null}
         </section>
       </div>
     </section>
   );
+}
+
+async function loadPanel<T>(
+  path: string,
+  setState: (state: PanelState<T>) => void,
+  isActive: () => boolean,
+) {
+  const result = await dashboardApi<T>(path);
+  if (!isActive()) {
+    return;
+  }
+  setState(result.ok ? { status: "ready", data: result.data } : { status: "error", message: result.message });
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -421,8 +589,31 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function pnlChartData(summary: DashboardSummaryView) {
-  const snapshots = summary.economics.history.snapshots ?? [];
+function PanelLoadingRows({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="loading-panel" aria-busy="true" aria-label="loading">
+      <div className="loading-row-list">
+        <div className="loading-row">
+          <span className="loading-dot" />
+          <span className="loading-line" />
+        </div>
+        <div className="loading-row">
+          <span className="loading-dot" />
+          <span className="loading-line medium" />
+        </div>
+        {compact ? null : (
+          <div className="loading-row">
+            <span className="loading-dot" />
+            <span className="loading-line short" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function pnlChartData(economics: EconomicsSummaryView) {
+  const snapshots = economics.history.snapshots ?? [];
   const rows = [...snapshots]
     .filter((snapshot) => snapshot.createdAt)
     .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
@@ -437,14 +628,17 @@ function pnlChartData(summary: DashboardSummaryView) {
   return [
     {
       label: "Now",
-      trading: numberValue(summary.economics.trading.totalPnlUsd),
-      net: numberValue(summary.economics.profitability.netAfterRecordedCostsUsd),
+      trading: numberValue(economics.trading.totalPnlUsd),
+      net: numberValue(economics.profitability.netAfterRecordedCostsUsd),
     },
   ];
 }
 
-function tickTimelineSteps(summary: DashboardSummaryView) {
-  const latestRun = summary.operations.pipelineRuns[0];
+function tickTimelineSteps(
+  operations: OperationsSummaryView | null,
+  marketData: MarketDataPullView | null,
+) {
+  const latestRun = operations?.pipelineRuns[0];
   const stepByKey = new Map(
     (latestRun?.steps ?? []).map((step) => [step.key, step]),
   );
@@ -452,49 +646,73 @@ function tickTimelineSteps(summary: DashboardSummaryView) {
     {
       key: "data_fetch",
       label: "Data load",
-      status: stepByKey.get("data_fetch")?.status ?? summary.marketData.status,
-      message: stepByKey.get("data_fetch")?.message ?? `${summary.marketData.candidateCount ?? 0} candidates loaded`,
+      status: stepByKey.get("data_fetch")?.status ?? marketData?.status ?? "loading",
+      message: stepByKey.get("data_fetch")?.message ?? (
+        marketData ? `${marketData.candidateCount ?? 0} candidates loaded` : "Loading market data."
+      ),
     },
     {
       key: "scanner",
       label: "Scan",
-      status: stepByKey.get("scanner")?.status ?? summary.operations.scanner?.status ?? "waiting",
+      status: stepByKey.get("scanner")?.status ?? operations?.scanner?.status ?? "loading",
       message:
         stepByKey.get("scanner")?.message ??
-        `${summary.operations.scanner?.acceptedCount ?? 0} accepted, ${summary.operations.scanner?.rejectedCount ?? 0} rejected`,
+        (operations
+          ? `${operations.scanner?.acceptedCount ?? 0} accepted, ${operations.scanner?.rejectedCount ?? 0} rejected`
+          : "Loading scanner results."),
     },
     {
       key: "brain",
       label: "Reason",
-      status: stepByKey.get("brain")?.status ?? summary.operations.reasoning?.status ?? "waiting",
+      status: stepByKey.get("brain")?.status ?? operations?.reasoning?.status ?? "loading",
       message:
         stepByKey.get("brain")?.message ??
-        `${summary.operations.reasoning?.scoredCount ?? 0} scored, ${summary.operations.reasoning?.failedCount ?? 0} failed`,
+        (operations
+          ? `${operations.reasoning?.scoredCount ?? 0} scored, ${operations.reasoning?.failedCount ?? 0} failed`
+          : "Loading reasoning results."),
     },
     {
       key: "execution",
       label: "Execute",
-      status: stepByKey.get("execution")?.status ?? summary.operations.execution?.status ?? "waiting",
+      status: stepByKey.get("execution")?.status ?? operations?.execution?.status ?? "loading",
       message:
         stepByKey.get("execution")?.message ??
-        `${summary.operations.execution?.submittedCount ?? 0} submitted, ${summary.operations.execution?.simulatedCount ?? 0} simulated`,
+        (operations
+          ? `${operations.execution?.submittedCount ?? 0} submitted, ${operations.execution?.simulatedCount ?? 0} simulated`
+          : "Loading execution results."),
     },
     {
       key: "exit",
       label: "Exit",
-      status: stepByKey.get("exit")?.status ?? summary.operations.exit?.status ?? "waiting",
+      status: stepByKey.get("exit")?.status ?? operations?.exit?.status ?? "loading",
       message:
         stepByKey.get("exit")?.message ??
-        `${summary.operations.exit?.triggeredCount ?? 0} exit checks triggered`,
+        (operations
+          ? `${operations.exit?.triggeredCount ?? 0} exit checks triggered`
+          : "Loading exit results."),
     },
   ].map((step) => ({ ...step, tone: statusTone(step.status) }));
 }
 
-function lastTickResult(summary: DashboardSummaryView) {
-  const latestRun = summary.operations.pipelineRuns[0];
-  const execution = summary.operations.execution;
-  const scanner = summary.operations.scanner;
-  const reasoning = summary.operations.reasoning;
+function lastTickResult(
+  operations: OperationsSummaryView | null,
+  tickSummary: TickSummaryView,
+) {
+  if (!operations) {
+    return {
+      title: "Loading latest tick",
+      body: "Panels will fill in as each status check returns.",
+      headline: "Loading",
+      detail: "Waiting for operations data.",
+      status: "loading",
+      tone: "waiting" as const,
+      label: "Loading",
+    };
+  }
+  const latestRun = operations.pipelineRuns[0];
+  const execution = operations.execution;
+  const scanner = operations.scanner;
+  const reasoning = operations.reasoning;
   if ((execution?.submittedCount ?? 0) > 0) {
     return {
       title: "A trade was submitted",
@@ -543,8 +761,8 @@ function lastTickResult(summary: DashboardSummaryView) {
     title: "No trade was placed",
     body: "The bot stayed inside its current pass conditions and did not create a live order.",
     headline: "No order submitted",
-    detail: summary.operations.tickSummary?.summaryMarkdown
-      ? markdownLines(summary.operations.tickSummary.summaryMarkdown)[0]
+    detail: tickSummary.summaryMarkdown
+      ? markdownLines(tickSummary.summaryMarkdown)[0]
       : "No execution intent was submitted in the latest tick.",
     status: latestRun?.status ?? "idle",
     tone: "waiting" as const,
@@ -555,9 +773,9 @@ function lastTickResult(summary: DashboardSummaryView) {
 function recommendationPlans(
   settings: Record<string, unknown>,
   dailySummary: TickSummaryView,
-  summary: DashboardSummaryView,
+  operations: OperationsSummaryView | null,
 ): RecommendationPlan[] {
-  const context = recommendationContext(dailySummary, summary);
+  const context = recommendationContext(dailySummary, operations);
   const profile = (id: RecommendationPlan["id"], title: string, tone: RecommendationPlan["tone"], summaryText: string, scale: number, confidenceDrop: number): RecommendationPlan => ({
     id,
     title,
@@ -600,12 +818,12 @@ function recommendationPlans(
   ];
 }
 
-function recommendationContext(dailySummary: TickSummaryView, summary: DashboardSummaryView) {
+function recommendationContext(dailySummary: TickSummaryView, operations: OperationsSummaryView | null) {
   const text = [
     dailySummary.summaryMarkdown,
     ...(dailySummary.keyEvents ?? []),
     ...(dailySummary.warnings ?? []),
-    summary.operations.scanner?.message ?? "",
+    operations?.scanner?.message ?? "",
   ].join(" ").toLowerCase();
   return {
     resolution: text.includes("resolution") || text.includes("too far")
@@ -766,15 +984,30 @@ function formatDateTime(value: string | null | undefined): string {
     return value;
   }
   return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(date);
 }
 
 function nextConfigVersion(currentVersion: string): string {
-  const match = currentVersion.match(/^(.*?)(\d+)$/);
-  if (!match) {
-    return `${currentVersion || "v"}-next`;
+  const match = /^v(\d+)$/.exec(currentVersion);
+  if (match) {
+    return `v${Number(match[1]) + 1}`;
   }
-  return `${match[1]}${Number(match[2]) + 1}`;
+  return `ui-${Date.now()}`;
+}
+
+function expectedVersionFromSnapshot(snapshot: ConfigSnapshot): string {
+  return snapshot.version === "bootstrap" ? "" : snapshot.version;
+}
+
+function readableConfigError(message: string): string {
+  try {
+    const parsed = JSON.parse(message) as { message?: string };
+    return parsed.message ?? message;
+  } catch {
+    return message;
+  }
 }
