@@ -73,7 +73,7 @@ assert.doesNotMatch(walletStatus, /secret/i);
 
 const dashboardPage = read("app/dashboard/page.tsx");
 assert.match(dashboardPage, /ConsumerDashboard/);
-assert.match(dashboardPage, /operations\/tick-summary\?window_minutes=1440/);
+assert.doesNotMatch(dashboardPage, /serverDashboardApi<DashboardSummaryView>/);
 
 const dashboardLayout = read("app/dashboard/layout.tsx");
 for (const token of [
@@ -131,6 +131,12 @@ for (const token of [
 
 const consumerDashboard = read("components/dashboard/consumer-dashboard.tsx");
 for (const token of [
+  "config/current",
+  "operations/summary",
+  "economics/summary",
+  "market-data/latest",
+  "notifications/settings",
+  "operations/tick-summary",
   "P&L over time",
   "Five steps",
   "Daily summary",
@@ -142,6 +148,9 @@ for (const token of [
   "Reset defaults",
   "currentValue",
   "nextValue",
+  "refreshConfigSnapshot",
+  "result.status === 409",
+  "finalizeConfigSave",
 ]) {
   assert.match(consumerDashboard, new RegExp(token.replaceAll("?", "\\?")));
 }
