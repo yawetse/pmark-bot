@@ -8,11 +8,12 @@ REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 
 from app.domain import Environment, ModelProvider
@@ -438,6 +439,18 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         )
         return operations
 
+    @router.get("/api/operations/tick-schedule")
+    def operations_tick_schedule(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return the last tick time and next expected tick time."""
+
+        config_snapshot = _current_config(context.environment)
+        return services.runtime_status.tick_schedule(
+            environment=context.environment,
+            config_payload=config_snapshot["settings"],
+        )
+
     @router.get("/api/operations/tick-summary")
     def tick_summary(
         window_minutes: int = 24 * 60,
@@ -470,6 +483,94 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             window_minutes=int(payload.get("window_minutes", 24 * 60)),
             force_refresh=True,
         )
+
+    @router.get("/api/data/explorer")
+    def data_explorer(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return read-only datasets available to the dashboard data explorer."""
+
+        return services.runtime_status.data_explorer(context.environment)
+
+    @router.get("/api/data/query")
+    def data_query_get(
+        query: str = "select * from market_data_pulls limit 25",
+        limit: int = 100,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Run a safe read-only data explorer query."""
+
+        try:
+            return services.runtime_status.query_data(
+                environment=context.environment,
+                query=query,
+                default_limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"error_code": "invalid_data_query", "message": str(exc)},
+            ) from exc
+
+    @router.post("/api/data/query")
+    async def data_query_post(
+        request: Request,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Run a safe read-only data explorer query from a workbench body."""
+
+        payload = await request.json()
+        try:
+            return services.runtime_status.query_data(
+                environment=context.environment,
+                query=str(payload.get("query") or "select * from market_data_pulls limit 25"),
+                default_limit=int(payload.get("limit", 100)),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"error_code": "invalid_data_query", "message": str(exc)},
+            ) from exc
+
+    @router.get("/api/dashboard/realtime-snapshot")
+    def dashboard_realtime_snapshot(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return the same tick-focused payload sent over WebSocket."""
+
+        return _realtime_snapshot(context)
+
+    @router.websocket("/api/dashboard/events")
+    async def dashboard_events(
+        websocket: WebSocket,
+        token: str | None = None,
+        environment: str | None = None,
+    ) -> None:
+        """Stream tick-focused dashboard snapshots over WebSocket."""
+
+        context = _websocket_context(websocket, token, environment)
+        if not context.access.authorized:
+            await websocket.close(code=4403 if context.access.authenticated else 4401)
+            return
+        await websocket.accept()
+        refresh_seconds = 5
+        try:
+            while True:
+                await websocket.send_json(
+                    {
+                        "type": "dashboard_snapshot",
+                        "data": _realtime_snapshot(context),
+                    }
+                )
+                try:
+                    message = await asyncio.wait_for(websocket.receive_text(), timeout=refresh_seconds)
+                except TimeoutError:
+                    continue
+                if message.strip().lower() == "close":
+                    await websocket.close(code=1000)
+                    return
+        except WebSocketDisconnect:
+            return
 
     @router.get("/api/operations/runs")
     def operations_runs(
@@ -505,6 +606,42 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 },
             )
         return payload
+
+    @router.get("/api/scenario/analyze")
+    def scenario_analyze_get(
+        run_id: str | None = None,
+        step_key: str | None = None,
+        prompt: str | None = None,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return a scenario walkthrough for the latest or selected tick."""
+
+        config_snapshot = _current_config(context.environment)
+        return services.runtime_status.scenario_analysis(
+            environment=context.environment,
+            config_payload=config_snapshot["settings"],
+            run_id=run_id,
+            step_key=step_key,
+            prompt=prompt,
+        )
+
+    @router.post("/api/scenario/analyze")
+    async def scenario_analyze_post(
+        request: Request,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return a scenario walkthrough with optional config test values."""
+
+        payload = await request.json()
+        config_snapshot = _current_config(context.environment)
+        return services.runtime_status.scenario_analysis(
+            environment=context.environment,
+            config_payload=config_snapshot["settings"],
+            run_id=payload.get("runId"),
+            step_key=payload.get("stepKey"),
+            prompt=payload.get("prompt"),
+            config_overrides=payload.get("configOverrides") or [],
+        )
 
     @router.post("/api/operations/manual-run")
     async def manual_run(
@@ -630,6 +767,51 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "degraded": reload_result.degraded,
         }
 
+    def _realtime_snapshot(context: DashboardRequestContext) -> dict[str, Any]:
+        config_snapshot = _current_config(context.environment)
+        settings_payload = config_snapshot["settings"]
+        operations = services.runtime_status.operations_summary(context.environment)
+        operations["killSwitch"] = (
+            "active" if services.kill_switch.state(context.environment).active else "inactive"
+        )
+        return {
+            "environment": context.environment.value,
+            "generatedAt": _now(),
+            "operations": operations,
+            "marketData": services.runtime_status.market_data_pull(
+                environment=context.environment,
+                config_payload=settings_payload,
+            ),
+            "tickSchedule": services.runtime_status.tick_schedule(
+                environment=context.environment,
+                config_payload=settings_payload,
+            ),
+            "loop": services.runtime_status.loop_observability(
+                environment=context.environment,
+                config_payload=settings_payload,
+                config_degraded=config_snapshot["degraded"],
+                kill_switch_active=services.kill_switch.state(context.environment).active,
+            ),
+        }
+
+    def _websocket_context(
+        websocket: WebSocket,
+        token: str | None,
+        raw_environment: str | None,
+    ) -> DashboardRequestContext:
+        environment = _parse_environment(raw_environment, settings.environment)
+        ip_address = _websocket_client_ip(websocket)
+        access = services.auth.authorize_request(
+            token,
+            environment=environment,
+            ip_address=ip_address,
+        )
+        return DashboardRequestContext(
+            access=access,
+            actor=ActorContext(username=access.username or "unknown", ip_address=ip_address),
+            environment=environment,
+        )
+
     def _persist_live_disabled(
         context: DashboardRequestContext,
         environment: Environment,
@@ -733,6 +915,15 @@ def _client_ip(request: Request) -> str:
     if request.client is None:
         return "unknown"
     return request.client.host
+
+
+def _websocket_client_ip(websocket: WebSocket) -> str:
+    forwarded_for = websocket.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    if websocket.client is None:
+        return "unknown"
+    return websocket.client.host
 
 
 def _now() -> str:

@@ -2,7 +2,7 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { AlertTriangle } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import {
   EconomicsPanel,
@@ -29,6 +29,7 @@ import {
   type TickSummaryView,
 } from "@/components/dashboard/tick-summary-panel";
 import { dashboardApi } from "@/lib/api";
+import { useDashboardRealtime } from "@/lib/use-dashboard-realtime";
 
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
 
@@ -479,6 +480,7 @@ export function OperationsView({
   loadError?: string;
   timeZone?: string;
 }) {
+  const [currentSummary, setCurrentSummary] = useState(summary);
   const [latestMarketData, setLatestMarketData] = useState(marketData);
   const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
   const [tickSummary, setTickSummary] = useState(summary.tickSummary ?? FALLBACK_TICK_SUMMARY);
@@ -490,12 +492,25 @@ export function OperationsView({
   const [execution, setExecution] = useState(summary.execution ?? FALLBACK_EXECUTION);
   const [exit, setExit] = useState(summary.exit ?? FALLBACK_EXIT);
   const displayTimeZone = useResolvedTimeZone(timeZone);
-  const pendingEvents = summary.orderEvents.filter(
+  const pendingEvents = currentSummary.orderEvents.filter(
     (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
   );
-  const terminalEvents = summary.orderEvents.filter((event) =>
+  const terminalEvents = currentSummary.orderEvents.filter((event) =>
     ["filled", "canceled", "failed", "refused"].includes(event.state),
   );
+
+  const onRealtimeSnapshot = useCallback((snapshot: { operations: OperationsSummaryView; marketData: MarketDataPullView }) => {
+    setCurrentSummary(snapshot.operations);
+    setLatestMarketData(snapshot.marketData);
+    setPipelineRuns(snapshot.operations.pipelineRuns ?? []);
+    setTickSummary(snapshot.operations.tickSummary ?? FALLBACK_TICK_SUMMARY);
+    setScanner(snapshot.operations.scanner ?? FALLBACK_SCANNER);
+    setReasoning(snapshot.operations.reasoning ?? FALLBACK_REASONING);
+    setStrategyConsensus(snapshot.operations.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS);
+    setExecution(snapshot.operations.execution ?? FALLBACK_EXECUTION);
+    setExit(snapshot.operations.exit ?? FALLBACK_EXIT);
+  }, []);
+  const realtime = useDashboardRealtime({ onSnapshot: onRealtimeSnapshot });
 
   return (
     <div className="page-stack">
@@ -508,8 +523,8 @@ export function OperationsView({
           {loadError ? (
             <span className="status blocked">api unavailable</span>
           ) : (
-            <span className={`status ${summary.killSwitch === "active" ? "blocked" : "ok"}`}>
-              kill switch {summary.killSwitch}
+            <span className={`status ${currentSummary.killSwitch === "active" ? "blocked" : "ok"}`}>
+              kill switch {currentSummary.killSwitch}
             </span>
           )}
         </div>
@@ -519,22 +534,28 @@ export function OperationsView({
         </p>
         {loadError ? <p className="status-message">{loadError}</p> : null}
         <div className="metric-grid">
-          <Metric label="Open orders" value={String(summary.openOrders)} />
+          <Metric label="Open orders" value={String(currentSummary.openOrders)} />
           <Metric label="Pending events" value={String(pendingEvents.length)} />
-          <Metric label="Cancel progress" value={summary.cancelProgress} />
-          <Metric label="Manual review" value={summary.manualReview} />
+          <Metric label="Cancel progress" value={currentSummary.cancelProgress} />
+          <Metric label="Manual review" value={currentSummary.manualReview} />
         </div>
         <ul className="status-list">
           <li>
             <span>Degraded venue status</span>
-            <span className={`status ${summary.degradedVenueStatus === "none" ? "ok" : "blocked"}`}>
-              {summary.degradedVenueStatus}
+            <span className={`status ${currentSummary.degradedVenueStatus === "none" ? "ok" : "blocked"}`}>
+              {currentSummary.degradedVenueStatus}
             </span>
           </li>
           <li>
             <span>Manual-review state</span>
-            <span className={`status ${summary.manualReviewState === "clear" ? "ok" : "blocked"}`}>
-              {summary.manualReviewState}
+            <span className={`status ${currentSummary.manualReviewState === "clear" ? "ok" : "blocked"}`}>
+              {currentSummary.manualReviewState}
+            </span>
+          </li>
+          <li>
+            <span>Realtime updates</span>
+            <span className={`status ${realtime.status === "connected" ? "ok" : realtime.status === "offline" ? "blocked" : "idle"}`}>
+              {realtime.status}
             </span>
           </li>
         </ul>
@@ -555,8 +576,8 @@ export function OperationsView({
           <WorkflowLink href="#strategy-consensus-title" label="Strategy" value={String(strategyConsensus.approvedCount)} detail="Approved" />
           <WorkflowLink href="#execution-title" label="Execution" value={String(execution.intentCount)} detail="Intents" />
           <WorkflowLink href="#exit-title" label="Exit" value={String(exit.triggeredCount)} detail="Triggered" />
-          <WorkflowLink href="#historical-import-title" label="Imports" value={String(summary.historicalImport?.counts.checkpoints ?? 0)} detail="Checkpoints" />
-          <WorkflowLink href="#kill-switch-title" label="Kill Switch" value={summary.killSwitch} detail="Emergency control" />
+          <WorkflowLink href="#historical-import-title" label="Imports" value={String(currentSummary.historicalImport?.counts.checkpoints ?? 0)} detail="Checkpoints" />
+          <WorkflowLink href="#kill-switch-title" label="Kill Switch" value={currentSummary.killSwitch} detail="Emergency control" />
         </div>
       </section>
 
@@ -580,12 +601,12 @@ export function OperationsView({
       <ExitPanel exit={exit} timeZone={displayTimeZone} />
 
       <HistoricalImportPanel
-        historicalImport={summary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
+        historicalImport={currentSummary.historicalImport ?? FALLBACK_HISTORICAL_IMPORT}
         timeZone={displayTimeZone}
       />
 
       <BrokerHistoryPanel
-        brokerHistory={summary.brokerHistory ?? FALLBACK_BROKER_HISTORY}
+        brokerHistory={currentSummary.brokerHistory ?? FALLBACK_BROKER_HISTORY}
         timeZone={displayTimeZone}
       />
 
@@ -612,7 +633,7 @@ export function OperationsView({
       </section>
 
       <section className="panel wide-panel">
-        <KillSwitchControl active={summary.killSwitch === "active"} />
+        <KillSwitchControl active={currentSummary.killSwitch === "active"} />
       </section>
     </div>
   );

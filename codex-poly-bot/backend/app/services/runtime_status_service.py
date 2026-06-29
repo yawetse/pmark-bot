@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import re
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -87,6 +88,164 @@ CURRENT_WORKER_HEARTBEAT_STATUSES = {
     "partial",
     "rate_limited",
     "empty",
+}
+
+DATA_EXPLORER_DATASETS: dict[str, dict[str, Any]] = {
+    "market_data_pulls": {
+        "table": f"{SHARED_SCHEMA}.dashboard_market_data_pulls",
+        "label": "Market data pulls",
+        "description": "Provider data captured before scanner filtering.",
+        "columns": (
+            "id",
+            "environment",
+            "venue",
+            "status",
+            "trigger",
+            "source",
+            "candidate_count",
+            "message",
+            "error_code",
+            "run_id",
+            "created_at",
+        ),
+    },
+    "pipeline_runs": {
+        "table": f"{SHARED_SCHEMA}.pipeline_runs",
+        "label": "Pipeline runs",
+        "description": "Manual and scheduled ticks.",
+        "columns": ("id", "environment", "trigger", "status", "started_at", "completed_at"),
+    },
+    "pipeline_steps": {
+        "table": f"{SHARED_SCHEMA}.pipeline_steps",
+        "label": "Pipeline steps",
+        "description": "Five-step trace records for each tick.",
+        "columns": ("id", "run_id", "step_key", "step_order", "label", "status", "message", "created_at"),
+    },
+    "scanner_candidates": {
+        "table": f"{SHARED_SCHEMA}.scanner_candidates",
+        "label": "Scanner candidates",
+        "description": "Accepted and rejected scanner candidates.",
+        "columns": (
+            "id",
+            "scanner_run_id",
+            "venue",
+            "instrument_id",
+            "display_name",
+            "status",
+            "refusal_reason",
+            "price",
+            "liquidity",
+            "spread",
+            "hours_to_resolution",
+            "created_at",
+        ),
+    },
+    "reasoning_outputs": {
+        "table": f"{SHARED_SCHEMA}.reasoning_outputs",
+        "label": "Reasoning outputs",
+        "description": "Model scoring output for accepted scanner candidates.",
+        "columns": (
+            "id",
+            "reasoning_run_id",
+            "scanner_candidate_id",
+            "venue",
+            "instrument_id",
+            "model_provider",
+            "status",
+            "refusal_reason",
+            "confidence",
+            "estimated_probability",
+            "cost_usd",
+            "created_at",
+        ),
+    },
+    "strategy_votes": {
+        "table": f"{SHARED_SCHEMA}.strategy_votes",
+        "label": "Strategy votes",
+        "description": "Strategy consensus votes before order sizing.",
+        "columns": (
+            "id",
+            "consensus_run_id",
+            "reasoning_output_id",
+            "scanner_candidate_id",
+            "venue",
+            "instrument_id",
+            "model_provider",
+            "strategy_name",
+            "status",
+            "refusal_reason",
+            "created_at",
+        ),
+    },
+    "strategy_outputs": {
+        "table": f"{SHARED_SCHEMA}.strategy_consensus_outputs",
+        "label": "Strategy outputs",
+        "description": "Approved or refused consensus outputs.",
+        "columns": (
+            "id",
+            "consensus_run_id",
+            "venue",
+            "instrument_id",
+            "model_provider",
+            "status",
+            "side",
+            "size_multiplier",
+            "signal_count",
+            "refusal_reason",
+            "created_at",
+        ),
+    },
+    "order_intents": {
+        "table": f"{SHARED_SCHEMA}.order_intents",
+        "label": "Order intents",
+        "description": "Risk-checked order intents from the execution step.",
+        "columns": (
+            "id",
+            "execution_run_id",
+            "pipeline_run_id",
+            "venue",
+            "instrument_id",
+            "model_provider",
+            "side",
+            "status",
+            "notional_usd",
+            "refusal_reason",
+            "created_at",
+        ),
+    },
+    "exit_intents": {
+        "table": f"{SHARED_SCHEMA}.exit_intents",
+        "label": "Exit intents",
+        "description": "Exit monitor decisions for open positions.",
+        "columns": (
+            "id",
+            "exit_run_id",
+            "pipeline_run_id",
+            "venue",
+            "instrument_id",
+            "position_id",
+            "trigger_type",
+            "status",
+            "refusal_reason",
+            "created_at",
+        ),
+    },
+    "tick_summaries": {
+        "table": f"{SHARED_SCHEMA}.tick_summaries",
+        "label": "Tick summaries",
+        "description": "Cached AI or local summaries of recent ticks.",
+        "columns": (
+            "id",
+            "environment",
+            "window_minutes",
+            "latest_run_id",
+            "run_count",
+            "status",
+            "model",
+            "message",
+            "created_at",
+        ),
+    },
 }
 
 
@@ -1155,6 +1314,199 @@ class RuntimeStatusService:
             "settings": notification_config,
         }
 
+    def tick_schedule(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return the latest completed tick and the next expected tick time."""
+
+        now = datetime.now(UTC)
+        interval_seconds = _positive_int(
+            config_payload.get("trading_loop_interval_seconds"),
+            default=60,
+        )
+        worker = self.worker_status()
+        latest_run = next(iter(self.pipeline_runs(environment, limit=1)), None)
+        run_time = None
+        if latest_run is not None:
+            run_time = (
+                _parse_datetime(latest_run.get("completedAt"))
+                or _parse_datetime(latest_run.get("startedAt"))
+            )
+        heartbeat_time = _parse_datetime(worker.get("lastHeartbeatAt"))
+        last_tick_at = run_time or heartbeat_time
+        last_tick_source = (
+            "pipeline_run"
+            if run_time is not None
+            else ("worker_heartbeat" if heartbeat_time is not None else "none")
+        )
+        next_tick_at = (
+            last_tick_at + timedelta(seconds=interval_seconds)
+            if last_tick_at is not None
+            else now + timedelta(seconds=interval_seconds)
+        )
+        seconds_until_next_tick = max(0, int((next_tick_at - now).total_seconds()))
+        return {
+            "environment": environment.value,
+            "generatedAt": now.isoformat(),
+            "intervalSeconds": interval_seconds,
+            "lastTickAt": _isoformat_or_none(last_tick_at),
+            "lastTickStatus": latest_run.get("status") if latest_run else worker.get("heartbeatStatus"),
+            "lastTickRunId": latest_run.get("id") if latest_run else None,
+            "lastTickSource": last_tick_source,
+            "lastHeartbeatAt": worker.get("lastHeartbeatAt"),
+            "heartbeatStatus": worker.get("heartbeatStatus"),
+            "ageSeconds": worker.get("ageSeconds"),
+            "nextTickAt": next_tick_at.isoformat(),
+            "secondsUntilNextTick": seconds_until_next_tick,
+            "due": seconds_until_next_tick == 0,
+            "source": worker.get("value"),
+        }
+
+    def data_explorer(self, environment: Environment) -> dict[str, Any]:
+        """Return read-only dashboard datasets for the data explorer."""
+
+        datasets = []
+        for alias, metadata in DATA_EXPLORER_DATASETS.items():
+            rows = self._data_explorer_rows(environment, alias)
+            sample_rows = [_explorer_row_payload(row) for row in rows[:5]]
+            datasets.append(
+                {
+                    "id": alias,
+                    "label": metadata["label"],
+                    "table": metadata["table"],
+                    "description": metadata["description"],
+                    "rowCount": len(rows),
+                    "columns": _explorer_columns(sample_rows, metadata["columns"]),
+                    "sampleRows": sample_rows,
+                }
+            )
+        return {
+            "environment": environment.value,
+            "generatedAt": datetime.now(UTC).isoformat(),
+            "datasets": datasets,
+            "defaultQuery": "select * from market_data_pulls limit 25",
+        }
+
+    def query_data(
+        self,
+        *,
+        environment: Environment,
+        query: str,
+        default_limit: int = 100,
+    ) -> dict[str, Any]:
+        """Run a restricted read-only SQL-like query against dashboard datasets."""
+
+        parsed = _parse_explorer_query(query)
+        dataset_id = parsed["dataset"]
+        rows = [_explorer_row_payload(row) for row in self._data_explorer_rows(environment, dataset_id)]
+        filtered_rows = [
+            row
+            for row in rows
+            if all(_matches_explorer_condition(row, condition) for condition in parsed["conditions"])
+        ]
+        if parsed["orderBy"]:
+            filtered_rows.sort(
+                key=lambda row: _sortable_explorer_value(_nested_explorer_value(row, parsed["orderBy"])),
+                reverse=parsed["orderDirection"] == "desc",
+            )
+        limit = min(max(1, int(parsed["limit"] or default_limit)), 500)
+        selected_rows = filtered_rows[:limit]
+        columns = (
+            _explorer_columns(selected_rows, ())
+            if parsed["columns"] == ["*"]
+            else parsed["columns"]
+        )
+        projected_rows = [_project_explorer_row(row, columns) for row in selected_rows]
+        dataset = DATA_EXPLORER_DATASETS[dataset_id]
+        return {
+            "environment": environment.value,
+            "generatedAt": datetime.now(UTC).isoformat(),
+            "query": parsed["normalizedQuery"],
+            "dataset": {
+                "id": dataset_id,
+                "label": dataset["label"],
+                "table": dataset["table"],
+            },
+            "columns": columns,
+            "rows": projected_rows,
+            "rowCount": len(projected_rows),
+            "totalMatched": len(filtered_rows),
+            "limit": limit,
+            "message": f"Returned {len(projected_rows)} of {len(filtered_rows)} matching rows.",
+        }
+
+    def scenario_analysis(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+        run_id: str | None = None,
+        step_key: str | None = None,
+        prompt: str | None = None,
+        config_overrides: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Explain a tick step-by-step and suggest safe next tests."""
+
+        runs = self.pipeline_runs(environment, limit=20)
+        selected_run = next((run for run in runs if run["id"] == run_id), runs[0] if runs else None)
+        detail = (
+            self.pipeline_run_detail(environment, selected_run["id"])
+            if selected_run
+            else None
+        )
+        record_groups = detail.get("records", []) if detail else []
+        record_lookup = {
+            group["stepKey"]: group
+            for group in record_groups
+            if isinstance(group, dict) and group.get("stepKey")
+        }
+        step_analyses = [
+            _scenario_step_analysis(
+                step=step,
+                record_group=record_lookup.get(step.get("key"), {}),
+                config_payload=config_payload,
+            )
+            for step in (selected_run.get("steps", []) if selected_run else [])
+        ]
+        selected_step = (
+            next((step for step in step_analyses if step["key"] == step_key), None)
+            or next((step for step in step_analyses if step["state"] in {"blocked", "idle"}), None)
+            or (step_analyses[0] if step_analyses else None)
+        )
+        override_results = [
+            _scenario_override_result(override, selected_step)
+            for override in (config_overrides or [])
+            if isinstance(override, dict)
+        ]
+        answer = _scenario_prompt_answer(
+            prompt=prompt or "",
+            run=selected_run,
+            step=selected_step,
+            overrides=override_results,
+        )
+        return {
+            "environment": environment.value,
+            "generatedAt": datetime.now(UTC).isoformat(),
+            "model": "local-scenario-helper",
+            "modelMode": "local_rules",
+            "run": selected_run,
+            "runs": runs,
+            "selectedStepKey": selected_step["key"] if selected_step else None,
+            "steps": step_analyses,
+            "records": record_groups,
+            "configTests": override_results,
+            "answer": answer,
+            "prompt": prompt or "",
+            "message": (
+                "Scenario analysis is based on recorded tick data, current config, and safe local rules."
+                if selected_run
+                else "No tick has been recorded yet. Run a manual data import or dry run to create a walkthrough."
+            ),
+        }
+
     def operations_summary(self, environment: Environment) -> dict[str, Any]:
         """Return operational status and latest order rows.
 
@@ -1862,13 +2214,12 @@ class RuntimeStatusService:
             config_payload.get("trading_loop_interval_seconds"),
             default=60,
         )
-        last_heartbeat = _parse_datetime(worker.get("lastHeartbeatAt"))
-        next_run_at = (
-            last_heartbeat + timedelta(seconds=interval_seconds)
-            if last_heartbeat is not None
-            else now + timedelta(seconds=interval_seconds)
+        tick_schedule = self.tick_schedule(
+            environment=environment,
+            config_payload=config_payload,
         )
-        seconds_until_next_run = max(0, int((next_run_at - now).total_seconds()))
+        next_run_at = _parse_datetime(tick_schedule.get("nextTickAt")) or now
+        seconds_until_next_run = _as_int(tick_schedule.get("secondsUntilNextTick"))
         selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
         venues = config_payload.get("venues", {})
         enabled_venues = self._enabled_config_venues(config_payload)
@@ -1912,8 +2263,15 @@ class RuntimeStatusService:
                 "intervalSeconds": interval_seconds,
                 "lastHeartbeatAt": worker.get("lastHeartbeatAt"),
                 "ageSeconds": worker.get("ageSeconds"),
+                "lastTickAt": tick_schedule.get("lastTickAt"),
+                "lastTickStatus": tick_schedule.get("lastTickStatus"),
+                "lastTickRunId": tick_schedule.get("lastTickRunId"),
+                "lastTickSource": tick_schedule.get("lastTickSource"),
                 "nextRunAt": next_run_at.isoformat(),
+                "nextTickAt": tick_schedule.get("nextTickAt"),
                 "secondsUntilNextRun": seconds_until_next_run,
+                "secondsUntilNextTick": seconds_until_next_run,
+                "due": tick_schedule.get("due", False),
                 "source": worker.get("value"),
             },
             "currentPhase": self._current_loop_phase(
@@ -2876,6 +3234,27 @@ class RuntimeStatusService:
             if row["environment"] == environment.value
         ]
 
+    def _data_explorer_rows(self, environment: Environment, dataset_id: str) -> list[dict[str, Any]]:
+        metadata = DATA_EXPLORER_DATASETS.get(dataset_id)
+        if metadata is None:
+            raise ValueError(f"unsupported dataset: {dataset_id}")
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows(metadata["table"])
+                if row.get("environment", environment.value) == environment.value
+            ]
+            if dataset_id == "market_data_pulls" and not rows:
+                rows = [
+                    row
+                    for row in self.registry.state.rows(self.LEGACY_MARKET_DATA_PULLS_TABLE)
+                    if row.get("environment", environment.value) == environment.value
+                ]
+        except PersistenceUnavailableError:
+            return []
+        rows.sort(key=_row_datetime_sort_key, reverse=True)
+        return rows
+
     def _market_data_venues(self, config_payload: dict[str, Any]) -> list[str]:
         selected_venue = str(
             config_payload.get("default_selected_venue")
@@ -3654,6 +4033,510 @@ def _safe_record_payload(row: dict[str, Any]) -> dict[str, Any]:
         else:
             payload[key] = value
     return payload
+
+
+def _explorer_row_payload(row: dict[str, Any]) -> dict[str, Any]:
+    payload = _safe_record_payload(row)
+    candidates = payload.get("candidates")
+    if isinstance(candidates, list):
+        payload["candidate_count"] = len(candidates)
+    return payload
+
+
+def _explorer_columns(rows: list[dict[str, Any]], preferred: tuple[str, ...]) -> list[str]:
+    columns = list(preferred)
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(key)
+    return columns
+
+
+def _project_explorer_row(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
+    return {column: _nested_explorer_value(row, column) for column in columns}
+
+
+def _parse_explorer_query(query: str) -> dict[str, Any]:
+    raw_query = (query or "").strip() or "select * from market_data_pulls limit 25"
+    if ";" in raw_query.rstrip(";"):
+        raise ValueError("only one read-only SELECT statement is allowed")
+    normalized = raw_query.rstrip(";").strip()
+    match = re.match(
+        r"^select\s+(?P<columns>.+?)\s+from\s+(?P<dataset>[A-Za-z0-9_.]+)(?P<rest>.*)$",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        raise ValueError("query must use SELECT columns FROM dataset")
+
+    columns_text = match.group("columns").strip()
+    columns = ["*"] if columns_text == "*" else [column.strip() for column in columns_text.split(",")]
+    if columns != ["*"] and not all(_valid_explorer_identifier(column) for column in columns):
+        raise ValueError("selected columns must be simple field names")
+
+    dataset = _resolve_explorer_dataset(match.group("dataset"))
+    rest = " ".join(match.group("rest").split())
+    limit = None
+    order_by = None
+    order_direction = "asc"
+
+    limit_match = re.search(r"(?:^|\s+)limit\s+(?P<limit>\d+)\s*$", rest, flags=re.IGNORECASE)
+    if limit_match:
+        limit = int(limit_match.group("limit"))
+        rest = rest[: limit_match.start()].strip()
+
+    order_match = re.search(
+        r"(?:^|\s+)order\s+by\s+(?P<field>[A-Za-z0-9_.]+)(?:\s+(?P<direction>asc|desc))?\s*$",
+        rest,
+        flags=re.IGNORECASE,
+    )
+    if order_match:
+        order_by = order_match.group("field")
+        order_direction = (order_match.group("direction") or "asc").lower()
+        rest = rest[: order_match.start()].strip()
+
+    conditions: list[dict[str, Any]] = []
+    if rest:
+        if not rest.lower().startswith("where "):
+            raise ValueError("only WHERE, ORDER BY, and LIMIT clauses are supported")
+        where_clause = rest[6:].strip()
+        conditions = _parse_explorer_conditions(where_clause)
+
+    return {
+        "columns": columns,
+        "dataset": dataset,
+        "conditions": conditions,
+        "orderBy": order_by,
+        "orderDirection": order_direction,
+        "limit": limit,
+        "normalizedQuery": normalized,
+    }
+
+
+def _resolve_explorer_dataset(raw_dataset: str) -> str:
+    normalized = raw_dataset.strip()
+    if normalized in DATA_EXPLORER_DATASETS:
+        return normalized
+    for alias, metadata in DATA_EXPLORER_DATASETS.items():
+        table = str(metadata["table"])
+        if normalized == table or normalized == table.split(".", 1)[-1]:
+            return alias
+    raise ValueError(f"unsupported dataset: {raw_dataset}")
+
+
+def _parse_explorer_conditions(where_clause: str) -> list[dict[str, Any]]:
+    if not where_clause:
+        return []
+    conditions: list[dict[str, Any]] = []
+    for raw_condition in re.split(r"\s+and\s+", where_clause, flags=re.IGNORECASE):
+        condition = raw_condition.strip()
+        null_match = re.match(
+            r"^(?P<field>[A-Za-z0-9_.]+)\s+is\s+(?P<not>not\s+)?null$",
+            condition,
+            flags=re.IGNORECASE,
+        )
+        if null_match:
+            conditions.append(
+                {
+                    "field": null_match.group("field"),
+                    "operator": "is_not_null" if null_match.group("not") else "is_null",
+                    "value": None,
+                }
+            )
+            continue
+        match = re.match(
+            r"^(?P<field>[A-Za-z0-9_.]+)\s*(?P<operator>!=|=|>=|<=|>|<|like|contains)\s*(?P<value>.+)$",
+            condition,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            raise ValueError(f"unsupported WHERE condition: {condition}")
+        conditions.append(
+            {
+                "field": match.group("field"),
+                "operator": match.group("operator").lower(),
+                "value": _parse_explorer_value(match.group("value")),
+            }
+        )
+    return conditions
+
+
+def _parse_explorer_value(raw_value: str) -> Any:
+    value = raw_value.strip()
+    if (value.startswith("'") and value.endswith("'")) or (value.startswith('"') and value.endswith('"')):
+        return value[1:-1]
+    lower_value = value.lower()
+    if lower_value == "true":
+        return True
+    if lower_value == "false":
+        return False
+    try:
+        if "." in value:
+            return Decimal(value)
+        return int(value)
+    except (InvalidOperation, ValueError):
+        return value
+
+
+def _matches_explorer_condition(row: dict[str, Any], condition: dict[str, Any]) -> bool:
+    current = _nested_explorer_value(row, str(condition["field"]))
+    operator = str(condition["operator"])
+    expected = condition.get("value")
+    if operator == "is_null":
+        return current is None or current == ""
+    if operator == "is_not_null":
+        return current is not None and current != ""
+    if operator in {"like", "contains"}:
+        needle = str(expected).strip("%").lower()
+        return needle in str(current or "").lower()
+    if operator == "=":
+        return _normalized_explorer_value(current) == _normalized_explorer_value(expected)
+    if operator == "!=":
+        return _normalized_explorer_value(current) != _normalized_explorer_value(expected)
+    return _compare_explorer_values(current, expected, operator)
+
+
+def _nested_explorer_value(row: dict[str, Any], field: str) -> Any:
+    current: Any = row
+    for part in field.split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def _normalized_explorer_value(value: Any) -> str:
+    if isinstance(value, Decimal):
+        return str(value)
+    return str(value).strip().lower()
+
+
+def _compare_explorer_values(left: Any, right: Any, operator: str) -> bool:
+    left_number = _decimal_or_none(left)
+    right_number = _decimal_or_none(right)
+    if left_number is not None and right_number is not None:
+        left_value: Any = left_number
+        right_value: Any = right_number
+    else:
+        left_value = str(left or "")
+        right_value = str(right or "")
+    if operator == ">":
+        return left_value > right_value
+    if operator == ">=":
+        return left_value >= right_value
+    if operator == "<":
+        return left_value < right_value
+    if operator == "<=":
+        return left_value <= right_value
+    return False
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _sortable_explorer_value(value: Any) -> Any:
+    parsed = _parse_datetime(value)
+    if parsed is not None:
+        return parsed
+    decimal = _decimal_or_none(value)
+    if decimal is not None:
+        return decimal
+    return str(value or "")
+
+
+def _valid_explorer_identifier(value: str) -> bool:
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_.]*$", value))
+
+
+def _scenario_step_analysis(
+    *,
+    step: dict[str, Any],
+    record_group: dict[str, Any],
+    config_payload: dict[str, Any],
+) -> dict[str, Any]:
+    key = str(step.get("key") or "unknown")
+    status = str(step.get("status") or "unknown")
+    metrics = step.get("metrics", {}) if isinstance(step.get("metrics"), dict) else {}
+    records = record_group.get("items", []) if isinstance(record_group, dict) else []
+    state = _scenario_state(status)
+    facts = _scenario_facts(key=key, status=status, metrics=metrics, step=step, records=records)
+    suggestions = _scenario_suggestions(
+        key=key,
+        status=status,
+        metrics=metrics,
+        config_payload=config_payload,
+    )
+    return {
+        "key": key,
+        "label": step.get("label") or key,
+        "status": status,
+        "state": state,
+        "message": step.get("message") or "",
+        "metrics": metrics,
+        "inputs": step.get("inputs", {}),
+        "outputs": step.get("outputs", {}),
+        "decisions": step.get("decisions", {}),
+        "recordCount": len(records),
+        "records": records[:25],
+        "facts": facts,
+        "suggestions": suggestions,
+        "nextStage": _scenario_next_stage(key, status, metrics),
+    }
+
+
+def _scenario_state(status: str) -> str:
+    if status in {"blocked", "failed", "rate_limited", "refused", "error"}:
+        return "blocked"
+    if status in {
+        "waiting",
+        "idle",
+        "skipped",
+        "empty",
+        "no_candidates",
+        "no_candidates_passed",
+        "no_scores",
+        "no_votes",
+        "no_consensus",
+        "no_intents",
+        "no_positions",
+        "no_triggers",
+    }:
+        return "idle"
+    return "ok"
+
+
+def _scenario_facts(
+    *,
+    key: str,
+    status: str,
+    metrics: dict[str, Any],
+    step: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> list[str]:
+    facts = [f"Step status is {status}."]
+    if step.get("message"):
+        facts.append(str(step["message"]))
+    for metric_key in (
+        "candidateCount",
+        "acceptedCount",
+        "rejectedCount",
+        "scoredCount",
+        "approvedCount",
+        "orderIntentCount",
+        "submittedCount",
+        "simulatedCount",
+        "openPositionCount",
+        "triggeredCount",
+    ):
+        if metric_key in metrics:
+            facts.append(f"{metric_key}: {metrics[metric_key]}")
+    if records:
+        facts.append(f"{len(records)} linked records are available for inspection.")
+    if key == "data_fetch" and not metrics.get("candidateCount"):
+        facts.append("No provider candidates reached the pipeline.")
+    return facts[:8]
+
+
+def _scenario_suggestions(
+    *,
+    key: str,
+    status: str,
+    metrics: dict[str, Any],
+    config_payload: dict[str, Any],
+) -> list[dict[str, str]]:
+    suggestions: list[dict[str, str]] = []
+    if key == "data_fetch":
+        enabled_venues = [
+            venue
+            for venue, payload in config_payload.get("venues", {}).items()
+            if isinstance(payload, dict) and payload.get("enabled")
+        ]
+        if not metrics.get("candidateCount"):
+            suggestions.extend(
+                [
+                    {
+                        "title": "Check active venue selection",
+                        "body": f"Enabled venues are {', '.join(enabled_venues) or 'none'}. Run data import after changing venue flags.",
+                        "configPath": "venues",
+                    },
+                    {
+                        "title": "Inspect raw provider rows",
+                        "body": "Open the Data tab and query market_data_pulls to see provider messages and candidate payloads.",
+                        "configPath": "market_data_pulls",
+                    },
+                ]
+            )
+    if key == "scanner":
+        accepted = _as_int(metrics.get("acceptedCount"))
+        rejected = _as_int(metrics.get("rejectedCount"))
+        if accepted == 0 and rejected > 0:
+            suggestions.extend(
+                [
+                    {
+                        "title": "Review scanner thresholds",
+                        "body": "Rejected candidates usually mean spread, liquidity, resolution window, or symbol filters blocked the run.",
+                        "configPath": "scanner",
+                    },
+                    {
+                        "title": "Query refusal reasons",
+                        "body": "Use select display_name, refusal_reason, spread, liquidity from scanner_candidates where status = 'rejected'.",
+                        "configPath": "scanner_candidates",
+                    },
+                ]
+            )
+    if key == "brain":
+        if not metrics.get("scoredCount"):
+            suggestions.append(
+                {
+                    "title": "Confirm accepted scanner input",
+                    "body": "Reasoning only scores accepted scanner candidates. If scanner accepted zero, fix scanner input first.",
+                    "configPath": "scanner",
+                }
+            )
+        if metrics.get("failedCount"):
+            suggestions.append(
+                {
+                    "title": "Check model settings",
+                    "body": "Failures in this step usually point to model credentials, budgets, prompt payload validation, or provider timeouts.",
+                    "configPath": "llm",
+                }
+            )
+    if key == "execution":
+        if not metrics.get("approvedCount"):
+            suggestions.append(
+                {
+                    "title": "Review strategy consensus",
+                    "body": "Execution cannot create intents without approved consensus output.",
+                    "configPath": "strategy_consensus",
+                }
+            )
+        if not metrics.get("orderIntentCount"):
+            suggestions.append(
+                {
+                    "title": "Check risk and live gates",
+                    "body": "If consensus approved candidates but no intents appeared, review notional limits, credentials, live mode, and kill switch state.",
+                    "configPath": "risk",
+                }
+            )
+    if key == "exit" and not metrics.get("openPositionCount"):
+        suggestions.append(
+            {
+                "title": "No open positions to close",
+                "body": "This is expected when there are no persisted open positions for the configured venue and provider.",
+                "configPath": "positions",
+            }
+        )
+    if not suggestions:
+        suggestions.append(
+            {
+                "title": "Use the linked records",
+                "body": "Open the record payloads for this step and compare inputs, outputs, and decisions before changing config.",
+                "configPath": key,
+            }
+        )
+    return suggestions[:4]
+
+
+def _scenario_next_stage(key: str, status: str, metrics: dict[str, Any]) -> dict[str, str]:
+    if _scenario_state(status) == "ok":
+        return {"state": "ok", "label": "Stage passed", "body": "The next stage had enough input to continue."}
+    if key == "scanner" and _as_int(metrics.get("acceptedCount")) == 0:
+        return {
+            "state": "blocked",
+            "label": "Needs accepted candidates",
+            "body": "At least one scanner candidate must pass before reasoning can score it.",
+        }
+    if key == "brain" and _as_int(metrics.get("scoredCount")) == 0:
+        return {
+            "state": "blocked",
+            "label": "Needs scored output",
+            "body": "Strategy consensus needs model output with a usable signal.",
+        }
+    if key == "execution" and _as_int(metrics.get("orderIntentCount")) == 0:
+        return {
+            "state": "blocked",
+            "label": "Needs order intent",
+            "body": "Live submission or simulation needs an approved intent after risk gates.",
+        }
+    return {
+        "state": "idle",
+        "label": "Review before retry",
+        "body": "Use data, records, and config tests to decide what to change before the next dry run.",
+    }
+
+
+def _scenario_override_result(
+    override: dict[str, Any],
+    selected_step: dict[str, Any] | None,
+) -> dict[str, str]:
+    path = str(override.get("path") or "").strip()
+    value = str(override.get("value") or "").strip()
+    step_key = selected_step.get("key") if selected_step else "pipeline"
+    if not path:
+        return {
+            "path": "",
+            "value": value,
+            "impact": "No config path was provided.",
+            "recommendation": "Enter a path such as scanner.polymarket.max_spread.",
+        }
+    if path.startswith("scanner"):
+        impact = "This would be tested at the scanner step before any model call."
+    elif path.startswith("reasoning") or path.startswith("llm"):
+        impact = "This would be tested after scanner candidates are accepted."
+    elif path.startswith("strategy_consensus"):
+        impact = "This would affect whether scored candidates become approved consensus output."
+    elif path.startswith("risk") or path.startswith("execution") or path == "live_enabled":
+        impact = "This would affect order intent sizing, simulation, or live submission gates."
+    else:
+        impact = f"This may affect the {step_key} step, but it is not one of the primary tick gates."
+    return {
+        "path": path,
+        "value": value,
+        "impact": impact,
+        "recommendation": "Run a scanner-only or full dry run after saving a config change to verify behavior.",
+    }
+
+
+def _scenario_prompt_answer(
+    *,
+    prompt: str,
+    run: dict[str, Any] | None,
+    step: dict[str, Any] | None,
+    overrides: list[dict[str, str]],
+) -> dict[str, Any]:
+    if run is None:
+        return {
+            "title": "No tick to analyze",
+            "body": "Run a manual data import or full dry run first. The scenario helper needs recorded steps and records.",
+            "bullets": [],
+        }
+    if step is None:
+        return {
+            "title": "No step selected",
+            "body": "Select a tick step, then ask what blocked it or which config setting to test.",
+            "bullets": [],
+        }
+    suggestions = [suggestion["body"] for suggestion in step.get("suggestions", [])]
+    facts = step.get("facts", [])
+    prompt_text = prompt.strip()
+    body = (
+        f"For {step['label']}, start with the recorded status: {step['status']}."
+        if not prompt_text
+        else f"For your question, I would start with {step['label']} because its status is {step['status']}."
+    )
+    bullets = [*facts[:3], *suggestions[:3]]
+    if overrides:
+        bullets.append(overrides[0]["impact"])
+    return {
+        "title": "Scenario help",
+        "body": body,
+        "bullets": bullets[:6],
+    }
 
 
 def _row_datetime_sort_key(row: dict[str, Any]) -> datetime:

@@ -9,15 +9,19 @@ import {
   BarChart3,
   Bot,
   CircleHelp,
+  Database,
   GitBranch,
   ServerCog,
   SlidersHorizontal,
+  Workflow,
 } from "lucide-react";
 import { ThemePreferenceControl } from "@/components/dashboard/theme-preference-control";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Status", icon: Activity },
   { href: "/dashboard/operations", label: "Operations", icon: GitBranch },
+  { href: "/dashboard/data", label: "Data", icon: Database },
+  { href: "/dashboard/scenario", label: "Scenario", icon: Workflow },
   { href: "/dashboard/config", label: "Config", icon: SlidersHorizontal },
   { href: "/dashboard/models", label: "Models", icon: Bot },
   { href: "/dashboard/comparison", label: "Performance", icon: BarChart3 },

@@ -10,7 +10,7 @@ import {
   RotateCcw,
   Settings2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -27,6 +27,7 @@ import type { OperationsSummaryView } from "@/components/dashboard/operations-vi
 import { FALLBACK_TICK_SUMMARY, type TickSummaryView } from "@/components/dashboard/tick-summary-panel";
 import { dashboardApi, type ApiClientResult } from "@/lib/api";
 import { CONFIG_PATH_DETAILS, type AllowedConfigPath } from "@/lib/config-paths";
+import { useDashboardRealtime, type TickScheduleView } from "@/lib/use-dashboard-realtime";
 
 // REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-NOT-006, REQ-OBS-005
 
@@ -85,6 +86,22 @@ type RecommendationPlan = {
 };
 
 const DAILY_WINDOW_MINUTES = 24 * 60;
+const FALLBACK_TICK_SCHEDULE: TickScheduleView = {
+  environment: "local",
+  generatedAt: new Date(0).toISOString(),
+  intervalSeconds: 60,
+  lastTickAt: null,
+  lastTickStatus: null,
+  lastTickRunId: null,
+  lastTickSource: "none",
+  lastHeartbeatAt: null,
+  heartbeatStatus: null,
+  ageSeconds: null,
+  nextTickAt: new Date(Date.now() + 60_000).toISOString(),
+  secondsUntilNextTick: 60,
+  due: false,
+  source: "waiting for scheduler",
+};
 const RECOMMENDATION_DEFAULTS: Partial<Record<AllowedConfigPath, ConfigValue>> = {
   "scanner.polymarket.max_hours_to_resolution": "168",
   "scanner.polymarket.max_spread": "0.05",
@@ -99,6 +116,7 @@ export function ConsumerDashboard() {
   const [operationsState, setOperationsState] = useState<PanelState<OperationsSummaryView>>({ status: "loading" });
   const [economicsState, setEconomicsState] = useState<PanelState<EconomicsSummaryView>>({ status: "loading" });
   const [marketDataState, setMarketDataState] = useState<PanelState<MarketDataPullView>>({ status: "loading" });
+  const [tickScheduleState, setTickScheduleState] = useState<PanelState<TickScheduleView>>({ status: "loading" });
   const [notificationsState, setNotificationsState] = useState<PanelState<NotificationSettingsView>>({ status: "loading" });
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [configVersion, setConfigVersion] = useState("");
@@ -125,6 +143,7 @@ export function ConsumerDashboard() {
     void loadPanel("operations/summary", setOperationsState, () => active);
     void loadPanel("economics/summary", setEconomicsState, () => active);
     void loadPanel("market-data/latest", setMarketDataState, () => active);
+    void loadPanel("operations/tick-schedule", setTickScheduleState, () => active);
     void loadPanel("notifications/settings", setNotificationsState, () => active);
 
     void dashboardApi<TickSummaryView>(`operations/tick-summary?window_minutes=${DAILY_WINDOW_MINUTES}`).then((result) => {
@@ -144,9 +163,26 @@ export function ConsumerDashboard() {
     };
   }, []);
 
+  const handleRealtimeSnapshot = useCallback((snapshot: {
+    operations: OperationsSummaryView;
+    marketData: MarketDataPullView;
+    tickSchedule: TickScheduleView;
+  }) => {
+    setOperationsState({ status: "ready", data: snapshot.operations });
+    setMarketDataState({ status: "ready", data: snapshot.marketData });
+    setTickScheduleState({ status: "ready", data: snapshot.tickSchedule });
+    if (snapshot.operations.tickSummary) {
+      setCurrentDailySummary(snapshot.operations.tickSummary);
+      setSummaryState({ status: "done" });
+    }
+  }, []);
+
+  const realtime = useDashboardRealtime({ onSnapshot: handleRealtimeSnapshot });
+
   const operations = operationsState.status === "ready" ? operationsState.data : null;
   const economics = economicsState.status === "ready" ? economicsState.data : null;
   const marketData = marketDataState.status === "ready" ? marketDataState.data : null;
+  const tickSchedule = tickScheduleState.status === "ready" ? tickScheduleState.data : null;
   const notifications = notificationsState.status === "ready" ? notificationsState.data : null;
   const pnlData = useMemo(() => (economics ? pnlChartData(economics) : []), [economics]);
   const timelineSteps = useMemo(
@@ -315,6 +351,30 @@ export function ConsumerDashboard() {
           {lastTick.tone === "blocked" ? <CircleAlert aria-hidden="true" size={20} /> : <CheckCircle2 aria-hidden="true" size={20} />}
           <span>{lastTick.label}</span>
         </div>
+      </div>
+
+      <div className="consumer-tick-strip" aria-label="Tick timing">
+        <TickTimingMetric
+          label="Last tick"
+          value={formatDateTime(tickSchedule?.lastTickAt)}
+          detail={tickSchedule?.lastTickRunId ? `Run ${tickSchedule.lastTickRunId}` : tickSourceLabel(tickSchedule)}
+        />
+        <TickTimingMetric
+          label="Last status"
+          value={tickSchedule?.lastTickStatus ?? "not recorded"}
+          detail={tickSchedule?.lastTickSource === "worker_heartbeat" ? "Using worker heartbeat until a tick is recorded." : "Latest recorded tick result."}
+        />
+        <TickTimingMetric
+          label="Next tick"
+          value={formatDateTime(tickSchedule?.nextTickAt)}
+          detail={`Every ${tickSchedule?.intervalSeconds ?? FALLBACK_TICK_SCHEDULE.intervalSeconds}s`}
+        />
+        <TickTimingMetric
+          label="Countdown"
+          value={formatCountdown(tickSchedule?.secondsUntilNextTick)}
+          detail={tickSchedule?.due ? "Due now" : realtime.message}
+          tone={realtime.status === "connected" ? "ok" : realtime.status === "offline" ? "blocked" : "waiting"}
+        />
       </div>
 
       <div className="consumer-grid">
@@ -585,6 +645,26 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="consumer-metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function TickTimingMetric({
+  label,
+  value,
+  detail,
+  tone = "idle",
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: "ok" | "waiting" | "blocked" | "idle";
+}) {
+  return (
+    <div className={`tick-timing-metric ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
@@ -977,7 +1057,7 @@ function shortDate(value: string | null | undefined): string {
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) {
-    return "not generated";
+    return "not recorded";
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -989,6 +1069,31 @@ function formatDateTime(value: string | null | undefined): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatCountdown(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) {
+    return "unknown";
+  }
+  if (seconds <= 0) {
+    return "due now";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes === 0) {
+    return `${remainder}s`;
+  }
+  return `${minutes}m ${remainder}s`;
+}
+
+function tickSourceLabel(schedule: TickScheduleView | null): string {
+  if (!schedule || schedule.lastTickSource === "none") {
+    return "Waiting for the first tick.";
+  }
+  if (schedule.lastTickSource === "worker_heartbeat") {
+    return "No tick recorded yet. Showing heartbeat time.";
+  }
+  return schedule.source ?? "Pipeline run recorded.";
 }
 
 function nextConfigVersion(currentVersion: string): string {
