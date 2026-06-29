@@ -2,6 +2,8 @@
 
 // REQ: REQ-UI-008, REQ-OBS-005
 
+import { RefreshCw } from "lucide-react";
+
 export type TickSummaryView = {
   id?: string | null;
   environment?: string | null;
@@ -50,9 +52,13 @@ export const FALLBACK_TICK_SUMMARY: TickSummaryView = {
 export function TickSummaryPanel({
   summary = FALLBACK_TICK_SUMMARY,
   timeZone,
+  onRefresh,
+  refreshing = false,
 }: {
   summary?: TickSummaryView;
   timeZone: string;
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }) {
   const usage = summary.usage ?? {};
   return (
@@ -62,7 +68,20 @@ export function TickSummaryPanel({
           <p className="section-label">Tick summary</p>
           <h2 id="tick-summary-title">Last {summary.windowMinutes} minutes</h2>
         </div>
-        <span className={`status ${statusClass(summary.status)}`}>{summary.status}</span>
+        <div className="panel-heading-actions">
+          {onRefresh ? (
+            <button
+              className="icon-button"
+              disabled={refreshing}
+              onClick={onRefresh}
+              title="Run tick summary now"
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={17} />
+            </button>
+          ) : null}
+          <span className={`status ${statusClass(summary.status)}`}>{summary.status}</span>
+        </div>
       </div>
       <div className="metric-grid">
         <Metric label="Runs" value={String(summary.runCount ?? 0)} />

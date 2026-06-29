@@ -125,6 +125,7 @@ export function ConsumerDashboard() {
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [summaryState, setSummaryState] = useState<SummaryState>({ status: "loading" });
   const [currentDailySummary, setCurrentDailySummary] = useState<TickSummaryView>(FALLBACK_TICK_SUMMARY);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     let active = true;
@@ -163,6 +164,11 @@ export function ConsumerDashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const handleRealtimeSnapshot = useCallback((snapshot: {
     operations: OperationsSummaryView;
     marketData: MarketDataPullView;
@@ -171,10 +177,6 @@ export function ConsumerDashboard() {
     setOperationsState({ status: "ready", data: snapshot.operations });
     setMarketDataState({ status: "ready", data: snapshot.marketData });
     setTickScheduleState({ status: "ready", data: snapshot.tickSchedule });
-    if (snapshot.operations.tickSummary) {
-      setCurrentDailySummary(snapshot.operations.tickSummary);
-      setSummaryState({ status: "done" });
-    }
   }, []);
 
   const realtime = useDashboardRealtime({ onSnapshot: handleRealtimeSnapshot });
@@ -184,6 +186,8 @@ export function ConsumerDashboard() {
   const marketData = marketDataState.status === "ready" ? marketDataState.data : null;
   const tickSchedule = tickScheduleState.status === "ready" ? tickScheduleState.data : null;
   const notifications = notificationsState.status === "ready" ? notificationsState.data : null;
+  const countdownSeconds = useMemo(() => secondsUntilTick(tickSchedule, nowMs), [tickSchedule, nowMs]);
+  const countdownDue = countdownSeconds !== null && countdownSeconds <= 0;
   const pnlData = useMemo(() => (economics ? pnlChartData(economics) : []), [economics]);
   const timelineSteps = useMemo(
     () => tickTimelineSteps(operations, marketData),
@@ -371,8 +375,8 @@ export function ConsumerDashboard() {
         />
         <TickTimingMetric
           label="Countdown"
-          value={formatCountdown(tickSchedule?.secondsUntilNextTick)}
-          detail={tickSchedule?.due ? "Due now" : realtime.message}
+          value={formatCountdown(countdownSeconds)}
+          detail={countdownDue || tickSchedule?.due ? "Due now" : realtime.message}
           tone={realtime.status === "connected" ? "ok" : realtime.status === "offline" ? "blocked" : "waiting"}
         />
       </div>
@@ -514,7 +518,7 @@ export function ConsumerDashboard() {
           ) : null}
         </section>
 
-        <section className="consumer-panel" aria-labelledby="notification-title">
+        <section className="consumer-panel notification-panel" aria-labelledby="notification-title">
           <div className="consumer-panel-heading">
             <div>
               <p className="section-label">Notifications</p>
@@ -1084,6 +1088,22 @@ function formatCountdown(seconds: number | null | undefined): string {
     return `${remainder}s`;
   }
   return `${minutes}m ${remainder}s`;
+}
+
+function secondsUntilTick(schedule: TickScheduleView | null, nowMs: number): number | null {
+  if (!schedule) {
+    return null;
+  }
+
+  const nextTickMs = schedule.nextTickAt ? new Date(schedule.nextTickAt).getTime() : Number.NaN;
+  if (Number.isFinite(nextTickMs)) {
+    return Math.max(0, Math.ceil((nextTickMs - nowMs) / 1000));
+  }
+
+  if (typeof schedule.secondsUntilNextTick === "number") {
+    return Math.max(0, schedule.secondsUntilNextTick);
+  }
+  return null;
 }
 
 function tickSourceLabel(schedule: TickScheduleView | null): string {

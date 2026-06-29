@@ -228,12 +228,14 @@ a {
 }
 
 .nav {
+  align-items: center;
+  flex: 1;
   display: flex;
   flex-wrap: nowrap;
   gap: 8px;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-width: 0;
-  overflow-x: auto;
+  overflow: visible;
   padding: 2px;
   scrollbar-width: none;
 }
@@ -243,6 +245,7 @@ a {
 }
 
 .nav a,
+.nav-more summary,
 .button {
   align-items: center;
   background: var(--surface-raised);
@@ -260,24 +263,28 @@ a {
   white-space: nowrap;
 }
 
-.nav a svg {
+.nav a svg,
+.nav-more summary svg {
   color: currentColor;
   flex: 0 0 auto;
 }
 
 .nav a:hover,
+.nav-more summary:hover,
 .button:hover {
   border-color: var(--border-strong);
   transform: translateY(-1px);
 }
 
-.nav a[data-active="true"] {
+.nav a[data-active="true"],
+.nav-more summary[data-active="true"] {
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   color: var(--accent-strong);
 }
 
 .nav a:focus-visible,
+.nav-more summary:focus-visible,
 .button:focus-visible,
 .theme-option:focus-visible,
 input:focus-visible,
@@ -285,6 +292,40 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.nav-more {
+  position: relative;
+}
+
+.nav-more summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.nav-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav-more-menu {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-soft);
+  display: grid;
+  gap: 6px;
+  min-width: 190px;
+  padding: 8px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+}
+
+.nav-more-menu a {
+  justify-content: flex-start;
+  min-height: 36px;
+  width: 100%;
 }
 
 .theme-control {
@@ -619,6 +660,13 @@ textarea:focus-visible {
   display: flex;
   gap: 18px;
   justify-content: space-between;
+}
+
+.panel-heading-actions {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
 }
 
 .section-label {
@@ -2098,10 +2146,11 @@ th {
   .topbar-actions {
     align-items: flex-start;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .nav {
+    flex-wrap: wrap;
     justify-content: flex-start;
     max-width: 100%;
     width: 100%;
@@ -2109,6 +2158,11 @@ th {
 
   .nav a {
     min-width: max-content;
+  }
+
+  .nav-more-menu {
+    left: 0;
+    right: auto;
   }
 
   .content-grid {
@@ -2300,15 +2354,15 @@ th {
 }
 
 .tick-timing-metric.ok {
-  border-color: var(--status-ok-border);
+  border-color: var(--mode-ok-border);
 }
 
 .tick-timing-metric.waiting {
-  border-color: var(--status-waiting-border);
+  border-color: var(--mode-waiting-border);
 }
 
 .tick-timing-metric.blocked {
-  border-color: var(--status-blocked-border);
+  border-color: var(--mode-blocked-border);
 }
 
 .tick-timing-metric span {
@@ -2330,6 +2384,7 @@ th {
 }
 
 .consumer-grid {
+  align-items: start;
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2340,6 +2395,8 @@ th {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow-subtle);
+  align-content: start;
+  align-self: start;
   display: grid;
   gap: 16px;
   min-width: 0;
@@ -2352,6 +2409,10 @@ th {
 
 .consumer-panel.span-3 {
   grid-column: 1 / -1;
+}
+
+.notification-panel {
+  min-height: 0;
 }
 
 .consumer-panel-heading,
@@ -2647,12 +2708,35 @@ th {
   text-transform: uppercase;
 }
 
+.data-explorer-layout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(260px, 0.75fr) minmax(360px, 1.15fr);
+}
+
 .data-workbench-layout,
 .scenario-layout,
 .scenario-help-grid {
+  align-items: start;
   display: grid;
   gap: 16px;
   grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.55fr);
+}
+
+.data-overview-panel,
+.data-query-panel {
+  align-content: start;
+  align-self: start;
+}
+
+.data-results-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.data-results-panel > * {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .data-dataset-panel,
@@ -2755,6 +2839,17 @@ th {
   padding: 12px;
 }
 
+.result-summary {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.result-summary span,
+.result-summary small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .result-summary small {
   color: var(--muted);
   margin-left: auto;
@@ -2830,6 +2925,7 @@ th {
     grid-template-columns: 1fr 1fr;
   }
 
+  .data-explorer-layout,
   .data-workbench-layout,
   .scenario-layout,
   .scenario-help-grid {
