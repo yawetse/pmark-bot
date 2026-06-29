@@ -42,6 +42,8 @@ import { dashboardApi } from "@/lib/api";
 
 // REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-UI-010, REQ-UI-011, REQ-OBS-005
 
+const DAILY_TICK_SUMMARY_WINDOW_MINUTES = 24 * 60;
+
 type ModelProviderSummary = {
   provider: string;
   positions?: unknown[];
@@ -105,6 +107,7 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
   const [tickSummary, setTickSummary] = useState<TickSummaryView>(
     summary.operations.tickSummary ?? FALLBACK_TICK_SUMMARY,
   );
+  const [tickSummaryRefreshing, setTickSummaryRefreshing] = useState(false);
   const displayTimeZone = useResolvedTimeZone(preferences.timeZone);
   const statusItems = summary.status.items;
   const selectedVenue = settings.default_selected_venue ?? "unknown";
@@ -143,15 +146,30 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
     applyDashboardTheme(preferences.theme);
   }, [preferences.theme]);
 
+  useEffect(() => {
+    void refreshTickSummary(false);
+  }, []);
+
   function onManualRunAccepted(result: ManualRunResult) {
     setMarketData(result.marketDataPull);
-    void refreshTickSummary();
   }
 
-  async function refreshTickSummary() {
-    const result = await dashboardApi<OperationsSummaryView>("operations/summary");
-    if (result.ok) {
-      setTickSummary(result.data.tickSummary ?? FALLBACK_TICK_SUMMARY);
+  async function refreshTickSummary(forceRefresh: boolean) {
+    setTickSummaryRefreshing(true);
+    try {
+      const result = forceRefresh
+        ? await dashboardApi<TickSummaryView>("operations/tick-summary", {
+            method: "POST",
+            body: JSON.stringify({ window_minutes: DAILY_TICK_SUMMARY_WINDOW_MINUTES }),
+          })
+        : await dashboardApi<TickSummaryView>(
+            `operations/tick-summary?window_minutes=${DAILY_TICK_SUMMARY_WINDOW_MINUTES}`,
+          );
+      if (result.ok) {
+        setTickSummary(result.data);
+      }
+    } finally {
+      setTickSummaryRefreshing(false);
     }
   }
 
@@ -241,6 +259,8 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
         </Panel>
 
         <TickSummaryPanel
+          onRefresh={() => void refreshTickSummary(true)}
+          refreshing={tickSummaryRefreshing}
           summary={tickSummary}
           timeZone={displayTimeZone}
         />

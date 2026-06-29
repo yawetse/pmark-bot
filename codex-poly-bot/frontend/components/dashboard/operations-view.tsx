@@ -35,6 +35,7 @@ import { useDashboardRealtime } from "@/lib/use-dashboard-realtime";
 
 const ORDER_STATES = ["refused", "submitted", "filled", "canceled", "failed", "unknown"] as const;
 const PIPELINE_STEP_LABELS = ["Data Fetch", "Scanner", "Reasoning / Brain", "Execution", "Exit"] as const;
+const DAILY_TICK_SUMMARY_WINDOW_MINUTES = 24 * 60;
 
 type OrderState = (typeof ORDER_STATES)[number];
 
@@ -484,6 +485,7 @@ export function OperationsView({
   const [latestMarketData, setLatestMarketData] = useState(marketData);
   const [pipelineRuns, setPipelineRuns] = useState(summary.pipelineRuns ?? []);
   const [tickSummary, setTickSummary] = useState(summary.tickSummary ?? FALLBACK_TICK_SUMMARY);
+  const [tickSummaryRefreshing, setTickSummaryRefreshing] = useState(false);
   const [scanner, setScanner] = useState(summary.scanner ?? FALLBACK_SCANNER);
   const [reasoning, setReasoning] = useState(summary.reasoning ?? FALLBACK_REASONING);
   const [strategyConsensus, setStrategyConsensus] = useState(
@@ -503,7 +505,6 @@ export function OperationsView({
     setCurrentSummary(snapshot.operations);
     setLatestMarketData(snapshot.marketData);
     setPipelineRuns(snapshot.operations.pipelineRuns ?? []);
-    setTickSummary(snapshot.operations.tickSummary ?? FALLBACK_TICK_SUMMARY);
     setScanner(snapshot.operations.scanner ?? FALLBACK_SCANNER);
     setReasoning(snapshot.operations.reasoning ?? FALLBACK_REASONING);
     setStrategyConsensus(snapshot.operations.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS);
@@ -511,6 +512,10 @@ export function OperationsView({
     setExit(snapshot.operations.exit ?? FALLBACK_EXIT);
   }, []);
   const realtime = useDashboardRealtime({ onSnapshot: onRealtimeSnapshot });
+
+  useEffect(() => {
+    void refreshTickSummary(false);
+  }, []);
 
   return (
     <div className="page-stack">
@@ -584,6 +589,8 @@ export function OperationsView({
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
 
       <TickSummaryPanel
+        onRefresh={() => void refreshTickSummary(true)}
+        refreshing={tickSummaryRefreshing}
         summary={tickSummary}
         timeZone={displayTimeZone}
       />
@@ -711,13 +718,24 @@ export function OperationsView({
         intents: exitRun.intents ?? [],
       });
     }
-    void refreshTickSummary();
   }
 
-  async function refreshTickSummary() {
-    const result = await dashboardApi<OperationsSummaryView>("operations/summary");
-    if (result.ok) {
-      setTickSummary(result.data.tickSummary ?? FALLBACK_TICK_SUMMARY);
+  async function refreshTickSummary(forceRefresh: boolean) {
+    setTickSummaryRefreshing(true);
+    try {
+      const result = forceRefresh
+        ? await dashboardApi<TickSummaryView>("operations/tick-summary", {
+            method: "POST",
+            body: JSON.stringify({ window_minutes: DAILY_TICK_SUMMARY_WINDOW_MINUTES }),
+          })
+        : await dashboardApi<TickSummaryView>(
+            `operations/tick-summary?window_minutes=${DAILY_TICK_SUMMARY_WINDOW_MINUTES}`,
+          );
+      if (result.ok) {
+        setTickSummary(result.data);
+      }
+    } finally {
+      setTickSummaryRefreshing(false);
     }
   }
 }

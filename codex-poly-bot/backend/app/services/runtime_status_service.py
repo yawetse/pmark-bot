@@ -1529,7 +1529,6 @@ class RuntimeStatusService:
             "manualReviewState": "clear",
             "orderEvents": order_items,
             "pipelineRuns": self.pipeline_runs(environment),
-            "tickSummary": self.tick_summary(environment),
             "scanner": self.scanner_summary(environment),
             "reasoning": self.reasoning_summary(environment),
             "strategyConsensus": self.strategy_consensus_summary(environment),

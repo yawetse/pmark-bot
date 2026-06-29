@@ -155,20 +155,20 @@ export function DataExplorerView() {
 
   return (
     <div className="page-stack data-explorer">
-      <section className="operator-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="section-label">Data</p>
-            <h1>Data Explorer</h1>
+      <div className="data-explorer-layout">
+        <section className="operator-panel data-overview-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="section-label">Data</p>
+              <h1>Data Explorer</h1>
+            </div>
+            <span className="status ok">{state.metadata.environment}</span>
           </div>
-          <span className="status ok">{state.metadata.environment}</span>
-        </div>
-        <p className="panel-note">
-          Query dashboard datasets with read-only SELECT statements. The workbench only supports known data tables.
-        </p>
-      </section>
+          <p className="panel-note">
+            Query dashboard datasets with read-only SELECT statements. The workbench only supports known data tables.
+          </p>
+        </section>
 
-      <div className="data-workbench-layout">
         <Panel eyebrow="Datasets" title="Available tables" className="data-dataset-panel">
           <div className="dataset-list">
             {state.metadata.datasets.map((dataset) => (
@@ -218,7 +218,7 @@ export function DataExplorerView() {
         title={state.result.dataset.label}
         status={`${state.result.rowCount} rows`}
         statusTone="ok"
-        className="span-2"
+        className="data-results-panel"
       >
         <div className="result-summary">
           <Rows3 aria-hidden="true" size={18} />
