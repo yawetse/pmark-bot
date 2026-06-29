@@ -604,15 +604,28 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "/api/operations/summary",
         headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
     )
-    tick_summary_rows = client.app.state.services.registry.state.rows("shared.tick_summaries")
     assert operations.status_code == 200
-    assert operations.json()["tickSummary"]["runCount"] == 1
-    assert operations.json()["tickSummary"]["latestRunId"] == payload["runId"]
-    assert operations.json()["tickSummary"]["status"] == "unavailable"
-    assert operations.json()["tickSummary"]["warnings"] == [
+    assert "tickSummary" not in operations.json()
+    assert operations_again.status_code == 200
+    assert "tickSummary" not in operations_again.json()
+    tick_summary = client.get(
+        "/api/operations/tick-summary?window_minutes=1440",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    tick_summary_again = client.get(
+        "/api/operations/tick-summary?window_minutes=1440",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    tick_summary_rows = client.app.state.services.registry.state.rows("shared.tick_summaries")
+    assert tick_summary.status_code == 200
+    tick_summary_payload = tick_summary.json()
+    assert tick_summary_payload["runCount"] == 1
+    assert tick_summary_payload["latestRunId"] == payload["runId"]
+    assert tick_summary_payload["status"] == "unavailable"
+    assert tick_summary_payload["warnings"] == [
         "OpenAI tick summary is not configured; set OPENAI_API_KEY to enable it."
     ]
-    assert operations_again.status_code == 200
+    assert tick_summary_again.status_code == 200
     assert len(tick_summary_rows) == 1
 
 
