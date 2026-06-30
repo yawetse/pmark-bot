@@ -1401,7 +1401,7 @@ class RuntimeStatusService:
 
         parsed = _parse_explorer_query(query)
         dataset_id = parsed["dataset"]
-        rows = [_explorer_row_payload(row) for row in self._data_explorer_rows(environment, dataset_id)]
+        rows = self._explorer_rows_for_query(environment, parsed)
         filtered_rows = [
             row
             for row in rows
@@ -1421,14 +1421,25 @@ class RuntimeStatusService:
         )
         projected_rows = [_project_explorer_row(row, columns) for row in selected_rows]
         dataset = DATA_EXPLORER_DATASETS[dataset_id]
+        joined_dataset_ids = [join["dataset"] for join in parsed.get("joins", [])]
+        dataset_label = (
+            "Joined datasets"
+            if joined_dataset_ids
+            else str(dataset["label"])
+        )
+        dataset_table = (
+            " + ".join([str(dataset["table"])] + [str(DATA_EXPLORER_DATASETS[item]["table"]) for item in joined_dataset_ids])
+            if joined_dataset_ids
+            else str(dataset["table"])
+        )
         return {
             "environment": environment.value,
             "generatedAt": datetime.now(UTC).isoformat(),
             "query": parsed["normalizedQuery"],
             "dataset": {
                 "id": dataset_id,
-                "label": dataset["label"],
-                "table": dataset["table"],
+                "label": dataset_label,
+                "table": dataset_table,
             },
             "columns": columns,
             "rows": projected_rows,
@@ -1436,6 +1447,19 @@ class RuntimeStatusService:
             "totalMatched": len(filtered_rows),
             "limit": limit,
             "message": f"Returned {len(projected_rows)} of {len(filtered_rows)} matching rows.",
+        }
+
+    def generate_data_query(self, *, environment: Environment, prompt: str) -> dict[str, Any]:
+        """Generate a read-only dashboard query from a natural-language prompt."""
+
+        generated = _generate_explorer_query(prompt)
+        return {
+            "environment": environment.value,
+            "generatedAt": datetime.now(UTC).isoformat(),
+            "model": "local-data-query-helper",
+            "modelMode": "local_rules",
+            "prompt": prompt,
+            **generated,
         }
 
     def scenario_analysis(
@@ -1476,8 +1500,18 @@ class RuntimeStatusService:
             or next((step for step in step_analyses if step["state"] in {"blocked", "idle"}), None)
             or (step_analyses[0] if step_analyses else None)
         )
+        recommended_config_set = _scenario_config_plan(
+            run=selected_run,
+            steps=step_analyses,
+            selected_step=selected_step,
+            config_payload=config_payload,
+        )
         override_results = [
-            _scenario_override_result(override, selected_step)
+            _scenario_override_result(
+                override,
+                selected_step,
+                config_payload=config_payload,
+            )
             for override in (config_overrides or [])
             if isinstance(override, dict)
         ]
@@ -1485,7 +1519,9 @@ class RuntimeStatusService:
             prompt=prompt or "",
             run=selected_run,
             step=selected_step,
+            steps=step_analyses,
             overrides=override_results,
+            recommended_config_set=recommended_config_set,
         )
         return {
             "environment": environment.value,
@@ -1498,6 +1534,7 @@ class RuntimeStatusService:
             "steps": step_analyses,
             "records": record_groups,
             "configTests": override_results,
+            "recommendedConfigSet": recommended_config_set,
             "answer": answer,
             "prompt": prompt or "",
             "message": (
@@ -3254,6 +3291,33 @@ class RuntimeStatusService:
         rows.sort(key=_row_datetime_sort_key, reverse=True)
         return rows
 
+    def _explorer_rows_for_query(self, environment: Environment, parsed: dict[str, Any]) -> list[dict[str, Any]]:
+        dataset_id = str(parsed["dataset"])
+        base_alias = str(parsed.get("alias") or dataset_id)
+        rows = [
+            _explorer_row_payload(row)
+            for row in self._data_explorer_rows(environment, dataset_id)
+        ]
+        joins = parsed.get("joins", [])
+        if not joins:
+            return rows
+
+        joined_rows = [{base_alias: row} for row in rows]
+        for join in joins:
+            join_alias = str(join["alias"])
+            join_rows = [
+                _explorer_row_payload(row)
+                for row in self._data_explorer_rows(environment, str(join["dataset"]))
+            ]
+            next_rows: list[dict[str, Any]] = []
+            for current_row in joined_rows:
+                for join_row in join_rows:
+                    candidate = {**current_row, join_alias: join_row}
+                    if _nested_explorer_value(candidate, join["left"]) == _nested_explorer_value(candidate, join["right"]):
+                        next_rows.append(candidate)
+            joined_rows = next_rows
+        return joined_rows
+
     def _market_data_venues(self, config_payload: dict[str, Any]) -> list[str]:
         selected_venue = str(
             config_payload.get("default_selected_venue")
@@ -4045,6 +4109,15 @@ def _explorer_row_payload(row: dict[str, Any]) -> dict[str, Any]:
 def _explorer_columns(rows: list[dict[str, Any]], preferred: tuple[str, ...]) -> list[str]:
     columns = list(preferred)
     for row in rows:
+        if _is_joined_explorer_row(row):
+            for alias, payload in row.items():
+                if not isinstance(payload, dict):
+                    continue
+                for key in payload:
+                    column = f"{alias}.{key}"
+                    if column not in columns:
+                        columns.append(column)
+            continue
         for key in row:
             if key not in columns:
                 columns.append(key)
@@ -4055,13 +4128,83 @@ def _project_explorer_row(row: dict[str, Any], columns: list[str]) -> dict[str, 
     return {column: _nested_explorer_value(row, column) for column in columns}
 
 
+def _generate_explorer_query(prompt: str) -> dict[str, Any]:
+    prompt_text = " ".join((prompt or "").strip().split())
+    lower_prompt = prompt_text.lower()
+    warnings = [
+        "Generated SQL is limited to known dashboard datasets and read-only SELECT statements."
+    ]
+    if not prompt_text:
+        query = "select * from market_data_pulls limit 25"
+        explanation = "I generated the default market-data query because the prompt was empty."
+        datasets = ["market_data_pulls"]
+    elif "reasoning" in lower_prompt and "scanner" in lower_prompt:
+        query = (
+            "select sc.display_name, sc.status, sc.refusal_reason, ro.model_provider, "
+            "ro.status, ro.confidence, ro.estimated_probability "
+            "from scanner_candidates sc join reasoning_outputs ro on sc.id = ro.scanner_candidate_id "
+            "order by ro.created_at desc limit 50"
+        )
+        explanation = "This joins scanner candidates to reasoning outputs so you can see what reached model scoring."
+        datasets = ["scanner_candidates", "reasoning_outputs"]
+    elif any(term in lower_prompt for term in ("scanner", "rejected", "refusal", "pass scanner", "passed scanner")):
+        query = (
+            "select display_name, venue, status, refusal_reason, spread, liquidity, hours_to_resolution "
+            "from scanner_candidates order by created_at desc limit 50"
+        )
+        explanation = "This shows the scanner candidates and refusal reasons that decide whether a candidate moves forward."
+        datasets = ["scanner_candidates"]
+    elif any(term in lower_prompt for term in ("order", "trade", "execution", "intent")):
+        query = (
+            "select p.id, p.status, o.venue, o.instrument_id, o.side, o.status, o.notional_usd, o.refusal_reason "
+            "from pipeline_runs p join order_intents o on p.id = o.pipeline_run_id "
+            "order by o.created_at desc limit 50"
+        )
+        explanation = "This joins pipeline runs to order intents so you can inspect execution decisions."
+        datasets = ["pipeline_runs", "order_intents"]
+    elif any(term in lower_prompt for term in ("market data", "data pull", "provider", "venue")):
+        query = (
+            "select p.id, p.status, m.venue, m.status, m.candidate_count, m.message "
+            "from pipeline_runs p join market_data_pulls m on p.id = m.run_id "
+            "order by m.created_at desc limit 50"
+        )
+        explanation = "This joins market data pulls to their pipeline runs so provider data can be tied back to ticks."
+        datasets = ["pipeline_runs", "market_data_pulls"]
+    elif any(term in lower_prompt for term in ("step", "stage", "tick", "run")):
+        query = (
+            "select p.id, p.trigger, p.status, s.step_key, s.status, s.message "
+            "from pipeline_runs p join pipeline_steps s on p.id = s.run_id "
+            "order by s.created_at desc limit 50"
+        )
+        explanation = "This joins runs to their five pipeline steps so you can trace each tick."
+        datasets = ["pipeline_runs", "pipeline_steps"]
+    elif "summary" in lower_prompt:
+        query = (
+            "select latest_run_id, status, model, message, run_count, created_at "
+            "from tick_summaries order by created_at desc limit 25"
+        )
+        explanation = "This shows recent tick summaries and the run window each summary covered."
+        datasets = ["tick_summaries"]
+    else:
+        query = "select * from market_data_pulls limit 25"
+        explanation = "I started with provider pulls because they are the first records created by each tick."
+        datasets = ["market_data_pulls"]
+    _parse_explorer_query(query)
+    return {
+        "query": query,
+        "explanation": explanation,
+        "datasets": datasets,
+        "warnings": warnings,
+    }
+
+
 def _parse_explorer_query(query: str) -> dict[str, Any]:
     raw_query = (query or "").strip() or "select * from market_data_pulls limit 25"
     if ";" in raw_query.rstrip(";"):
         raise ValueError("only one read-only SELECT statement is allowed")
     normalized = raw_query.rstrip(";").strip()
     match = re.match(
-        r"^select\s+(?P<columns>.+?)\s+from\s+(?P<dataset>[A-Za-z0-9_.]+)(?P<rest>.*)$",
+        r"^select\s+(?P<columns>.+?)\s+from\s+(?P<body>.+)$",
         normalized,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -4073,8 +4216,7 @@ def _parse_explorer_query(query: str) -> dict[str, Any]:
     if columns != ["*"] and not all(_valid_explorer_identifier(column) for column in columns):
         raise ValueError("selected columns must be simple field names")
 
-    dataset = _resolve_explorer_dataset(match.group("dataset"))
-    rest = " ".join(match.group("rest").split())
+    rest = " ".join(match.group("body").split())
     limit = None
     order_by = None
     order_direction = "asc"
@@ -4095,21 +4237,85 @@ def _parse_explorer_query(query: str) -> dict[str, Any]:
         rest = rest[: order_match.start()].strip()
 
     conditions: list[dict[str, Any]] = []
+    where_match = re.search(r"(?:^|\s+)where\s+", rest, flags=re.IGNORECASE)
+    source_clause = rest
     if rest:
-        if not rest.lower().startswith("where "):
-            raise ValueError("only WHERE, ORDER BY, and LIMIT clauses are supported")
-        where_clause = rest[6:].strip()
-        conditions = _parse_explorer_conditions(where_clause)
+        if where_match:
+            source_clause = rest[: where_match.start()].strip()
+            where_clause = rest[where_match.end() :].strip()
+            conditions = _parse_explorer_conditions(where_clause)
+        elif re.search(r"(?:^|\s+)(join|on)\s+", rest, flags=re.IGNORECASE) is None:
+            source_clause = rest
+        else:
+            source_clause = rest
+
+    source = _parse_explorer_source_clause(source_clause)
 
     return {
         "columns": columns,
-        "dataset": dataset,
+        "dataset": source["dataset"],
+        "alias": source["alias"],
+        "joins": source["joins"],
         "conditions": conditions,
         "orderBy": order_by,
         "orderDirection": order_direction,
         "limit": limit,
         "normalizedQuery": normalized,
     }
+
+
+def _parse_explorer_source_clause(source_clause: str) -> dict[str, Any]:
+    normalized = re.sub(r"\s*=\s*", " = ", source_clause.strip())
+    tokens = normalized.split()
+    dataset, alias, index = _parse_explorer_table_ref(tokens, 0)
+    aliases = {alias}
+    joins: list[dict[str, str]] = []
+    while index < len(tokens):
+        if tokens[index].lower() != "join":
+            raise ValueError("only JOIN clauses may appear between FROM and WHERE")
+        join_dataset, join_alias, index = _parse_explorer_table_ref(tokens, index + 1)
+        if join_alias in aliases:
+            raise ValueError(f"duplicate dataset alias: {join_alias}")
+        aliases.add(join_alias)
+        if index >= len(tokens) or tokens[index].lower() != "on":
+            raise ValueError("JOIN clauses must include ON left_field = right_field")
+        if index + 3 >= len(tokens) or tokens[index + 2] != "=":
+            raise ValueError("JOIN clauses must use ON left_field = right_field")
+        left = tokens[index + 1]
+        right = tokens[index + 3]
+        if not _valid_explorer_identifier(left) or not _valid_explorer_identifier(right):
+            raise ValueError("JOIN fields must be simple field names")
+        joins.append(
+            {
+                "dataset": join_dataset,
+                "alias": join_alias,
+                "left": left,
+                "right": right,
+            }
+        )
+        index += 4
+    return {"dataset": dataset, "alias": alias, "joins": joins}
+
+
+def _parse_explorer_table_ref(tokens: list[str], index: int) -> tuple[str, str, int]:
+    if index >= len(tokens):
+        raise ValueError("query must include a dataset after FROM or JOIN")
+    dataset = _resolve_explorer_dataset(tokens[index])
+    index += 1
+    alias = dataset
+    if index < len(tokens) and tokens[index].lower() == "as":
+        if index + 1 >= len(tokens):
+            raise ValueError("AS must be followed by an alias")
+        alias = tokens[index + 1]
+        index += 2
+    elif index < len(tokens) and tokens[index].lower() not in {"join", "on"}:
+        alias = tokens[index]
+        index += 1
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", alias):
+        raise ValueError(f"invalid dataset alias: {alias}")
+    if alias.lower() in {"join", "on", "where", "order", "limit"}:
+        raise ValueError(f"invalid dataset alias: {alias}")
+    return dataset, alias, index
 
 
 def _resolve_explorer_dataset(raw_dataset: str) -> str:
@@ -4196,6 +4402,13 @@ def _matches_explorer_condition(row: dict[str, Any], condition: dict[str, Any]) 
 
 
 def _nested_explorer_value(row: dict[str, Any], field: str) -> Any:
+    if _is_joined_explorer_row(row) and "." not in field:
+        matches = [
+            payload.get(field)
+            for payload in row.values()
+            if isinstance(payload, dict) and field in payload
+        ]
+        return matches[0] if len(matches) == 1 else None
     current: Any = row
     for part in field.split("."):
         if isinstance(current, dict):
@@ -4203,6 +4416,10 @@ def _nested_explorer_value(row: dict[str, Any], field: str) -> Any:
         else:
             return None
     return current
+
+
+def _is_joined_explorer_row(row: dict[str, Any]) -> bool:
+    return bool(row) and all(isinstance(value, dict) for value in row.values())
 
 
 def _normalized_explorer_value(value: Any) -> str:
@@ -4469,9 +4686,493 @@ def _scenario_next_stage(key: str, status: str, metrics: dict[str, Any]) -> dict
     }
 
 
+def _scenario_config_plan(
+    *,
+    run: dict[str, Any] | None,
+    steps: list[dict[str, Any]],
+    selected_step: dict[str, Any] | None,
+    config_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if run is None or not steps:
+        return _scenario_empty_config_plan(
+            title="No scenario to tune",
+            body="Run a manual data import, scanner-only run, or full dry run before testing settings.",
+        )
+
+    target_step = _scenario_target_step(steps, selected_step)
+    if target_step is None:
+        return _scenario_empty_config_plan(
+            title="No blocked stage found",
+            body="Every recorded stage had enough input for the next step. Review execution and exit records before changing settings.",
+        )
+
+    key = str(target_step.get("key"))
+    if key == "scanner":
+        return _scenario_scanner_config_plan(
+            run=run,
+            steps=steps,
+            step=target_step,
+            config_payload=config_payload,
+        )
+    if key == "data_fetch":
+        return _scenario_empty_config_plan(
+            title="Fix data before scanner settings",
+            body="The run did not provide enough provider candidates for scanner tuning. Check enabled venues and provider pull records first.",
+            next_step_key="scanner",
+            run_mode="data_import",
+        )
+    if key == "brain":
+        return _scenario_static_config_plan(
+            title="Reasoning copilot plan",
+            body="The next gate is reasoning. These settings make the next dry run send accepted scanner candidates to model scoring.",
+            next_step_key="execution",
+            run_mode="full_dry_run",
+            patches=[
+                _scenario_config_patch(
+                    path="reasoning.max_prompts_per_provider_per_run",
+                    value="10",
+                    reason="Allow a small batch of accepted scanner candidates to be scored.",
+                    expected_impact="Reasoning can create scored outputs for strategy consensus if model credentials and budgets are available.",
+                    config_payload=config_payload,
+                    stage="brain",
+                )
+            ],
+        )
+    if key == "execution":
+        return _scenario_static_config_plan(
+            title="Execution copilot plan",
+            body="The next gate is execution. These settings only help after reasoning and strategy consensus produce an approved signal.",
+            next_step_key="exit",
+            run_mode="full_dry_run",
+            patches=[
+                _scenario_config_patch(
+                    path="risk.polymarket.max_open_positions",
+                    value="3",
+                    reason="Keep a small dry-run position allowance available for approved Polymarket candidates.",
+                    expected_impact="Execution can create an intent if consensus approves and the remaining risk gates pass.",
+                    config_payload=config_payload,
+                    stage="execution",
+                )
+            ],
+        )
+    return _scenario_empty_config_plan(
+        title="No config change recommended",
+        body="This stage is not blocked by a primary scanner, reasoning, consensus, or risk setting.",
+        next_step_key=key,
+    )
+
+
+def _scenario_target_step(
+    steps: list[dict[str, Any]],
+    selected_step: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if selected_step is not None and selected_step.get("state") in {"blocked", "idle"}:
+        return selected_step
+    for key in ("data_fetch", "scanner", "brain", "execution"):
+        step = _scenario_step_by_key(steps, key)
+        if step is not None and step.get("state") in {"blocked", "idle"}:
+            return step
+    return selected_step or (steps[0] if steps else None)
+
+
+def _scenario_step_by_key(steps: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
+    return next((step for step in steps if step.get("key") == key), None)
+
+
+def _scenario_scanner_config_plan(
+    *,
+    run: dict[str, Any],
+    steps: list[dict[str, Any]],
+    step: dict[str, Any],
+    config_payload: dict[str, Any],
+) -> dict[str, Any]:
+    patches = _scenario_scanner_patches_from_records(
+        step.get("records", []),
+        config_payload=config_payload,
+    )
+    warnings: list[str] = []
+    if not patches:
+        patches = _scenario_scanner_patches_from_provider_records(
+            run=run,
+            records=_scenario_step_by_key(steps, "data_fetch").get("records", [])
+            if _scenario_step_by_key(steps, "data_fetch") is not None
+            else [],
+            config_payload=config_payload,
+        )
+    if step.get("status") == "skipped":
+        warnings.append(
+            "This run stopped before scanner evaluation. Use scanner-only or full dry run after testing settings."
+        )
+    if not patches:
+        return _scenario_empty_config_plan(
+            title="Run scanner before changing thresholds",
+            body="I do not see scanner refusal records yet. Start with a scanner-only run so the helper can compare candidates against thresholds.",
+            next_step_key="brain",
+            run_mode="scanner_only",
+            warnings=warnings,
+        )
+    return {
+        "title": "Scanner copilot plan",
+        "body": (
+            "The next gate is scanner. This setting set is designed to let at least one recorded candidate "
+            "reach reasoning in a scanner-only dry run."
+        ),
+        "nextStepKey": "brain",
+        "runMode": "scanner_only",
+        "patches": patches[:5],
+        "warnings": [
+            *warnings,
+            "Use this for dry-run diagnosis. It does not approve live trading or bypass risk controls.",
+        ],
+        "canApply": True,
+    }
+
+
+def _scenario_scanner_patches_from_records(
+    records: Any,
+    *,
+    config_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    scanner_records = [
+        item.get("record", {})
+        for item in _first_dict_items(records, limit=50)
+        if str(item.get("table", "")).endswith(".scanner_candidates")
+        and isinstance(item.get("record"), dict)
+    ]
+    patches: dict[str, dict[str, Any]] = {}
+    for record in scanner_records:
+        if str(record.get("status")) != "rejected":
+            continue
+        reason = str(record.get("refusal_reason") or record.get("refusalReason") or "").lower()
+        patch = _scenario_scanner_patch_for_rejection(
+            reason=reason,
+            source=record,
+            config_payload=config_payload,
+        )
+        if patch is not None:
+            _scenario_merge_patch(patches, patch)
+    return list(patches.values())
+
+
+def _scenario_scanner_patches_from_provider_records(
+    *,
+    run: dict[str, Any],
+    records: Any,
+    config_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    completed_at = _parse_datetime(run.get("completedAt") or run.get("completed_at") or run.get("startedAt"))
+    patches: dict[str, dict[str, Any]] = {}
+    for item in _first_dict_items(records, limit=20):
+        record = item.get("record", {}) if isinstance(item, dict) else {}
+        candidates = record.get("candidates", []) if isinstance(record, dict) else []
+        for candidate in _first_dict_items(candidates, limit=50):
+            for patch in _scenario_scanner_patches_for_provider_candidate(
+                candidate=candidate,
+                completed_at=completed_at,
+                config_payload=config_payload,
+            ):
+                _scenario_merge_patch(patches, patch)
+    return list(patches.values())
+
+
+def _scenario_scanner_patches_for_provider_candidate(
+    *,
+    candidate: dict[str, Any],
+    completed_at: datetime | None,
+    config_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    venue = str(candidate.get("venue") or "")
+    if not venue.startswith("polymarket"):
+        return []
+    config = _scenario_scanner_polymarket_config(config_payload)
+    patches: list[dict[str, Any]] = []
+    liquidity = _decimal_or_none(candidate.get("liquidity"))
+    if liquidity is not None and liquidity < _decimal_or_none(config.get("min_liquidity")):
+        patches.append(
+            _scenario_config_patch(
+                path="scanner.polymarket.min_liquidity",
+                value=_scenario_floor_decimal(liquidity),
+                reason="The recorded provider candidate has liquidity below the current scanner minimum.",
+                expected_impact="Lowering the liquidity threshold lets this candidate reach the next scanner checks.",
+                config_payload=config_payload,
+                stage="scanner",
+            )
+        )
+    bid_depth = _decimal_or_none(candidate.get("bidDepth"))
+    ask_depth = _decimal_or_none(candidate.get("askDepth"))
+    min_side_depth = min(
+        [value for value in (bid_depth, ask_depth) if value is not None],
+        default=None,
+    )
+    if min_side_depth is not None and min_side_depth < _decimal_or_none(config.get("min_depth")):
+        patches.append(
+            _scenario_config_patch(
+                path="scanner.polymarket.min_depth",
+                value=_scenario_floor_decimal(min_side_depth),
+                reason="The recorded provider candidate has one side of the book below the current depth minimum.",
+                expected_impact="Lowering depth lets this candidate pass the order-book depth check.",
+                config_payload=config_payload,
+                stage="scanner",
+            )
+        )
+    spread = _decimal_or_none(candidate.get("spread"))
+    if spread is not None and spread > _decimal_or_none(config.get("max_spread")):
+        patches.append(
+            _scenario_config_patch(
+                path="scanner.polymarket.max_spread",
+                value=_scenario_ratio_above(spread),
+                reason="The recorded provider candidate has a wider spread than the scanner allows.",
+                expected_impact="Raising max spread lets this candidate pass the spread check before reasoning.",
+                config_payload=config_payload,
+                stage="scanner",
+            )
+        )
+    hours_to_resolution = _scenario_hours_to_resolution(candidate, completed_at)
+    if hours_to_resolution is not None:
+        if hours_to_resolution > _decimal_or_none(config.get("max_hours_to_resolution")):
+            patches.append(
+                _scenario_config_patch(
+                    path="scanner.polymarket.max_hours_to_resolution",
+                    value=_scenario_hours_above(hours_to_resolution),
+                    reason="The recorded provider candidate resolves later than the current scanner window.",
+                    expected_impact="Widening the maximum resolution window lets this candidate reach reasoning.",
+                    config_payload=config_payload,
+                    stage="scanner",
+                )
+            )
+        if hours_to_resolution < _decimal_or_none(config.get("min_hours_to_resolution")):
+            patches.append(
+                _scenario_config_patch(
+                    path="scanner.polymarket.min_hours_to_resolution",
+                    value=_scenario_floor_decimal(hours_to_resolution),
+                    reason="The recorded provider candidate is closer to resolution than the scanner allows.",
+                    expected_impact="Lowering the minimum resolution window lets near-term candidates reach reasoning.",
+                    config_payload=config_payload,
+                    stage="scanner",
+                )
+            )
+    volume = _decimal_or_none(candidate.get("volume"))
+    if volume is not None and volume < _decimal_or_none(config.get("min_volume")):
+        patches.append(
+            _scenario_config_patch(
+                path="scanner.polymarket.min_volume",
+                value=_scenario_floor_decimal(volume),
+                reason="The recorded provider candidate has volume below the current scanner minimum.",
+                expected_impact="Lowering volume lets this candidate pass the volume check.",
+                config_payload=config_payload,
+                stage="scanner",
+            )
+        )
+    return patches
+
+
+def _scenario_scanner_patch_for_rejection(
+    *,
+    reason: str,
+    source: dict[str, Any],
+    config_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    metrics = source.get("metrics", {}) if isinstance(source.get("metrics"), dict) else {}
+    if reason == "liquidity below minimum":
+        liquidity = _decimal_or_none(source.get("liquidity"))
+        return _scenario_config_patch(
+            path="scanner.polymarket.min_liquidity",
+            value=_scenario_floor_decimal(liquidity),
+            reason="Rejected scanner records show liquidity below the configured minimum.",
+            expected_impact="Lowering this threshold lets those candidates move to the next scanner checks.",
+            config_payload=config_payload,
+            stage="scanner",
+        )
+    if reason in {"bid depth below minimum", "ask depth below minimum"}:
+        min_depth = _decimal_or_none(metrics.get("minSideDepth"))
+        return _scenario_config_patch(
+            path="scanner.polymarket.min_depth",
+            value=_scenario_floor_decimal(min_depth),
+            reason=f"Rejected scanner records show {reason}.",
+            expected_impact="Lowering min depth lets candidates with thinner books continue to spread and resolution checks.",
+            config_payload=config_payload,
+            stage="scanner",
+        )
+    if reason == "spread too wide":
+        spread = _decimal_or_none(source.get("spread"))
+        return _scenario_config_patch(
+            path="scanner.polymarket.max_spread",
+            value=_scenario_ratio_above(spread),
+            reason="Rejected scanner records show the spread is above the configured maximum.",
+            expected_impact="Raising max spread lets wider markets reach reasoning for diagnosis.",
+            config_payload=config_payload,
+            stage="scanner",
+        )
+    if reason == "resolution too far":
+        hours = _decimal_or_none(source.get("hours_to_resolution") or metrics.get("hoursToResolution"))
+        return _scenario_config_patch(
+            path="scanner.polymarket.max_hours_to_resolution",
+            value=_scenario_hours_above(hours),
+            reason="Rejected scanner records show the market resolves after the configured maximum window.",
+            expected_impact="Widening the maximum resolution window lets farther-out markets reach reasoning.",
+            config_payload=config_payload,
+            stage="scanner",
+        )
+    if reason == "resolution too near":
+        hours = _decimal_or_none(source.get("hours_to_resolution") or metrics.get("hoursToResolution"))
+        return _scenario_config_patch(
+            path="scanner.polymarket.min_hours_to_resolution",
+            value=_scenario_floor_decimal(hours),
+            reason="Rejected scanner records show the market resolves before the configured minimum window.",
+            expected_impact="Lowering the minimum resolution window lets near-term markets reach reasoning.",
+            config_payload=config_payload,
+            stage="scanner",
+        )
+    if reason == "volume below minimum":
+        volume = _decimal_or_none(metrics.get("volume"))
+        return _scenario_config_patch(
+            path="scanner.polymarket.min_volume",
+            value=_scenario_floor_decimal(volume),
+            reason="Rejected scanner records show volume below the configured minimum.",
+            expected_impact="Lowering volume lets those candidates pass the volume check.",
+            config_payload=config_payload,
+            stage="scanner",
+        )
+    return None
+
+
+def _scenario_static_config_plan(
+    *,
+    title: str,
+    body: str,
+    next_step_key: str,
+    run_mode: str,
+    patches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "body": body,
+        "nextStepKey": next_step_key,
+        "runMode": run_mode,
+        "patches": patches,
+        "warnings": ["Use this for dry-run diagnosis. It does not approve live trading."],
+        "canApply": bool(patches),
+    }
+
+
+def _scenario_empty_config_plan(
+    *,
+    title: str,
+    body: str,
+    next_step_key: str | None = None,
+    run_mode: str | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "title": title,
+        "body": body,
+        "nextStepKey": next_step_key,
+        "runMode": run_mode,
+        "patches": [],
+        "warnings": warnings or [],
+        "canApply": False,
+    }
+
+
+def _scenario_config_patch(
+    *,
+    path: str,
+    value: Any,
+    reason: str,
+    expected_impact: str,
+    config_payload: dict[str, Any],
+    stage: str,
+) -> dict[str, Any]:
+    return {
+        "path": path,
+        "value": str(value),
+        "currentValue": _scenario_config_value(config_payload, path),
+        "reason": reason,
+        "expectedImpact": expected_impact,
+        "stage": stage,
+    }
+
+
+def _scenario_merge_patch(
+    patches: dict[str, dict[str, Any]],
+    patch: dict[str, Any],
+) -> None:
+    path = str(patch.get("path", ""))
+    if not path:
+        return
+    prior = patches.get(path)
+    if prior is None:
+        patches[path] = patch
+        return
+    prior_value = _decimal_or_none(prior.get("value"))
+    next_value = _decimal_or_none(patch.get("value"))
+    if prior_value is None or next_value is None:
+        return
+    if path.endswith(("max_spread", "max_hours_to_resolution")) and next_value > prior_value:
+        patches[path] = patch
+    if path.endswith(("min_depth", "min_liquidity", "min_volume", "min_hours_to_resolution")) and next_value < prior_value:
+        patches[path] = patch
+
+
+def _scenario_scanner_polymarket_config(config_payload: dict[str, Any]) -> dict[str, Any]:
+    configured = config_payload.get("scanner", {})
+    polymarket = configured.get("polymarket") if isinstance(configured, dict) else {}
+    return {
+        **DEFAULT_SCANNER_CONFIG["polymarket"],
+        **(polymarket if isinstance(polymarket, dict) else {}),
+    }
+
+
+def _scenario_config_value(config_payload: dict[str, Any], path: str) -> Any:
+    value: Any = config_payload
+    for segment in path.split("."):
+        if not isinstance(value, dict) or segment not in value:
+            if path.startswith("scanner.polymarket."):
+                return _scenario_scanner_polymarket_config(config_payload).get(path.split(".")[-1])
+            return None
+        value = value[segment]
+    return value
+
+
+def _scenario_hours_to_resolution(
+    candidate: dict[str, Any],
+    completed_at: datetime | None,
+) -> Decimal | None:
+    end_at = _parse_datetime(candidate.get("endDate"))
+    if end_at is None or completed_at is None:
+        return None
+    return Decimal(str((end_at - completed_at).total_seconds())) / Decimal("3600")
+
+
+def _scenario_floor_decimal(value: Decimal | None) -> str:
+    if value is None:
+        return "1"
+    if value <= 0:
+        return "1"
+    if value < 1:
+        return str(value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP).normalize())
+    return str(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _scenario_ratio_above(value: Decimal | None) -> str:
+    if value is None:
+        return "0.08"
+    adjusted = value + Decimal("0.01")
+    return str(adjusted.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP).normalize())
+
+
+def _scenario_hours_above(value: Decimal | None) -> str:
+    if value is None:
+        return "336"
+    adjusted = value + Decimal("24")
+    return str(adjusted.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _scenario_override_result(
     override: dict[str, Any],
     selected_step: dict[str, Any] | None,
+    *,
+    config_payload: dict[str, Any],
 ) -> dict[str, str]:
     path = str(override.get("path") or "").strip()
     value = str(override.get("value") or "").strip()
@@ -4493,9 +5194,11 @@ def _scenario_override_result(
         impact = "This would affect order intent sizing, simulation, or live submission gates."
     else:
         impact = f"This may affect the {step_key} step, but it is not one of the primary tick gates."
+    current_value = _scenario_config_value(config_payload, path)
     return {
         "path": path,
         "value": value,
+        "currentValue": "unknown" if current_value is None else str(current_value),
         "impact": impact,
         "recommendation": "Run a scanner-only or full dry run after saving a config change to verify behavior.",
     }
@@ -4506,7 +5209,9 @@ def _scenario_prompt_answer(
     prompt: str,
     run: dict[str, Any] | None,
     step: dict[str, Any] | None,
+    steps: list[dict[str, Any]],
     overrides: list[dict[str, str]],
+    recommended_config_set: dict[str, Any],
 ) -> dict[str, Any]:
     if run is None:
         return {
@@ -4520,17 +5225,31 @@ def _scenario_prompt_answer(
             "body": "Select a tick step, then ask what blocked it or which config setting to test.",
             "bullets": [],
         }
-    suggestions = [suggestion["body"] for suggestion in step.get("suggestions", [])]
-    facts = step.get("facts", [])
+    target_step = _scenario_target_step(steps, step) or step
+    suggestions = [suggestion["body"] for suggestion in target_step.get("suggestions", [])]
+    facts = target_step.get("facts", [])
+    stage_path = ", ".join(
+        f"{item['label']}: {item['status']}"
+        for item in steps[:5]
+        if item.get("label")
+    )
     prompt_text = prompt.strip()
     body = (
-        f"For {step['label']}, start with the recorded status: {step['status']}."
+        f"The run is currently gated at {target_step['label']}: {target_step['status']}."
         if not prompt_text
-        else f"For your question, I would start with {step['label']} because its status is {step['status']}."
+        else f"For your question, I would start with {target_step['label']} because its status is {target_step['status']}."
     )
-    bullets = [*facts[:3], *suggestions[:3]]
+    bullets = [
+        f"Run path: {stage_path}.",
+        *facts[:3],
+        *suggestions[:2],
+    ]
+    for patch in recommended_config_set.get("patches", [])[:3]:
+        bullets.append(
+            f"Try {patch['path']} = {patch['value']}: {patch['expectedImpact']}"
+        )
     if overrides:
-        bullets.append(overrides[0]["impact"])
+        bullets.append(f"Testing {len(overrides)} config setting{'s' if len(overrides) != 1 else ''} as a set.")
     return {
         "title": "Scenario help",
         "body": body,
