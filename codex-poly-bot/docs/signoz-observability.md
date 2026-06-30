@@ -60,6 +60,19 @@ codex mcp login signoz
 
 The repo also includes `.codex/config.toml.example` with the same MCP URL template.
 
+## Alert Issue Routing
+
+GPDoc owns the shared SigNoz webhook relay that creates GitHub issues from alerts. `codex-poly-bot` alerts should route to `yawetse/pmark-bot` with these labels:
+
+- `signoz-alert`
+- `area:codex-poly-bot`
+- `severity:critical`, `severity:error`, `severity:warning`, or `severity:info`
+- `codex-auto` for critical and error alerts that should start Codex triage
+
+The repository root includes `.github/workflows/signoz-codex-alert.yml`. The workflow starts only when an issue has both `signoz-alert` and `codex-auto`. It can comment, upload a patch artifact, or open a draft pull request. It does not merge, deploy, or change live trading settings.
+
+Set the repository secret `OPENAI_API_KEY` before relying on Codex Action runs. Without that secret, the workflow comments on the issue and leaves it open for manual triage.
+
 ## Local Check
 
 With SigNoz disabled, HTTP response logs still appear in normal app logs. With SigNoz enabled, verify:

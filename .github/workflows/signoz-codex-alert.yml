@@ -1,0 +1,192 @@
+# @spec OBS-030
+name: SigNoz Codex Alert Triage
+
+on:
+  issues:
+    types: [opened, labeled, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  generate_fix:
+    name: Generate Codex triage patch
+    if: contains(github.event.issue.labels.*.name, 'signoz-alert') && contains(github.event.issue.labels.*.name, 'codex-auto')
+    runs-on: ubuntu-latest
+    outputs:
+      has_patch: ${{ steps.diff.outputs.has_patch }}
+      has_openai_key: ${{ steps.key.outputs.has_openai_key }}
+    steps:
+      - name: Check Codex API key
+        id: key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "has_openai_key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_openai_key=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment when Codex key is missing
+        if: steps.key.outputs.has_openai_key != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: [
+                'Codex auto-triage did not start because `OPENAI_API_KEY` is not configured for this repository.',
+                '',
+                'The SigNoz alert issue is still available for manual triage.'
+              ].join('\n'),
+            });
+
+      - name: Checkout code
+        if: steps.key.outputs.has_openai_key == 'true'
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        if: steps.key.outputs.has_openai_key == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node.js
+        if: steps.key.outputs.has_openai_key == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: codex-poly-bot/frontend/package-lock.json
+
+      - name: Install safe project dependencies
+        if: steps.key.outputs.has_openai_key == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e codex-poly-bot/backend
+          npm ci --prefix codex-poly-bot/frontend
+
+      - name: Run Codex
+        if: steps.key.outputs.has_openai_key == 'true'
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: workspace-write
+          output-file: codex-signoz-output.md
+          prompt: |
+            A SigNoz alert created GitHub issue #${{ github.event.issue.number }} in yawetse/pmark-bot for codex-poly-bot.
+
+            Issue title:
+            ${{ github.event.issue.title }}
+
+            Issue body:
+            ${{ github.event.issue.body }}
+
+            Diagnose the likely regression from the alert context and the codex-poly-bot application under `codex-poly-bot/`. Make the smallest safe code or test change only when the cause is clear from repository evidence. Keep live trading disabled and do not add production trading secrets.
+
+            Run focused backend or frontend checks when practical. Do not merge, deploy, modify production settings, rotate secrets, or make unrelated refactors.
+
+      - name: Comment Codex result
+        if: steps.key.outputs.has_openai_key == 'true' && always()
+        uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ steps.codex.outputs.final-message }}
+        with:
+          script: |
+            const body = process.env.CODEX_FINAL_MESSAGE?.trim()
+              || 'Codex ran for this SigNoz alert, but did not return a final message.';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body,
+            });
+
+      - name: Create patch artifact
+        if: steps.key.outputs.has_openai_key == 'true'
+        id: diff
+        run: |
+          rm -f codex-signoz.patch
+          git add -N .
+          git diff --binary HEAD -- . ':(exclude)codex-signoz-output.md' > codex-signoz.patch
+          if [ -s codex-signoz.patch ]; then
+            echo "has_patch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_patch=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload patch artifact
+        if: steps.diff.outputs.has_patch == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signoz-codex-alert-patch
+          path: codex-signoz.patch
+          if-no-files-found: error
+
+  open_pr:
+    name: Open draft pull request
+    needs: generate_fix
+    if: needs.generate_fix.outputs.has_openai_key == 'true' && needs.generate_fix.outputs.has_patch == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Download patch artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: signoz-codex-alert-patch
+
+      - name: Apply patch
+        run: git apply --index codex-signoz.patch
+
+      - name: Open draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          branch="codex/signoz-alert-${ISSUE_NUMBER}-${RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -m "Investigate SigNoz alert #${ISSUE_NUMBER}"
+          git push origin "$branch"
+
+          {
+            echo "Draft remediation for SigNoz alert issue #${ISSUE_NUMBER}."
+            echo
+            echo "Source issue: #${ISSUE_NUMBER}"
+            echo "Alert title: ${ISSUE_TITLE}"
+            echo
+            echo "Review the patch and run the normal validation before merging."
+          } > pr-body.md
+
+          pr_url="$(
+            gh pr create \
+              --draft \
+              --base "$DEFAULT_BRANCH" \
+              --head "$branch" \
+              --title "Investigate SigNoz alert #${ISSUE_NUMBER}" \
+              --body-file pr-body.md
+          )"
+
+          gh issue comment "$ISSUE_NUMBER" --body "Codex opened a draft remediation PR: $pr_url"
