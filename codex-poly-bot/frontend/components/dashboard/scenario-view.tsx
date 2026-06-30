@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, FlaskConical, HelpCircle, PlayCircle } from "lucide-react";
+import { Bot, FlaskConical, HelpCircle, PlayCircle, Plus, Save, Trash2 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
@@ -8,7 +8,9 @@ import {
   type ManualRunResult,
 } from "@/components/dashboard/manual-run-control";
 import { EmptyState, Message, Panel } from "@/components/dashboard/dashboard-primitives";
-import { dashboardApi } from "@/lib/api";
+import { JsonRecordViewer } from "@/components/dashboard/json-record-viewer";
+import { dashboardApi, type ApiClientResult } from "@/lib/api";
+import { isAllowedConfigPath, type AllowedConfigPath } from "@/lib/config-paths";
 
 // REQ: REQ-UI-004, REQ-UI-008, REQ-DAT-008, REQ-OBS-005
 
@@ -50,8 +52,28 @@ type ScenarioRun = {
 type ConfigTest = {
   path: string;
   value: string;
+  currentValue?: string;
   impact: string;
   recommendation: string;
+};
+
+type ScenarioConfigPatch = {
+  path: string;
+  value: string;
+  currentValue?: unknown;
+  reason: string;
+  expectedImpact: string;
+  stage: string;
+};
+
+type ScenarioConfigSet = {
+  title: string;
+  body: string;
+  nextStepKey?: string | null;
+  runMode?: string | null;
+  patches: ScenarioConfigPatch[];
+  warnings: string[];
+  canApply: boolean;
 };
 
 type ScenarioResponse = {
@@ -64,6 +86,7 @@ type ScenarioResponse = {
   selectedStepKey?: string | null;
   steps: ScenarioStep[];
   configTests: ConfigTest[];
+  recommendedConfigSet: ScenarioConfigSet;
   answer: {
     title: string;
     body: string;
@@ -77,14 +100,42 @@ type ScenarioState =
   | { status: "ready"; data: ScenarioResponse }
   | { status: "error"; message: string };
 
+type ConfigDraft = {
+  id: string;
+  path: string;
+  value: string;
+};
+
+type ConfigValue = string | boolean | number | string[] | Record<string, unknown>;
+
+type ConfigSnapshot = {
+  environment: string;
+  version: string;
+  settings: Record<string, unknown>;
+};
+
+type ConfigUpdateResponse = {
+  new_version?: string;
+  current_version?: string;
+  applies_on_next_loop?: boolean;
+};
+
+type SaveState =
+  | { status: "idle" }
+  | { status: "submitting"; label: string }
+  | { status: "saved"; label: string }
+  | { status: "error"; message: string };
+
 export function ScenarioView() {
   const [state, setState] = useState<ScenarioState>({ status: "loading" });
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStepKey, setSelectedStepKey] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [configPath, setConfigPath] = useState("scanner.polymarket.max_spread");
-  const [configValue, setConfigValue] = useState("0.08");
+  const [configDrafts, setConfigDrafts] = useState<ConfigDraft[]>([
+    { id: "config-draft-1", path: "scanner.polymarket.max_spread", value: "0.08" },
+  ]);
   const [actionState, setActionState] = useState<"idle" | "running">("idle");
+  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
 
   useEffect(() => {
     void loadScenario({});
@@ -142,12 +193,137 @@ export function ScenarioView() {
     event.preventDefault();
     void loadScenario({
       stepKey: selectedStep?.key ?? selectedStepKey,
-      configOverrides: [{ path: configPath, value: configValue }],
+      configOverrides: configDrafts
+        .map((draft) => ({ path: draft.path.trim(), value: draft.value.trim() }))
+        .filter((draft) => draft.path),
     });
   }
 
   function onManualRunAccepted(result: ManualRunResult) {
     void loadScenario({ runId: result.runId, stepKey: "" });
+  }
+
+  function addConfigDraft() {
+    setConfigDrafts((drafts) => [
+      ...drafts,
+      {
+        id: `config-draft-${Date.now()}`,
+        path: "scanner.polymarket.max_hours_to_resolution",
+        value: "336",
+      },
+    ]);
+  }
+
+  function updateConfigDraft(id: string, field: "path" | "value", value: string) {
+    setConfigDrafts((drafts) =>
+      drafts.map((draft) => (draft.id === id ? { ...draft, [field]: value } : draft)),
+    );
+  }
+
+  function removeConfigDraft(id: string) {
+    setConfigDrafts((drafts) =>
+      drafts.length === 1 ? drafts : drafts.filter((draft) => draft.id !== id),
+    );
+  }
+
+  function loadAiConfigSet() {
+    if (state.status !== "ready" || !state.data.recommendedConfigSet.patches.length) {
+      return;
+    }
+    setConfigDrafts(
+      state.data.recommendedConfigSet.patches.map((patch, index) => ({
+        id: `ai-config-${index}-${patch.path}`,
+        path: patch.path,
+        value: formatDraftValue(patch.value),
+      })),
+    );
+    setSaveState({ status: "idle" });
+  }
+
+  async function applyAiConfigSet() {
+    if (state.status !== "ready") {
+      return;
+    }
+    await saveConfigDrafts(
+      state.data.recommendedConfigSet.patches.map((patch) => ({
+        path: patch.path,
+        value: formatDraftValue(patch.value),
+      })),
+      "AI settings applied",
+    );
+  }
+
+  async function applyTestConfig() {
+    await saveConfigDrafts(configDrafts, "Test settings applied");
+  }
+
+  async function saveConfigDrafts(
+    drafts: Array<{ path: string; value: string }>,
+    savedLabel: string,
+  ): Promise<boolean> {
+    const parsed = parseConfigDrafts(drafts);
+    if (!parsed.ok) {
+      setSaveState({ status: "error", message: parsed.message });
+      return false;
+    }
+    if (!parsed.patches.length) {
+      setSaveState({ status: "error", message: "Add at least one setting before applying." });
+      return false;
+    }
+
+    setSaveState({ status: "submitting", label: savedLabel });
+    const snapshot = await dashboardApi<ConfigSnapshot>("config/current");
+    if (!snapshot.ok) {
+      setSaveState({ status: "error", message: snapshot.message });
+      return false;
+    }
+
+    const firstAttempt = await submitConfigPatches(snapshot.data, parsed.patches);
+    if (!firstAttempt.result.ok && firstAttempt.result.status === 409) {
+      const refreshed = await dashboardApi<ConfigSnapshot>("config/current");
+      if (!refreshed.ok) {
+        setSaveState({ status: "error", message: "Config changed and could not be refreshed." });
+        return false;
+      }
+      const retry = await submitConfigPatches(refreshed.data, parsed.patches);
+      return finalizeConfigSave(retry, savedLabel);
+    }
+    return finalizeConfigSave(firstAttempt, savedLabel);
+  }
+
+  async function submitConfigPatches(
+    snapshot: ConfigSnapshot,
+    patches: Array<{ path: AllowedConfigPath; value: ConfigValue }>,
+  ): Promise<{
+    result: ApiClientResult<ConfigUpdateResponse>;
+    requestedVersion: string;
+  }> {
+    const requestedVersion = nextConfigVersion(snapshot.version);
+    const result = await dashboardApi<ConfigUpdateResponse>("config", {
+      method: "POST",
+      body: JSON.stringify({
+        environment: snapshot.environment,
+        version: requestedVersion,
+        expected_version: expectedVersionFromSnapshot(snapshot) || null,
+        patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
+      }),
+    });
+    return { result, requestedVersion };
+  }
+
+  function finalizeConfigSave(
+    attempt: {
+      result: ApiClientResult<ConfigUpdateResponse>;
+      requestedVersion: string;
+    },
+    savedLabel: string,
+  ): boolean {
+    if (!attempt.result.ok) {
+      setSaveState({ status: "error", message: readableConfigError(attempt.result.message) });
+      return false;
+    }
+    setSaveState({ status: "saved", label: savedLabel });
+    return true;
   }
 
   if (state.status === "loading") {
@@ -272,7 +448,10 @@ export function ScenarioView() {
               </div>
               <details className="scenario-records">
                 <summary>Linked records ({selectedStep.recordCount})</summary>
-                <pre>{JSON.stringify(selectedStep.records, null, 2)}</pre>
+                <JsonRecordViewer
+                  data={selectedStep.records}
+                  label={`Linked records for ${selectedStep.label}`}
+                />
               </details>
             </Panel>
           ) : null}
@@ -285,7 +464,7 @@ export function ScenarioView() {
       )}
 
       <div className="scenario-help-grid">
-        <Panel eyebrow="Help with AI" title="Ask about this step">
+        <Panel eyebrow="Help with AI" title="Ask about this scenario">
           <form className="scenario-form" onSubmit={onPromptSubmit}>
             <label>
               Prompt
@@ -293,7 +472,7 @@ export function ScenarioView() {
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 rows={4}
-                placeholder="Why did this stop before trading?"
+                placeholder="What settings get me past scanner?"
               />
             </label>
             <button className="button primary" disabled={actionState === "running"} type="submit">
@@ -310,27 +489,69 @@ export function ScenarioView() {
               ))}
             </ul>
           </div>
+          <ScenarioConfigPlan
+            configSet={state.data.recommendedConfigSet}
+            onApply={applyAiConfigSet}
+            onLoad={loadAiConfigSet}
+            disabled={actionState === "running" || saveState.status === "submitting"}
+          />
         </Panel>
 
-        <Panel eyebrow="Test config" title="Try an option">
+        <Panel eyebrow="Test config" title="Try settings together">
           <form className="scenario-form" onSubmit={onConfigSubmit}>
-            <label>
-              Config path
-              <input value={configPath} onChange={(event) => setConfigPath(event.target.value)} />
-            </label>
-            <label>
-              Test value
-              <input value={configValue} onChange={(event) => setConfigValue(event.target.value)} />
-            </label>
-            <button className="button" disabled={actionState === "running"} type="submit">
-              <FlaskConical aria-hidden="true" size={16} />
-              Test option
-            </button>
+            {configDrafts.map((draft) => (
+              <div className="scenario-config-row" key={draft.id}>
+                <label>
+                  Config path
+                  <input
+                    value={draft.path}
+                    onChange={(event) => updateConfigDraft(draft.id, "path", event.target.value)}
+                  />
+                </label>
+                <label>
+                  Test value
+                  <input
+                    value={draft.value}
+                    onChange={(event) => updateConfigDraft(draft.id, "value", event.target.value)}
+                  />
+                </label>
+                <button
+                  className="icon-button"
+                  disabled={configDrafts.length === 1}
+                  type="button"
+                  onClick={() => removeConfigDraft(draft.id)}
+                  aria-label="Remove setting"
+                >
+                  <Trash2 aria-hidden="true" size={16} />
+                </button>
+              </div>
+            ))}
+            <div className="scenario-config-actions">
+              <button className="button" type="button" onClick={addConfigDraft}>
+                <Plus aria-hidden="true" size={16} />
+                Add setting
+              </button>
+              <button className="button" disabled={actionState === "running"} type="submit">
+                <FlaskConical aria-hidden="true" size={16} />
+                Test settings
+              </button>
+              <button
+                className="button primary"
+                disabled={saveState.status === "submitting"}
+                type="button"
+                onClick={() => void applyTestConfig()}
+              >
+                <Save aria-hidden="true" size={16} />
+                Apply settings
+              </button>
+            </div>
           </form>
+          <SaveStatus state={saveState} />
           <div className="scenario-test-list">
             {state.data.configTests.map((test) => (
               <article key={`${test.path}-${test.value}`}>
                 <strong>{test.path || "No path"}</strong>
+                <small>Current: {test.currentValue ?? "unknown"} | Test: {test.value || "empty"}</small>
                 <p>{test.impact}</p>
                 <small>{test.recommendation}</small>
               </article>
@@ -340,6 +561,84 @@ export function ScenarioView() {
       </div>
     </div>
   );
+}
+
+function ScenarioConfigPlan({
+  configSet,
+  disabled,
+  onApply,
+  onLoad,
+}: {
+  configSet: ScenarioConfigSet;
+  disabled: boolean;
+  onApply: () => void;
+  onLoad: () => void;
+}) {
+  return (
+    <div className="scenario-config-plan">
+      <div className="scenario-plan-heading">
+        <div>
+          <strong>{configSet.title}</strong>
+          <p>{configSet.body}</p>
+        </div>
+        {configSet.runMode ? <span className="status waiting">{configSet.runMode}</span> : null}
+      </div>
+      {configSet.patches.length ? (
+        <div className="scenario-plan-patches">
+          {configSet.patches.map((patch) => (
+            <article key={`${patch.path}-${patch.value}`}>
+              <strong>{patch.path}</strong>
+              <small>
+                {formatDraftValue(patch.currentValue)} to {patch.value}
+              </small>
+              <p>{patch.reason}</p>
+              <p>{patch.expectedImpact}</p>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {configSet.warnings.length ? (
+        <ul className="scenario-plan-warnings">
+          {configSet.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="scenario-config-actions">
+        <button
+          className="button"
+          disabled={disabled || !configSet.patches.length}
+          type="button"
+          onClick={onLoad}
+        >
+          <FlaskConical aria-hidden="true" size={16} />
+          Load settings
+        </button>
+        <button
+          className="button primary"
+          disabled={disabled || !configSet.canApply}
+          type="button"
+          onClick={onApply}
+        >
+          <Save aria-hidden="true" size={16} />
+          Apply AI settings
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SaveStatus({ state }: { state: SaveState }) {
+  if (state.status === "idle") {
+    return null;
+  }
+  if (state.status === "submitting") {
+    return <Message tone="waiting">Saving {state.label}...</Message>;
+  }
+  if (state.status === "saved") {
+    return <Message tone="ok">{state.label}. Settings apply on the next loop.</Message>;
+  }
+  return <Message tone="blocked">{state.message}</Message>;
 }
 
 function ScenarioList({ title, items }: { title: string; items: string[] }) {
@@ -369,4 +668,91 @@ function formatDateTime(value: string | null | undefined): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function parseConfigDrafts(
+  drafts: Array<{ path: string; value: string }>,
+):
+  | { ok: true; patches: Array<{ path: AllowedConfigPath; value: ConfigValue }> }
+  | { ok: false; message: string } {
+  const patches: Array<{ path: AllowedConfigPath; value: ConfigValue }> = [];
+  for (const draft of drafts) {
+    const path = draft.path.trim();
+    if (!path) {
+      continue;
+    }
+    if (!isAllowedConfigPath(path)) {
+      return { ok: false, message: `${path} is not a supported dashboard config path.` };
+    }
+    const parsed = parseConfigValue(draft.value);
+    if (!parsed.ok) {
+      return { ok: false, message: `${path}: ${parsed.message}` };
+    }
+    patches.push({ path, value: parsed.value });
+  }
+  return { ok: true, patches };
+}
+
+function parseConfigValue(value: string): { ok: true; value: ConfigValue } | { ok: false; message: string } {
+  const trimmed = value.trim();
+  if (trimmed === "true") {
+    return { ok: true, value: true };
+  }
+  if (trimmed === "false") {
+    return { ok: true, value: false };
+  }
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (Array.isArray(parsed) || isPlainObject(parsed)) {
+        return { ok: true, value: parsed };
+      }
+      return { ok: false, message: "JSON values must be an array or object" };
+    } catch {
+      return { ok: false, message: "Value is not valid JSON" };
+    }
+  }
+  const numericValue = Number(trimmed);
+  if (Number.isFinite(numericValue) && trimmed !== "") {
+    return { ok: true, value: numericValue };
+  }
+  return { ok: true, value };
+}
+
+function formatDraftValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nextConfigVersion(currentVersion: string): string {
+  const match = /^v(\d+)$/.exec(currentVersion);
+  if (match) {
+    return `v${Number(match[1]) + 1}`;
+  }
+  return `ui-${Date.now()}`;
+}
+
+function expectedVersionFromSnapshot(snapshot: ConfigSnapshot): string {
+  return snapshot.version === "bootstrap" ? "" : snapshot.version;
+}
+
+function readableConfigError(message: string): string {
+  try {
+    const parsed = JSON.parse(message) as { message?: string };
+    return parsed.message ?? message;
+  } catch {
+    return message;
+  }
 }

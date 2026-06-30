@@ -532,6 +532,19 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 detail={"error_code": "invalid_data_query", "message": str(exc)},
             ) from exc
 
+    @router.post("/api/data/query/generate")
+    async def data_query_generate(
+        request: Request,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Generate a safe read-only query from natural language."""
+
+        payload = await request.json()
+        return services.runtime_status.generate_data_query(
+            environment=context.environment,
+            prompt=str(payload.get("prompt") or ""),
+        )
+
     @router.get("/api/dashboard/realtime-snapshot")
     def dashboard_realtime_snapshot(
         context: DashboardRequestContext = Depends(require_dashboard_access),
