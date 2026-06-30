@@ -161,6 +161,11 @@ def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> No
     monkeypatch.setenv("DASHBOARD_CSRF_TOKEN", "deploy-csrf")
     monkeypatch.setenv("NEXTAUTH_URL", "https://dashboard.example.com")
     monkeypatch.setenv("ALPACA_SYMBOL_UNIVERSE", "spy, qqq, spy, nvda")
+    monkeypatch.setenv("POLYGON_RPC_URL", "https://polygon-rpc.example")
+    monkeypatch.setenv("POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE", "750")
+    monkeypatch.setenv("POLYGON_ORDER_FILLED_MAX_WINDOWS", "3")
+    monkeypatch.setenv("POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES", "45")
+    monkeypatch.setenv("POLYGON_ORDER_FILLED_RETRY_SPLIT", "false")
 
     app = create_app()
     settings = app.state.settings
@@ -172,11 +177,23 @@ def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> No
     assert settings.trusted_origins == ("https://dashboard.example.com",)
     assert settings.alpaca_symbol_presets == ()
     assert settings.alpaca_symbol_universe == ("SPY", "QQQ", "NVDA")
-    assert app.state.services.runtime_status.runtime_config_payload()["alpaca"]["symbol_universe"] == [
+    payload = app.state.services.runtime_status.runtime_config_payload()
+    assert payload["alpaca"]["symbol_universe"] == [
         "SPY",
         "QQQ",
         "NVDA",
     ]
+    assert payload["historical_import"]["polymarket"] == {
+        "source": "clean_room_polygon_order_filled",
+        "polygon_rpc_configured": True,
+        "max_block_range": 750,
+        "max_windows": 3,
+        "import_cadence_minutes": 45,
+        "retry_policy": {
+            "split_oversized_windows": False,
+            "rate_limits_record_checkpoint": True,
+        },
+    }
 
 
 def test_req_ui_001_05_live_runtime_wires_venue_submitters_when_credentials_present() -> None:

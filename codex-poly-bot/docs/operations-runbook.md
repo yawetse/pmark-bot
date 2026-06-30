@@ -19,6 +19,29 @@ Use the Operations dashboard manual-run controls when you need to trigger the lo
 
 Skipped downstream stages are recorded as `skipped` pipeline rows. Review the pipeline detail grid to see the records behind each step.
 
+## Data Source Boundaries
+
+- Imported Polymarket history comes from clean-room Gamma market metadata and Polygon `OrderFilled` backfills.
+- Provider market data is the current snapshot used by scanner runs, separate from historical imports.
+- Scanner results are filter decisions over provider data plus persisted historical context.
+- LLM reasoning rows are model-provider scoring records created only after scanner acceptance.
+- Execution rows are order intents and simulated or submitted order outcomes.
+- Exit monitoring rows are position checks and exit intents, separate from entry execution.
+
+Historical import records can explain wallet and market context, but they are not proof that a current scanner, LLM, execution, or exit stage ran.
+
+## Historical Import Runtime Config
+
+The clean-room Polygon backfill path uses non-secret runtime settings:
+
+- `POLYGON_RPC_URL`: Polygon JSON-RPC endpoint used for `eth_getLogs`.
+- `POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE`: maximum block span per request before splitting.
+- `POLYGON_ORDER_FILLED_MAX_WINDOWS`: maximum windows per importer run.
+- `POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES`: minimum cadence for scheduled import attempts.
+- `POLYGON_ORDER_FILLED_RETRY_SPLIT`: whether oversized-window errors should retry with smaller windows.
+
+Treat RPC URLs with embedded provider tokens as secrets even though the base setting is non-secret.
+
 Live-gated runs can submit real orders only when the runtime has attached venue submitters. The backend attaches them when `LIVE_ENABLED=true`, the venue flag is enabled, required credentials are present, and the Alpaca account status is `active`.
 
 - Alpaca entries use market buy orders at `/v2/orders` with notional sizing.

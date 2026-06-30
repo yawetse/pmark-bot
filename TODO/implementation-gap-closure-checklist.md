@@ -1,6 +1,6 @@
 # Implementation Gap Closure Checklist
 
-Last updated: 2026-06-25
+Last updated: 2026-06-30
 
 Purpose: track the remaining work needed to turn the current dashboard-visible loop into the full trading methodology described in `pmbot.md`, with equivalent support for Polymarket and stock trades.
 
@@ -35,12 +35,21 @@ Reference sources:
 
 ## Phase 0: Design Decisions
 
-- [ ] Decide whether to implement a clean-room historical importer or run `poly_data` as an external import job.
-- [ ] Record the license decision for GPL-3.0 code in `docs/source-references.md` before using any source code from `poly_data`.
-- [ ] Decide the Polygon RPC provider for development and production.
-- [ ] Add non-secret runtime config for `POLYGON_RPC_URL`, max block range, retry policy, and importer cadence.
-- [ ] Define retention policy for raw chain events, processed trades, wallet stats, and scanner outputs.
-- [ ] Add operator-facing dashboard language that distinguishes imported history, provider market data, scanner results, LLM reasoning, execution, and exit monitoring.
+- [x] Decide whether to implement a clean-room historical importer or run `poly_data` as an external import job.
+- [x] Record the license decision for GPL-3.0 code in `docs/source-references.md` before using any source code from `poly_data`.
+- [x] Decide the Polygon RPC provider for development and production.
+- [x] Add non-secret runtime config for `POLYGON_RPC_URL`, max block range, retry policy, and importer cadence.
+- [x] Define retention policy for raw chain events, processed trades, wallet stats, and scanner outputs.
+- [x] Add operator-facing dashboard language that distinguishes imported history, provider market data, scanner results, LLM reasoning, execution, and exit monitoring.
+
+Decision notes:
+
+- Historical importer: use the clean-room importer implemented under `backend/app/services/polymarket_history_service.py`. `poly_data` stays a public data-flow reference only.
+- License: `docs/source-references.md` records that GPL-3.0 code from `poly_data` must not be copied into this repo without a separate license decision.
+- Polygon RPC provider: keep provider selection environment-specific through `POLYGON_RPC_URL`; do not hard-code a vendor in application code.
+- Runtime config: `.env.example`, `backend/.env.example`, `scripts/deploy-stack.sh`, and `infra/cloudformation.yml` expose the Polygon RPC URL, block-window limit, window count, retry split flag, and importer cadence.
+- Retention: current Postgres history policy is indefinite for audit, trade, and position records. S3 raw snapshots retain for 365 days and normalized snapshots retain for 730 days.
+- Operator language: operations docs and dashboard copy now distinguish imported history, provider market data, scanner results, LLM reasoning, execution, and exit monitoring.
 
 ## Phase 1: Step 0 Data Foundation
 

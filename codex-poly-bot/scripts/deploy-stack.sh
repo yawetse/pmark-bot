@@ -21,6 +21,11 @@ case "${environment}" in
     alpaca_symbol_universe="${ALPACA_SYMBOL_UNIVERSE:-}"
     alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-50}"
     alpaca_historical_bar_limit="${ALPACA_HISTORICAL_BAR_LIMIT:-30}"
+    polygon_rpc_url="${POLYGON_RPC_URL:-}"
+    polygon_order_filled_max_block_range="${POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE:-500}"
+    polygon_order_filled_max_windows="${POLYGON_ORDER_FILLED_MAX_WINDOWS:-1}"
+    polygon_order_filled_import_cadence_minutes="${POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES:-60}"
+    polygon_order_filled_retry_split="${POLYGON_ORDER_FILLED_RETRY_SPLIT:-true}"
     ;;
   production)
     live_enabled="true"
@@ -39,6 +44,11 @@ case "${environment}" in
     alpaca_symbol_universe="${ALPACA_SYMBOL_UNIVERSE:-}"
     alpaca_symbol_chunk_size="${ALPACA_SYMBOL_CHUNK_SIZE:-50}"
     alpaca_historical_bar_limit="${ALPACA_HISTORICAL_BAR_LIMIT:-30}"
+    polygon_rpc_url="${POLYGON_RPC_URL:-}"
+    polygon_order_filled_max_block_range="${POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE:-500}"
+    polygon_order_filled_max_windows="${POLYGON_ORDER_FILLED_MAX_WINDOWS:-1}"
+    polygon_order_filled_import_cadence_minutes="${POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES:-60}"
+    polygon_order_filled_retry_split="${POLYGON_ORDER_FILLED_RETRY_SPLIT:-true}"
     ;;
   *)
     echo "unsupported environment: ${environment}" >&2
@@ -131,6 +141,11 @@ parameter_overrides=(
   "AlpacaSymbolUniverse=${alpaca_symbol_universe}"
   "AlpacaSymbolChunkSize=${alpaca_symbol_chunk_size}"
   "AlpacaHistoricalBarLimit=${alpaca_historical_bar_limit}"
+  "PolygonRpcUrl=${polygon_rpc_url}"
+  "PolygonOrderFilledMaxBlockRange=${polygon_order_filled_max_block_range}"
+  "PolygonOrderFilledMaxWindows=${polygon_order_filled_max_windows}"
+  "PolygonOrderFilledImportCadenceMinutes=${polygon_order_filled_import_cadence_minutes}"
+  "PolygonOrderFilledRetrySplit=${polygon_order_filled_retry_split}"
   "SesIdentityEmail=${ses_identity_email}"
   "NotificationRecipients=${notification_recipients}"
   "EnableBackgroundWorker=${enable_background_worker}"
