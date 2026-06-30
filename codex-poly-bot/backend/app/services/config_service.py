@@ -25,7 +25,10 @@ from app.services.stock_universe import (
     stock_universe_metadata,
 )
 from app.services.stock_universe_refresh_service import latest_preset_snapshot_payloads
-from app.services.scanner_service import DEFAULT_SCANNER_CONFIG
+from app.services.scanner_service import (
+    DEFAULT_SCANNER_CONFIG,
+    MAX_POLYMARKET_MARKET_DATA_LIMIT,
+)
 from app.services.brain_service import DEFAULT_REASONING_CONFIG
 from app.services.strategy_consensus_service import DEFAULT_STRATEGY_CONSENSUS_CONFIG
 
@@ -452,6 +455,13 @@ class ConfigService:
             raise ConfigValidationError(f"unsupported config path: {path}")
         if parts[-1] in {"min_history_bars", "target_wallet_recent_hours"}:
             return self._positive_int(value, path)
+        if parts[1] == "polymarket" and parts[-1] == "market_data_limit":
+            limit = self._positive_int(value, path)
+            if limit > MAX_POLYMARKET_MARKET_DATA_LIMIT:
+                raise ConfigValidationError(
+                    f"{path} cannot exceed {MAX_POLYMARKET_MARKET_DATA_LIMIT}"
+                )
+            return limit
         if parts[-1] in {
             "min_depth",
             "min_liquidity",

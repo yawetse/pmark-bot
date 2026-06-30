@@ -63,7 +63,12 @@ const CONFIG_GROUPS: Array<{
   {
     title: "Venue and live mode",
     body: "Choose where the bot can operate and whether live mode can be considered.",
-    paths: ["default_selected_venue", "live_enabled", "venues.polymarket_us.enabled"],
+    paths: [
+      "default_selected_venue",
+      "live_enabled",
+      "venues.polymarket_us.enabled",
+      "scanner.polymarket.market_data_limit",
+    ],
   },
   {
     title: "Risk controls",

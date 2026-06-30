@@ -319,6 +319,30 @@ def test_req_exe_007_02_invalid_risk_limit_values_dashboard_config_saved_validat
             patches=[ConfigPatchOperation("replace", "risk.polymarket.max_position_usd", "-1.00")],
         )
 
+def test_req_exe_007_03_authorized_dashboard_user_updates_polymarket_market_data_limit() -> None:
+    """TST-REQ-EXE-007-03: Validates REQ-EXE-007
+
+    Given: an authorized dashboard user wants a larger Polymarket consideration set
+    When: config is saved
+    Then: the market data limit is persisted for the next loop
+    """
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    result = service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=auth.authorize_request(auth.create_session_token(username="yaw")),
+        environment=Environment.DEVELOPMENT,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation("replace", "scanner.polymarket.market_data_limit", 100),
+        ],
+    )
+
+    payload = result.mutation.config_version["payload"]["scanner"]["polymarket"]
+    assert payload["market_data_limit"] == 100
+
 def test_req_exe_008_01_positive_kelly_result_above_configured_risk_cap_sizing() -> None:
     """TST-REQ-EXE-008-01: Validates REQ-EXE-008
 

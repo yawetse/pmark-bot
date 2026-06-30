@@ -31,6 +31,7 @@ export const ALLOWED_CONFIG_PATHS = [
   "risk.alpaca.max_open_positions",
   "risk.alpaca.max_portfolio_allocation_per_symbol",
   "risk.alpaca.market_order_slippage_threshold",
+  "scanner.polymarket.market_data_limit",
   "scanner.polymarket.min_depth",
   "scanner.polymarket.min_liquidity",
   "scanner.polymarket.max_spread",
@@ -259,6 +260,12 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "Maximum estimated slippage allowed for Alpaca market orders.",
     valueHint: "Ratio, such as 0.005 for 0.5 percent",
     effect: "Market orders above the threshold are refused.",
+  },
+  "scanner.polymarket.market_data_limit": {
+    label: "Polymarket candidates",
+    description: "Maximum active Polymarket priced candidates fetched before scanner filters run.",
+    valueHint: "Whole number from 1 to 250",
+    effect: "Higher values increase Gamma and CLOB API calls on the next market-data pull.",
   },
   "scanner.polymarket.min_depth": {
     label: "Polymarket min depth",
