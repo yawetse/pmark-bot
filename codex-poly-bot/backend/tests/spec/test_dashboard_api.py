@@ -691,6 +691,22 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
             "query": "select id, venue, candidate_count from market_data_pulls where venue = 'polymarket_us' limit 5"
         },
     )
+    joined_query = client.post(
+        "/api/data/query",
+        headers=auth_headers,
+        json={
+            "query": (
+                "select p.id, p.status, m.venue, m.candidate_count "
+                "from pipeline_runs p join market_data_pulls m on p.id = m.run_id "
+                "where m.venue = 'polymarket_us' limit 5"
+            )
+        },
+    )
+    generated_query = client.post(
+        "/api/data/query/generate",
+        headers=auth_headers,
+        json={"prompt": "show me market data by tick run"},
+    )
     rejected_query = client.post(
         "/api/data/query",
         headers=auth_headers,
@@ -703,7 +719,10 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
             "runId": run_id,
             "stepKey": "scanner",
             "prompt": "Why did this stop before trading?",
-            "configOverrides": [{"path": "scanner.polymarket.max_spread", "value": "0.08"}],
+            "configOverrides": [
+                {"path": "scanner.polymarket.max_spread", "value": "0.08"},
+                {"path": "scanner.polymarket.max_hours_to_resolution", "value": "336"},
+            ],
         },
     )
     realtime = client.get("/api/dashboard/realtime-snapshot", headers=auth_headers)
@@ -718,12 +737,26 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
     assert data_query.status_code == 200
     assert data_query.json()["dataset"]["id"] == "market_data_pulls"
     assert data_query.json()["rows"][0]["candidate_count"] == 1
+    assert joined_query.status_code == 200
+    assert joined_query.json()["dataset"]["label"] == "Joined datasets"
+    assert joined_query.json()["rows"][0]["m.venue"] == "polymarket_us"
+    assert generated_query.status_code == 200
+    assert " join " in generated_query.json()["query"].lower()
+    assert "market_data_pulls" in generated_query.json()["query"]
+    assert generated_query.json()["model"] == "local-data-query-helper"
     assert rejected_query.status_code == 422
     assert scenario.status_code == 200
     assert scenario.json()["run"]["id"] == run_id
     assert scenario.json()["selectedStepKey"] == "scanner"
     assert scenario.json()["answer"]["title"] == "Scenario help"
     assert scenario.json()["configTests"][0]["path"] == "scanner.polymarket.max_spread"
+    assert len(scenario.json()["configTests"]) == 2
+    assert scenario.json()["recommendedConfigSet"]["title"] == "Scanner copilot plan"
+    assert scenario.json()["recommendedConfigSet"]["runMode"] == "scanner_only"
+    assert any(
+        patch["path"] == "scanner.polymarket.min_liquidity"
+        for patch in scenario.json()["recommendedConfigSet"]["patches"]
+    )
     assert realtime.status_code == 200
     assert realtime.json()["tickSchedule"]["lastTickRunId"] == run_id
     assert realtime.json()["operations"]["pipelineRuns"][0]["id"] == run_id

@@ -1,6 +1,6 @@
 "use client";
 
-import { Database, Play, Rows3 } from "lucide-react";
+import { Bot, Play, Rows3 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
@@ -46,9 +46,27 @@ type DataQueryResult = {
   message: string;
 };
 
+type DataQueryAiResult = {
+  environment: string;
+  generatedAt: string;
+  model: string;
+  modelMode: string;
+  prompt: string;
+  query: string;
+  explanation: string;
+  datasets: string[];
+  warnings: string[];
+};
+
 type LoadState =
   | { status: "loading" }
   | { status: "ready"; metadata: DataExplorerMetadata; result: DataQueryResult }
+  | { status: "error"; message: string };
+
+type AiQueryState =
+  | { status: "idle" }
+  | { status: "running" }
+  | { status: "ready"; result: DataQueryAiResult }
   | { status: "error"; message: string };
 
 const DEFAULT_QUERY = "select * from market_data_pulls limit 25";
@@ -58,6 +76,8 @@ export function DataExplorerView() {
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [selectedDataset, setSelectedDataset] = useState("market_data_pulls");
   const [queryState, setQueryState] = useState<"idle" | "running">("idle");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiState, setAiState] = useState<AiQueryState>({ status: "idle" });
 
   useEffect(() => {
     let active = true;
@@ -101,8 +121,31 @@ export function DataExplorerView() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    await executeQuery(query);
+  }
+
+  async function onAiSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAiState({ status: "running" });
+    const generated = await dashboardApi<DataQueryAiResult>("data/query/generate", {
+      method: "POST",
+      body: JSON.stringify({ prompt: aiPrompt }),
+    });
+    if (!generated.ok) {
+      setAiState({ status: "error", message: generated.message });
+      return;
+    }
+    setAiState({ status: "ready", result: generated.data });
+    setQuery(generated.data.query);
+    if (generated.data.datasets[0]) {
+      setSelectedDataset(generated.data.datasets[0]);
+    }
+    await executeQuery(generated.data.query);
+  }
+
+  async function executeQuery(nextQuery: string) {
     setQueryState("running");
-    const result = await runQuery(query);
+    const result = await runQuery(nextQuery);
     setQueryState("idle");
     if (!result.ok) {
       setState((current) =>
@@ -124,13 +167,22 @@ export function DataExplorerView() {
               datasets: [],
             },
             result: result.data,
-          },
+        },
     );
   }
 
-  function selectDataset(dataset: DataExplorerDataset) {
+  async function selectDataset(datasetId: string) {
+    if (state.status !== "ready") {
+      return;
+    }
+    const dataset = state.metadata.datasets.find((item) => item.id === datasetId);
+    if (!dataset) {
+      return;
+    }
     setSelectedDataset(dataset.id);
-    setQuery(`select * from ${dataset.id} limit 25`);
+    const nextQuery = `select * from ${dataset.id} limit 25`;
+    setQuery(nextQuery);
+    await executeQuery(nextQuery);
   }
 
   if (state.status === "loading") {
@@ -169,24 +221,40 @@ export function DataExplorerView() {
           </p>
         </section>
 
-        <Panel eyebrow="Datasets" title="Available tables" className="data-dataset-panel">
-          <div className="dataset-list">
-            {state.metadata.datasets.map((dataset) => (
-              <button
-                className="dataset-button"
-                data-active={dataset.id === selectedDataset ? "true" : undefined}
-                key={dataset.id}
-                type="button"
-                onClick={() => selectDataset(dataset)}
-              >
-                <Database aria-hidden="true" size={16} />
-                <span>
-                  <strong>{dataset.label}</strong>
-                  <small>{dataset.rowCount} rows</small>
-                </span>
+        <Panel eyebrow="Ask with AI" title="Generate SQL" className="data-ai-panel">
+          <form className="query-form" onSubmit={onAiSubmit}>
+            <label>
+              Prompt
+              <textarea
+                value={aiPrompt}
+                onChange={(event) => setAiPrompt(event.target.value)}
+                placeholder="Show rejected scanner candidates and refusal reasons"
+                rows={5}
+              />
+            </label>
+            <div className="query-actions">
+              <button className="button primary" disabled={aiState.status === "running"} type="submit">
+                <Bot aria-hidden="true" size={16} />
+                {aiState.status === "running" ? "Asking" : "Ask AI"}
               </button>
-            ))}
-          </div>
+              <span className="panel-note">Generates read-only SQL across known dashboard datasets.</span>
+            </div>
+            {aiState.status === "ready" ? (
+              <div className="data-ai-answer">
+                <strong>Suggested query</strong>
+                <p>{aiState.result.explanation}</p>
+                <small>{aiState.result.query}</small>
+                {aiState.result.warnings.length ? (
+                  <ul>
+                    {aiState.result.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+            {aiState.status === "error" ? <Message tone="blocked">{aiState.message}</Message> : null}
+          </form>
         </Panel>
 
         <Panel eyebrow="Workbench" title="Query data" className="data-query-panel">
@@ -220,10 +288,26 @@ export function DataExplorerView() {
         statusTone="ok"
         className="data-results-panel"
       >
-        <div className="result-summary">
-          <Rows3 aria-hidden="true" size={18} />
-          <span>{state.result.message}</span>
-          <small>{state.result.dataset.table}</small>
+        <div className="data-results-toolbar">
+          <label>
+            Dataset
+            <select
+              value={selectedDataset}
+              disabled={queryState === "running"}
+              onChange={(event) => void selectDataset(event.target.value)}
+            >
+              {state.metadata.datasets.map((dataset) => (
+                <option key={dataset.id} value={dataset.id}>
+                  {dataset.label} ({dataset.rowCount} rows)
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="result-summary">
+            <Rows3 aria-hidden="true" size={18} />
+            <span>{state.result.message}</span>
+            <small>{state.result.dataset.table}</small>
+          </div>
         </div>
         {state.result.rows.length ? (
           <DashboardDataGrid
