@@ -557,6 +557,68 @@ def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() 
     assert result.candidates[0]["tokenId"] == "yes-token"
 
 
+def test_req_dat_008_12_polymarket_market_data_limit_comes_from_runtime_config() -> None:
+    """TST-REQ-DAT-008-12: Validates REQ-DAT-008
+
+    Given: the environment default only considers one Polymarket candidate
+    When: runtime config raises the Polymarket market data limit
+    Then: the provider requests and returns the configured candidate count
+    """
+
+    requested_limits: list[str] = []
+    token_ids = ["yes-token-1", "yes-token-2", "yes-token-3"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/markets":
+            requested_limits.append(request.url.params.get("limit", ""))
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "conditionId": f"condition-{index}",
+                        "question": f"Will event {index} happen?",
+                        "clobTokenIds": json.dumps([token_id]),
+                        "outcomes": json.dumps(["Yes"]),
+                    }
+                    for index, token_id in enumerate(token_ids, start=1)
+                ],
+            )
+        if request.url.path == "/book":
+            token_id = request.url.params.get("token_id", "")
+            return httpx.Response(
+                200,
+                json={
+                    "market": token_id,
+                    "asset_id": token_id,
+                    "timestamp": "1782324000",
+                    "bids": [{"price": "0.44", "size": "100"}],
+                    "asks": [{"price": "0.46", "size": "150"}],
+                },
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "POLYMARKET_GAMMA_BASE_URL": "https://gamma.polymarket.test",
+            "POLYMARKET_CLOB_BASE_URL": "https://clob.polymarket.test",
+            "POLYMARKET_MARKET_DATA_LIMIT": "1",
+            "POLYMARKET_ORDER_BOOK_CONCURRENCY": "1",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={"scanner": {"polymarket": {"market_data_limit": 3}}},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert requested_limits == ["3"]
+    assert result.status == "pulled"
+    assert len(result.candidates) == 3
+    assert [candidate["tokenId"] for candidate in result.candidates] == token_ids
+
+
 def test_req_dat_008_09_polymarket_order_book_retries_after_timeout() -> None:
     """TST-REQ-DAT-008-09: Validates REQ-DAT-008
 

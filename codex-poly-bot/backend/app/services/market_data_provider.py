@@ -19,6 +19,10 @@ from typing import Any, Protocol, Sequence
 import httpx
 
 from app.domain import Venue
+from app.services.scanner_service import (
+    DEFAULT_POLYMARKET_MARKET_DATA_LIMIT,
+    MAX_POLYMARKET_MARKET_DATA_LIMIT,
+)
 from app.services.stock_universe import resolve_alpaca_symbol_universe
 
 
@@ -144,9 +148,9 @@ class ProviderBackedMarketDataFetcher:
         )
         self.polymarket_market_limit = _int_setting(
             source.get("POLYMARKET_MARKET_DATA_LIMIT"),
-            5,
+            DEFAULT_POLYMARKET_MARKET_DATA_LIMIT,
             minimum=1,
-            maximum=25,
+            maximum=MAX_POLYMARKET_MARKET_DATA_LIMIT,
         )
         self.alpaca_symbol_chunk_size = _int_setting(
             source.get("ALPACA_SYMBOL_CHUNK_SIZE"),
@@ -205,7 +209,11 @@ class ProviderBackedMarketDataFetcher:
         if venue == Venue.ALPACA.value:
             return self._fetch_alpaca(config_payload=config_payload, pulled_at=pulled_at)
         if venue in {Venue.POLYMARKET_US.value, Venue.POLYMARKET_INTERNATIONAL.value}:
-            return self._fetch_polymarket(venue=venue, pulled_at=pulled_at)
+            return self._fetch_polymarket(
+                venue=venue,
+                config_payload=config_payload,
+                pulled_at=pulled_at,
+            )
         return MarketDataProviderResult(
             venue=venue,
             status="failed",
@@ -447,10 +455,15 @@ class ProviderBackedMarketDataFetcher:
         self,
         *,
         venue: str,
+        config_payload: dict[str, Any],
         pulled_at: datetime,
     ) -> MarketDataProviderResult:
         errors: list[ProviderHttpError] = []
         candidates: list[dict[str, Any]] = []
+        market_limit = _polymarket_market_data_limit(
+            config_payload=config_payload,
+            default=self.polymarket_market_limit,
+        )
         with self._client() as client:
             try:
                 market_payload = self._get_json(
@@ -459,7 +472,7 @@ class ProviderBackedMarketDataFetcher:
                     params={
                         "active": "true",
                         "closed": "false",
-                        "limit": str(self.polymarket_market_limit),
+                        "limit": str(market_limit),
                     },
                     operation="polymarket active markets",
                 )
@@ -475,11 +488,11 @@ class ProviderBackedMarketDataFetcher:
 
             book_requests = _polymarket_book_requests(
                 market_payload,
-                request_limit=max(self.polymarket_market_limit * 2, self.polymarket_market_limit),
+                request_limit=max(market_limit * 2, market_limit),
             )
 
         for result in self._fetch_polymarket_order_books(book_requests):
-            if len(candidates) >= self.polymarket_market_limit:
+            if len(candidates) >= market_limit:
                 break
             if result.error is not None:
                 errors.append(result.error)
@@ -748,6 +761,22 @@ def _venue_result(
         source=source,
         message=empty_message or f"No priced {provider_label} candidates were fetched.",
         candidates=[],
+    )
+
+
+def _polymarket_market_data_limit(
+    *,
+    config_payload: dict[str, Any],
+    default: int,
+) -> int:
+    scanner = config_payload.get("scanner") if isinstance(config_payload, dict) else {}
+    polymarket = scanner.get("polymarket") if isinstance(scanner, dict) else {}
+    configured = polymarket.get("market_data_limit") if isinstance(polymarket, dict) else None
+    return _int_setting(
+        configured,
+        default,
+        minimum=1,
+        maximum=MAX_POLYMARKET_MARKET_DATA_LIMIT,
     )
 
 
@@ -1241,10 +1270,10 @@ def _float_setting(
     return value
 
 
-def _int_setting(raw: str | None, default: int, *, minimum: int, maximum: int) -> int:
+def _int_setting(raw: Any, default: int, *, minimum: int, maximum: int) -> int:
     try:
         value = int(raw) if raw is not None else default
-    except ValueError:
+    except (TypeError, ValueError):
         value = default
     return min(max(value, minimum), maximum)
 

@@ -440,6 +440,9 @@ class RuntimeStatusService:
             "strategy_consensus": DEFAULT_STRATEGY_CONSENSUS_CONFIG,
             "execution": DEFAULT_EXECUTION_CONFIG,
             "exit": DEFAULT_EXIT_CONFIG,
+            "historical_import": {
+                "polymarket": _polymarket_historical_import_config(self.settings),
+            },
             "alpaca": alpaca_payload,
             "notifications": {
                 "recipients": self.settings.notification_recipients,
@@ -3868,6 +3871,24 @@ def _configured(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip() not in PLACEHOLDER_VALUES
+
+
+def _polymarket_historical_import_config(settings: Any) -> dict[str, Any]:
+    rpc_url = str(getattr(settings, "polygon_rpc_url", "") or "").strip()
+    return {
+        "source": "clean_room_polygon_order_filled",
+        "polygon_rpc_configured": _configured(rpc_url),
+        "max_block_range": max(1, int(getattr(settings, "polygon_order_filled_max_block_range", 500))),
+        "max_windows": max(1, int(getattr(settings, "polygon_order_filled_max_windows", 1))),
+        "import_cadence_minutes": max(
+            1,
+            int(getattr(settings, "polygon_order_filled_import_cadence_minutes", 60)),
+        ),
+        "retry_policy": {
+            "split_oversized_windows": bool(getattr(settings, "polygon_order_filled_retry_split", True)),
+            "rate_limits_record_checkpoint": True,
+        },
+    }
 
 
 def _alpaca_submitter_from_settings(settings: Any) -> Any | None:
