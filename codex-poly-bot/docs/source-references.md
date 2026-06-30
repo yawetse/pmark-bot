@@ -12,7 +12,17 @@ These references document the external APIs and deployment services used by the 
 ## Trading Venues
 
 - Polymarket CLOB API documentation: https://docs.polymarket.com/developers/CLOB/trades/trades-data-api
+- Polymarket Gamma API documentation: https://docs.polymarket.com/market-data/fetching-markets
+- Polygon PoS RPC endpoints: https://docs.polygon.technology/pos/reference/rpc-endpoints
+- Historical Polymarket reference only, no copied code: https://github.com/warproxxx/poly_data
 - Alpaca Trading API documentation: https://docs.alpaca.markets/docs/trading-api
+
+## Historical Import License Decision
+
+The Polymarket history importer in this repo is a clean-room implementation. The
+GPL-3.0 `warproxxx/poly_data` project may be used only as a public data-flow
+reference. Do not copy source code, derived implementation code, or GPL-licensed
+files from that repository into this project without a separate license decision.
 
 ## AWS Deployment
 

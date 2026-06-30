@@ -997,6 +997,11 @@ function HistoricalImportPanel({
         </span>
       </div>
       <p className="panel-note">{historicalImport.message}</p>
+      <p className="panel-note">
+        Imported history comes from clean-room Gamma metadata and Polygon OrderFilled
+        backfills. Scanner, reasoning, execution, and exit records below are created by
+        the trading loop.
+      </p>
       <div className="metric-grid">
         <Metric label="Gamma markets" value={String(historicalImport.counts.gammaMarkets)} />
         <Metric label="Chain fills" value={String(historicalImport.counts.chainFills)} />
@@ -1078,6 +1083,9 @@ function ScannerPanel({
         <span className={`status ${statusClass(scanner.status)}`}>{scanner.status}</span>
       </div>
       <p className="panel-note">{scanner.message}</p>
+      <p className="panel-note">
+        Scanner results come from current provider market data and persisted historical context.
+      </p>
       <div className="metric-grid">
         <Metric label="Candidates" value={String(scanner.candidateCount)} />
         <Metric label="Accepted" value={String(scanner.acceptedCount)} />

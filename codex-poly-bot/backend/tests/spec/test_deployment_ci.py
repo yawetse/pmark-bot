@@ -368,6 +368,11 @@ def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injectio
     assert "ALPACA_SYMBOL_UNIVERSE" in text
     assert "ALPACA_SYMBOL_CHUNK_SIZE" in text
     assert "ALPACA_HISTORICAL_BAR_LIMIT" in text
+    assert "POLYGON_RPC_URL" in text
+    assert "POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE" in text
+    assert "POLYGON_ORDER_FILLED_MAX_WINDOWS" in text
+    assert "POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES" in text
+    assert "POLYGON_ORDER_FILLED_RETRY_SPLIT" in text
     assert "NOTIFICATION_RECIPIENTS" in text
     assert "ENABLE_BACKGROUND_WORKER" in text
     assert "TaskExecutionSecretAccessPolicy" in text
@@ -394,6 +399,14 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "AlpacaSymbolUniverse=${alpaca_symbol_universe}" in text
     assert "AlpacaSymbolChunkSize=${alpaca_symbol_chunk_size}" in text
     assert "AlpacaHistoricalBarLimit=${alpaca_historical_bar_limit}" in text
+    assert "PolygonRpcUrl=${polygon_rpc_url}" in text
+    assert "PolygonOrderFilledMaxBlockRange=${polygon_order_filled_max_block_range}" in text
+    assert "PolygonOrderFilledMaxWindows=${polygon_order_filled_max_windows}" in text
+    assert (
+        "PolygonOrderFilledImportCadenceMinutes=${polygon_order_filled_import_cadence_minutes}"
+        in text
+    )
+    assert "PolygonOrderFilledRetrySplit=${polygon_order_filled_retry_split}" in text
     assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-paper_ready}\"" in text
     assert "alpaca_account_status=\"${ALPACA_ACCOUNT_STATUS:-reviewing}\"" in text
     assert "alpaca_symbol_presets=\"${ALPACA_SYMBOL_PRESETS:-sp500,nasdaq100}\"" in text

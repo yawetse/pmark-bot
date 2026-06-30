@@ -99,6 +99,24 @@ Parameters:
   AlpacaHistoricalBarLimit:
     Type: String
     Default: "30"
+  PolygonRpcUrl:
+    Type: String
+    Default: ""
+  PolygonOrderFilledMaxBlockRange:
+    Type: String
+    Default: "500"
+  PolygonOrderFilledMaxWindows:
+    Type: String
+    Default: "1"
+  PolygonOrderFilledImportCadenceMinutes:
+    Type: String
+    Default: "60"
+  PolygonOrderFilledRetrySplit:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
   SesIdentityEmail:
     Type: String
   NotificationRecipients:
@@ -682,6 +700,16 @@ Resources:
               Value: !Ref AlpacaSymbolChunkSize
             - Name: ALPACA_HISTORICAL_BAR_LIMIT
               Value: !Ref AlpacaHistoricalBarLimit
+            - Name: POLYGON_RPC_URL
+              Value: !Ref PolygonRpcUrl
+            - Name: POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE
+              Value: !Ref PolygonOrderFilledMaxBlockRange
+            - Name: POLYGON_ORDER_FILLED_MAX_WINDOWS
+              Value: !Ref PolygonOrderFilledMaxWindows
+            - Name: POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES
+              Value: !Ref PolygonOrderFilledImportCadenceMinutes
+            - Name: POLYGON_ORDER_FILLED_RETRY_SPLIT
+              Value: !Ref PolygonOrderFilledRetrySplit
             - Name: SES_IDENTITY_EMAIL
               Value: !Ref SesIdentityEmail
             - Name: NOTIFICATION_RECIPIENTS

@@ -58,6 +58,11 @@ class AppSettings:
     alpaca_symbol_presets: tuple[str, ...] = DEFAULT_ALPACA_SYMBOL_PRESETS
     alpaca_custom_symbols: tuple[str, ...] = ()
     alpaca_symbol_universe: tuple[str, ...] = DEFAULT_ALPACA_SYMBOL_UNIVERSE
+    polygon_rpc_url: str = ""
+    polygon_order_filled_max_block_range: int = 500
+    polygon_order_filled_max_windows: int = 1
+    polygon_order_filled_import_cadence_minutes: int = 60
+    polygon_order_filled_retry_split: bool = True
     ses_identity_email: str = ""
     notification_recipients: dict[str, str] = field(default_factory=dict)
     background_worker_enabled: bool = False
@@ -90,6 +95,17 @@ class AppSettings:
             alpaca_symbol_presets=_symbol_presets_from_env(),
             alpaca_custom_symbols=_custom_symbols_from_env(),
             alpaca_symbol_universe=_symbol_universe_from_env(),
+            polygon_rpc_url=os.environ.get("POLYGON_RPC_URL", "").strip(),
+            polygon_order_filled_max_block_range=_positive_int_env(
+                "POLYGON_ORDER_FILLED_MAX_BLOCK_RANGE",
+                500,
+            ),
+            polygon_order_filled_max_windows=_positive_int_env("POLYGON_ORDER_FILLED_MAX_WINDOWS", 1),
+            polygon_order_filled_import_cadence_minutes=_positive_int_env(
+                "POLYGON_ORDER_FILLED_IMPORT_CADENCE_MINUTES",
+                60,
+            ),
+            polygon_order_filled_retry_split=_bool_env("POLYGON_ORDER_FILLED_RETRY_SPLIT", True),
             ses_identity_email=os.environ.get("SES_IDENTITY_EMAIL", "").strip(),
             notification_recipients=_notification_recipients_from_env(),
             background_worker_enabled=_bool_env("ENABLE_BACKGROUND_WORKER", False),
@@ -260,6 +276,17 @@ def _int_env(name: str, default: int) -> int:
     except ValueError:
         return default
     return max(15, parsed)
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return max(1, parsed)
 
 
 async def _worker_heartbeat_loop(
