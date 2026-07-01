@@ -168,9 +168,8 @@ class TickSummaryService:
 
         failures: list[tuple[str, Exception]] = []
         latest_run_id = _latest_run_id(request.runs)
-        for attempt_number, candidate_model in enumerate(
-            _summary_model_candidates(self.environ), start=1
-        ):
+        candidate_models = _summary_model_candidates(self.environ)
+        for attempt_number, candidate_model in enumerate(candidate_models, start=1):
             with start_observability_span(
                 "tick_summary.model_attempt",
                 attributes={
@@ -249,12 +248,22 @@ class TickSummaryService:
                         "latest_run_id": latest_run_id or "",
                         "window_minutes": request.window_minutes,
                     }
-                    record_span_failure(
-                        span,
-                        exc,
-                        event_name="tick_summary_model_failed",
-                        attributes=failure_payload,
-                    )
+                    if attempt_number == len(candidate_models):
+                        record_span_failure(
+                            span,
+                            exc,
+                            event_name="tick_summary_model_failed",
+                            attributes=failure_payload,
+                        )
+                    else:
+                        set_span_attributes(
+                            span,
+                            {
+                                **failure_payload,
+                                "status": "retrying",
+                                "event_name": "tick_summary_model_retry",
+                            },
+                        )
                     LOGGER.warning(
                         "tick_summary_model_failed %s",
                         json.dumps(
