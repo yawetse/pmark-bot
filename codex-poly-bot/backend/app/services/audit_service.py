@@ -197,6 +197,7 @@ class AuditService:
         version: str,
         payload: dict,
         action: str = "config.update",
+        username: str | None = None,
     ) -> ConfigMutationResult:
         """Persist audit and config version under one unit of work.
 
@@ -212,6 +213,7 @@ class AuditService:
             )
             config_version = self.registry.shared().record_config_version(
                 environment=environment,
+                username=username,
                 version=version,
                 payload=payload,
             )

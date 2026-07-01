@@ -92,11 +92,17 @@ def _shared_tables() -> list[Table]:
             metadata,
             Column("id", String, primary_key=True),
             Column("environment", String, nullable=False),
+            Column("username", String, nullable=False, server_default=text("'__shared__'")),
             Column("version", String, nullable=False),
             Column("active", Boolean, nullable=False),
             Column("payload", JSONB, nullable=False),
             Column("created_at", DateTime(timezone=True), nullable=False),
-            UniqueConstraint("environment", "version", name="uq_config_environment_version"),
+            UniqueConstraint(
+                "environment",
+                "username",
+                "version",
+                name="uq_config_environment_username_version",
+            ),
             schema=SHARED_SCHEMA,
         ),
         Table(

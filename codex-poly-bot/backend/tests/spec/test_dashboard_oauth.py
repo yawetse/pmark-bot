@@ -350,6 +350,51 @@ def test_req_ui_007_01_dashboard_config_saved_next_trading_loop_starts_changed()
     assert reload_result.snapshot.payload["trading_loop_seconds"] == 60
     assert not reload_result.degraded
 
+def test_req_ui_007_03_user_config_saved_next_user_loop_does_not_replace_shared_config() -> None:
+    """TST-REQ-UI-007-03: Validates REQ-UI-007
+
+    Given: a shared runtime config and a user-specific dashboard config
+    When: config is loaded for the next loop
+    Then: the user sees their config and the shared loop keeps its baseline config
+    """
+    registry = RepositoryRegistry()
+    service = ConfigService(registry)
+
+    service.save_config_change(
+        actor=ActorContext(username="system", ip_address="127.0.0.1"),
+        environment=Environment.DEVELOPMENT,
+        change=ConfigChange(
+            path="trading_loop_seconds",
+            old_value=30,
+            new_value=60,
+        ),
+        version="shared-v1",
+        payload={"trading_loop_seconds": 60},
+    )
+    service.save_config_change(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        environment=Environment.DEVELOPMENT,
+        change=ConfigChange(
+            path="trading_loop_seconds",
+            old_value=60,
+            new_value=120,
+        ),
+        version="yaw-v1",
+        payload={"trading_loop_seconds": 120},
+        username="yaw",
+    )
+
+    shared_reload = service.config_for_next_loop(Environment.DEVELOPMENT)
+    user_reload = service.config_for_next_loop(Environment.DEVELOPMENT, username="yaw")
+    rows = registry.state.rows("shared.config_versions")
+
+    assert shared_reload.snapshot.version == "shared-v1"
+    assert shared_reload.snapshot.payload["trading_loop_seconds"] == 60
+    assert user_reload.snapshot.version == "yaw-v1"
+    assert user_reload.snapshot.payload["trading_loop_seconds"] == 120
+    assert {row["username"] for row in rows} == {"__shared__", "yaw"}
+    assert all(row["active"] for row in rows)
+
 def test_req_ui_007_02_config_reload_fails_on_next_loop_loop_starts() -> None:
     """TST-REQ-UI-007-02: Validates REQ-UI-007
 

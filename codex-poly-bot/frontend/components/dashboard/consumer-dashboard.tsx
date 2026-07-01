@@ -35,6 +35,8 @@ type ConfigValue = string | boolean | number | string[] | Record<string, unknown
 
 type ConfigSnapshot = {
   environment: string;
+  username?: string | null;
+  config_owner?: string;
   version: string;
   settings: Record<string, unknown>;
 };

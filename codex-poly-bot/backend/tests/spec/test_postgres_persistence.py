@@ -14,6 +14,7 @@ from app.db import (
     PersistenceConfigurationError,
     PersistenceUnavailableError,
     RepositoryRegistry,
+    SHARED_CONFIG_USERNAME,
     SchemaViolationError,
     UnitOfWork,
     create_session_factory,
@@ -215,7 +216,9 @@ def test_req_db_003_01_shared_config_audit_system_health_records_persistence_run
     )
     shared.record_system_health(component="postgres", status="healthy")
 
-    assert len(registry.state.rows("shared.config_versions")) == 1
+    config_rows = registry.state.rows("shared.config_versions")
+    assert len(config_rows) == 1
+    assert config_rows[0]["username"] == SHARED_CONFIG_USERNAME
     assert len(registry.state.rows("shared.audit_events")) == 1
     assert len(registry.state.rows("shared.system_health")) == 1
 
