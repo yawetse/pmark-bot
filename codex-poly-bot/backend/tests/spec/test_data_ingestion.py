@@ -619,6 +619,66 @@ def test_req_dat_008_12_polymarket_market_data_limit_comes_from_runtime_config()
     assert [candidate["tokenId"] for candidate in result.candidates] == token_ids
 
 
+def test_req_dat_008_13_polymarket_default_market_data_limit_is_twenty_five() -> None:
+    """TST-REQ-DAT-008-13: Validates REQ-DAT-008
+
+    Given: no runtime override is set for the Polymarket market data limit
+    When: provider-backed ingestion fetches active markets
+    Then: the provider requests the default 25 candidate set
+    """
+
+    requested_limits: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/markets":
+            limit = int(request.url.params.get("limit", "0"))
+            requested_limits.append(str(limit))
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "conditionId": f"condition-{index}",
+                        "question": f"Will event {index} happen?",
+                        "clobTokenIds": json.dumps([f"yes-token-{index}"]),
+                        "outcomes": json.dumps(["Yes"]),
+                    }
+                    for index in range(1, limit + 1)
+                ],
+            )
+        if request.url.path == "/book":
+            token_id = request.url.params.get("token_id", "")
+            return httpx.Response(
+                200,
+                json={
+                    "market": token_id,
+                    "asset_id": token_id,
+                    "timestamp": "1782324000",
+                    "bids": [{"price": "0.44", "size": "100"}],
+                    "asks": [{"price": "0.46", "size": "150"}],
+                },
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "POLYMARKET_GAMMA_BASE_URL": "https://gamma.polymarket.test",
+            "POLYMARKET_CLOB_BASE_URL": "https://clob.polymarket.test",
+            "POLYMARKET_ORDER_BOOK_CONCURRENCY": "1",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert requested_limits == ["25"]
+    assert result.status == "pulled"
+    assert len(result.candidates) == 25
+
+
 def test_req_dat_008_09_polymarket_order_book_retries_after_timeout() -> None:
     """TST-REQ-DAT-008-09: Validates REQ-DAT-008
 
