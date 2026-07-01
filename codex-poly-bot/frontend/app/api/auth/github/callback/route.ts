@@ -69,5 +69,5 @@ async function resolveGitHubUsername(request: NextRequest): Promise<string | nul
 }
 
 function appUrl(): string {
-  return process.env.NEXTAUTH_URL ?? "http://localhost:3000";
+  return process.env.NEXTAUTH_URL ?? "http://127.0.0.1:3100";
 }
