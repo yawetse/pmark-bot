@@ -71,6 +71,8 @@ GPDoc owns the shared SigNoz webhook relay that creates GitHub issues from alert
 
 The repository root includes `.github/workflows/signoz-codex-alert.yml`. The workflow starts only when an issue has both `signoz-alert` and `codex-auto`. It can comment, upload a patch artifact, or open a draft pull request. It does not merge, deploy, or change live trading settings.
 
+Alert issue closure is controlled by labels and repository evidence. A `signoz-resolved` issue closes automatically unless an open remediation pull request references the issue. A synthetic or smoke-test alert closes automatically when Codex produces no remediation patch. Other firing production alerts stay open until they are resolved, fixed, or manually closed.
+
 Set the repository secret `OPENAI_API_KEY` before relying on Codex Action runs. Without that secret, the workflow comments on the issue and leaves it open for manual triage.
 
 ## Local Check

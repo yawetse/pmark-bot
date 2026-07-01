@@ -3,7 +3,7 @@ name: SigNoz Codex Alert Triage
 
 on:
   issues:
-    types: [opened, labeled, reopened]
+    types: [labeled, reopened]
 
 permissions:
   contents: read
@@ -13,8 +13,11 @@ permissions:
 jobs:
   generate_fix:
     name: Generate Codex triage patch
-    if: contains(github.event.issue.labels.*.name, 'signoz-alert') && contains(github.event.issue.labels.*.name, 'codex-auto')
+    if: contains(github.event.issue.labels.*.name, 'signoz-alert') && contains(github.event.issue.labels.*.name, 'codex-auto') && (github.event.action == 'reopened' || github.event.label.name == 'codex-auto')
     runs-on: ubuntu-latest
+    concurrency:
+      group: signoz-codex-alert-${{ github.event.issue.number }}
+      cancel-in-progress: false
     outputs:
       has_patch: ${{ steps.diff.outputs.has_patch }}
       has_openai_key: ${{ steps.key.outputs.has_openai_key }}
@@ -131,6 +134,95 @@ jobs:
           name: signoz-codex-alert-patch
           path: codex-signoz.patch
           if-no-files-found: error
+
+      - name: Close synthetic no-change alert
+        if: steps.diff.outputs.has_patch == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = `${issue.title || ''}\n${issue.body || ''}`.toLowerCase();
+            const isSynthetic = /\b(synthetic|smoke test|test alert|fake alert)\b/.test(body);
+            if (!isSynthetic) {
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: [
+                'Disposition: this synthetic SigNoz alert produced no remediation patch and can be closed.',
+                '',
+                'Closing automatically because the alert is explicitly marked as a test or smoke-test signal.'
+              ].join('\n'),
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              state: 'closed',
+              state_reason: 'completed',
+            });
+
+  close_resolved:
+    name: Close resolved alert issue
+    if: contains(github.event.issue.labels.*.name, 'signoz-alert') && contains(github.event.issue.labels.*.name, 'signoz-resolved') && (github.event.action == 'reopened' || github.event.label.name == 'signoz-resolved')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: signoz-resolved-alert-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Close when no remediation PR is open
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const issueRef = `#${issue.number}`;
+            const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open "${issueRef}"`;
+            const openPrs = await github.paginate(github.rest.search.issuesAndPullRequests, {
+              q,
+              per_page: 20,
+            });
+
+            if (openPrs.length > 0) {
+              const prList = openPrs
+                .map((pr) => `- #${pr.number}: ${pr.title}`)
+                .join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  'SigNoz marked this alert resolved, but an open remediation PR still references this issue.',
+                  '',
+                  prList,
+                  '',
+                  'Leaving the issue open until that PR is handled.'
+                ].join('\n'),
+              });
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: [
+                'SigNoz marked this alert resolved and no open remediation PR references this issue.',
+                '',
+                'Closing automatically.'
+              ].join('\n'),
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              state: 'closed',
+              state_reason: 'completed',
+            });
 
   open_pr:
     name: Open draft pull request
