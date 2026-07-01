@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 
+from app.db import normalize_config_username
 from app.domain import Environment, ModelProvider
 from app.services import (
     ActorContext,
@@ -125,7 +126,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-004, REQ-WAL-005, REQ-EXE-016, REQ-OBS-005
         """
 
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         settings_payload = config_snapshot["settings"]
         preferences = services.runtime_status.user_preferences(
             username=context.access.username or context.actor.username,
@@ -238,7 +239,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-005, REQ-UI-007
         """
 
-        return _current_config(context.environment)
+        return _current_config(context.environment, context.actor.username)
 
     @router.post("/api/config")
     @router.put("/api/config")
@@ -270,15 +271,16 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 access=context.access,
                 environment=environment,
                 expected_version=payload.get("expected_version"),
-                version=payload.get("version") or _next_config_version(environment),
+                version=payload.get("version") or _next_config_version(environment, context.actor.username),
                 patches=patches,
+                username=context.actor.username,
             )
         except ConfigConflictError as exc:
             response.status_code = status.HTTP_409_CONFLICT
             return {
                 "error_code": "config_version_conflict",
                 "message": str(exc),
-                "current_version": services.config.current_version(environment),
+                "current_version": services.config.current_version(environment, username=context.actor.username),
             }
         except ConfigValidationError as exc:
             response.status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -383,7 +385,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-010
         """
 
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         return {
             "environment": context.environment.value,
             **services.runtime_status.model_summary(
@@ -420,7 +422,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         return {
             "environment": context.environment.value,
             **services.runtime_status.notification_summary(
-                _current_config(context.environment)["settings"],
+                _current_config(context.environment, context.actor.username)["settings"],
             ),
         }
 
@@ -445,7 +447,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     ) -> dict[str, Any]:
         """Return the last tick time and next expected tick time."""
 
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         return services.runtime_status.tick_schedule(
             environment=context.environment,
             config_payload=config_snapshot["settings"],
@@ -629,7 +631,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     ) -> dict[str, Any]:
         """Return a scenario walkthrough for the latest or selected tick."""
 
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         return services.runtime_status.scenario_analysis(
             environment=context.environment,
             config_payload=config_snapshot["settings"],
@@ -646,7 +648,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         """Return a scenario walkthrough with optional config test values."""
 
         payload = await request.json()
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         return services.runtime_status.scenario_analysis(
             environment=context.environment,
             config_payload=config_snapshot["settings"],
@@ -670,7 +672,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         payload = await request.json()
         environment = _parse_environment(payload.get("environment"), context.environment)
         mode = str(payload.get("mode") or payload.get("run_mode") or "full_dry_run")
-        config_snapshot = _current_config(environment)
+        config_snapshot = _current_config(environment, context.actor.username)
         result = services.runtime_status.trigger_manual_run(
             username=context.actor.username,
             ip_address=context.actor.ip_address,
@@ -689,7 +691,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-DAT-001, REQ-DAT-008, REQ-OBS-005
         """
 
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         return services.runtime_status.market_data_pull(
             environment=context.environment,
             config_payload=config_snapshot["settings"],
@@ -704,7 +706,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-004, REQ-UI-010, REQ-CMP-002, REQ-OBS-005
         """
 
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         preferences = services.runtime_status.user_preferences(
             username=context.actor.username,
             environment=context.environment,
@@ -770,18 +772,20 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
         return {"environment": context.environment.value, "items": _audit_events()}
 
-    def _current_config(environment: Environment) -> dict[str, Any]:
-        reload_result = services.config.config_for_next_loop(environment)
+    def _current_config(environment: Environment, username: str | None = None) -> dict[str, Any]:
+        reload_result = services.config.config_for_next_loop(environment, username=username)
         settings_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
         return {
             "environment": environment.value,
+            "username": username,
+            "config_owner": normalize_config_username(username),
             "version": reload_result.snapshot.version,
             "settings": settings_payload,
             "degraded": reload_result.degraded,
         }
 
     def _realtime_snapshot(context: DashboardRequestContext) -> dict[str, Any]:
-        config_snapshot = _current_config(context.environment)
+        config_snapshot = _current_config(context.environment, context.actor.username)
         settings_payload = config_snapshot["settings"]
         operations = services.runtime_status.operations_summary(context.environment)
         operations["killSwitch"] = (
@@ -833,16 +837,19 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             actor=context.actor,
             access=context.access,
             environment=environment,
-            expected_version=services.config.current_version(environment),
-            version=_next_config_version(environment),
+            expected_version=services.config.current_version(environment, username=context.actor.username),
+            version=_next_config_version(environment, context.actor.username),
             patches=[ConfigPatchOperation("replace", "live_enabled", False)],
+            username=context.actor.username,
         )
 
-    def _next_config_version(environment: Environment) -> str:
+    def _next_config_version(environment: Environment, username: str | None = None) -> str:
+        owner = normalize_config_username(username)
         rows = [
             row
             for row in services.registry.state.rows("shared.config_versions")
             if row["environment"] == environment.value
+            and normalize_config_username(row.get("username")) == owner
         ]
         return f"v{len(rows) + 1}"
 

@@ -619,12 +619,12 @@ def test_req_dat_008_12_polymarket_market_data_limit_comes_from_runtime_config()
     assert [candidate["tokenId"] for candidate in result.candidates] == token_ids
 
 
-def test_req_dat_008_13_polymarket_default_market_data_limit_is_twenty_five() -> None:
+def test_req_dat_008_13_polymarket_default_market_data_limit_is_one_hundred() -> None:
     """TST-REQ-DAT-008-13: Validates REQ-DAT-008
 
     Given: no runtime override is set for the Polymarket market data limit
     When: provider-backed ingestion fetches active markets
-    Then: the provider requests the default 25 candidate set
+    Then: the provider requests the default 100 candidate set
     """
 
     requested_limits: list[str] = []
@@ -674,9 +674,9 @@ def test_req_dat_008_13_polymarket_default_market_data_limit_is_twenty_five() ->
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
 
-    assert requested_limits == ["25"]
+    assert requested_limits == ["100"]
     assert result.status == "pulled"
-    assert len(result.candidates) == 25
+    assert len(result.candidates) == 100
 
 
 def test_req_dat_008_09_polymarket_order_book_retries_after_timeout() -> None:

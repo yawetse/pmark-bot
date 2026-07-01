@@ -1,6 +1,21 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import { FormEvent, useState } from "react";
+import {
+  Bell,
+  Bot,
+  Clock,
+  CircleHelp,
+  DollarSign,
+  Landmark,
+  LineChart,
+  Save,
+  ShieldCheck,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import { dashboardApi } from "@/lib/api";
@@ -39,6 +54,8 @@ type PresetMetadata = {
 
 export type ConfigSnapshot = {
   environment: string;
+  username?: string | null;
+  config_owner?: string;
   version: string;
   settings: Record<string, unknown>;
   degraded?: boolean;
@@ -55,39 +72,545 @@ type ConfigControlsProps = {
   loadError?: string;
 };
 
-const CONFIG_GROUPS: Array<{
+type SettingUnit = "count" | "hours" | "minutes" | "percent" | "seconds" | "usd";
+
+type SettingBase = {
+  path: AllowedConfigPath;
+  stage: string;
+  note?: string;
+};
+
+type SettingDefinition = SettingBase &
+  (
+    | { kind: "switch"; fallback?: boolean }
+    | {
+        kind: "range";
+        fallback: number;
+        max: number;
+        min: number;
+        step: number;
+        unit: SettingUnit;
+        displayMultiplier?: number;
+      }
+    | {
+        kind: "number";
+        fallback: number;
+        min?: number;
+        step?: number;
+        unit: SettingUnit;
+        displayMultiplier?: number;
+      }
+    | {
+        kind: "select";
+        fallback: string;
+        options: Array<{ label: string; value: string }>;
+      }
+    | { kind: "text"; fallback: string }
+  );
+
+type SettingSection = {
   title: string;
   body: string;
-  paths: AllowedConfigPath[];
-}> = [
+  icon: LucideIcon;
+  settings: SettingDefinition[];
+};
+
+type GlossaryTerm = {
+  term: string;
+  definition: string;
+};
+
+const CONFIG_GLOSSARY: Array<GlossaryTerm & { matches: string[] }> = [
   {
-    title: "Venue and live mode",
-    body: "Choose where the bot can operate and whether live mode can be considered.",
-    paths: [
-      "default_selected_venue",
-      "live_enabled",
-      "venues.polymarket_us.enabled",
-      "scanner.polymarket.market_data_limit",
+    term: "Gamma",
+    definition: "Polymarket's market metadata API. The app uses it to find active markets and basic market details before deeper checks run.",
+    matches: ["gamma"],
+  },
+  {
+    term: "CLOB",
+    definition: "Central limit order book. It is the venue's list of current buy and sell interest. The app uses it to estimate liquidity, price, and slippage.",
+    matches: ["clob"],
+  },
+  {
+    term: "Order book",
+    definition: "The list of open bids and asks for a market. A stronger order book usually gives the app more reliable price and liquidity checks.",
+    matches: ["order-book", "order book", "depth"],
+  },
+  {
+    term: "Bid",
+    definition: "The highest current price someone is offering to pay.",
+    matches: ["bid"],
+  },
+  {
+    term: "Ask",
+    definition: "The lowest current price someone is willing to sell for.",
+    matches: ["ask"],
+  },
+  {
+    term: "Spread",
+    definition: "The gap between the best bid and best ask. Wider spreads can make entry and exit prices worse.",
+    matches: ["spread", "slippage"],
+  },
+  {
+    term: "Scanner",
+    definition: "The filtering stage that narrows raw market data down to candidates worth scoring. It runs before model reasoning.",
+    matches: ["scanner", "scan", "candidate", "candidates"],
+  },
+  {
+    term: "Trading loop",
+    definition: "One scheduled pass through market data, scanner filters, model reasoning, strategy checks, risk gates, and alerts.",
+    matches: ["trading loop", "loop", "run schedule"],
+  },
+  {
+    term: "Candidate",
+    definition: "A market or symbol that has passed enough early checks to be considered by later stages.",
+    matches: ["candidate", "candidates"],
+  },
+  {
+    term: "Liquidity",
+    definition: "How much trading interest is available near the current price. Low liquidity can make orders harder or more expensive to fill.",
+    matches: ["liquidity"],
+  },
+  {
+    term: "Volume",
+    definition: "How much has traded over a period of time. Higher volume can make pricing signals more reliable.",
+    matches: ["volume"],
+  },
+  {
+    term: "Resolution",
+    definition: "For a prediction market, this is when the event outcome is expected to settle.",
+    matches: ["resolution"],
+  },
+  {
+    term: "Venue",
+    definition: "A trading destination such as Polymarket US, Polymarket International, or Alpaca.",
+    matches: ["venue", "polymarket", "alpaca"],
+  },
+  {
+    term: "Live trading",
+    definition: "Allows real orders only after other gates pass. Turning it on does not bypass venue, credential, risk, or kill-switch checks.",
+    matches: ["live trading", "live mode", "live_enabled", "live account"],
+  },
+  {
+    term: "Paper account",
+    definition: "A simulated brokerage account used for testing without placing real trades.",
+    matches: ["paper"],
+  },
+  {
+    term: "Broker",
+    definition: "The account provider that can receive stock or ETF orders. In this app, Alpaca is the broker.",
+    matches: ["broker", "brokerage"],
+  },
+  {
+    term: "Risk gate",
+    definition: "The stage that blocks orders when size, loss, position count, allocation, slippage, or safety controls are outside the configured limits.",
+    matches: ["risk gate", "risk", "gate"],
+  },
+  {
+    term: "Position",
+    definition: "An active holding or exposure created by a prior trade.",
+    matches: ["position", "positions", "exposure"],
+  },
+  {
+    term: "Daily loss limit",
+    definition: "A loss threshold for the day. When the threshold is reached, the app blocks new orders for that scope.",
+    matches: ["daily loss"],
+  },
+  {
+    term: "Allocation",
+    definition: "The share of model capital assigned to one symbol. Lower allocation limits keep a single name from taking too much of the portfolio.",
+    matches: ["allocation"],
+  },
+  {
+    term: "Market order",
+    definition: "An order that tries to fill at the best available price now. It can move away from the expected price when liquidity is thin.",
+    matches: ["market order"],
+  },
+  {
+    term: "Slippage",
+    definition: "The difference between the expected price and the actual fill price. This setting limits how much worse the fill can be.",
+    matches: ["slippage"],
+  },
+  {
+    term: "Reasoning",
+    definition: "The model-scoring stage. The app asks configured AI providers to evaluate candidates that survive scanner filters.",
+    matches: ["reasoning", "model", "prompt"],
+  },
+  {
+    term: "Confidence",
+    definition: "The model's reported certainty. Higher minimum confidence means fewer candidates move forward.",
+    matches: ["confidence"],
+  },
+  {
+    term: "Edge",
+    definition: "The gap between the model's estimated probability and the market price. Higher minimum edge means the app needs a stronger difference before it acts.",
+    matches: ["edge"],
+  },
+  {
+    term: "Strategy",
+    definition: "A rule family that decides how a candidate can become a trade idea, such as convergence, arbitrage, or stock momentum.",
+    matches: ["strategy", "strategies", "momentum", "mean reversion", "gap", "volatility"],
+  },
+  {
+    term: "Budget",
+    definition: "A cap on model spend. When the cap is used, the app stops sending new scoring requests for that provider.",
+    matches: ["budget", "spend"],
+  },
+  {
+    term: "Alert",
+    definition: "A notification the app can send when a configured condition is met, such as a live trade, daily loss, model spend, or venue issue.",
+    matches: ["alert", "alerts", "email", "notification", "notifications"],
+  },
+  {
+    term: "Threshold",
+    definition: "The value that must be crossed before an alert or gate takes action.",
+    matches: ["threshold"],
+  },
+  {
+    term: "Alert cooldown",
+    definition: "The quiet period before the same alert can be sent again.",
+    matches: ["cooldown"],
+  },
+  {
+    term: "Digest",
+    definition: "A scheduled summary email rather than an immediate alert.",
+    matches: ["digest"],
+  },
+  {
+    term: "UTC",
+    definition: "Coordinated Universal Time. Daily digest schedules use UTC rather than your local time zone.",
+    matches: ["utc"],
+  },
+  {
+    term: "Preset",
+    definition: "A saved group of stock symbols, such as an index list, that can be reused for Alpaca scanning.",
+    matches: ["preset", "presets"],
+  },
+  {
+    term: "Symbol",
+    definition: "A stock or ETF ticker, such as SPY or QQQ.",
+    matches: ["symbol", "symbols", "ticker"],
+  },
+];
+
+const VENUE_OPTIONS = [
+  { label: "Polymarket US", value: "polymarket_us" },
+  { label: "Polymarket International", value: "polymarket_international" },
+  { label: "Alpaca", value: "alpaca" },
+];
+
+const ACCOUNT_MODE_OPTIONS = [
+  { label: "Paper", value: "paper" },
+  { label: "Live", value: "live" },
+];
+
+const PREFERENCE_SECTIONS: SettingSection[] = [
+  {
+    title: "Trading Access",
+    body: "Controls whether the app can evaluate venues and whether approved orders can reach a live account.",
+    icon: Landmark,
+    settings: [
+      { path: "live_enabled", kind: "switch", fallback: false, stage: "Trade gate" },
+      {
+        path: "default_selected_venue",
+        kind: "select",
+        fallback: "polymarket_us",
+        options: VENUE_OPTIONS,
+        stage: "Venue selection",
+      },
+      { path: "venues.polymarket_us.enabled", kind: "switch", fallback: true, stage: "Scan" },
+      { path: "venues.polymarket_international.enabled", kind: "switch", fallback: false, stage: "Scan" },
+      { path: "venues.alpaca.enabled", kind: "switch", fallback: false, stage: "Scan" },
+      {
+        path: "alpaca.account_mode",
+        kind: "select",
+        fallback: "paper",
+        options: ACCOUNT_MODE_OPTIONS,
+        stage: "Broker account",
+      },
+      {
+        path: "trading_loop_interval_seconds",
+        kind: "range",
+        fallback: 60,
+        min: 5,
+        max: 3600,
+        step: 5,
+        unit: "seconds",
+        stage: "Run schedule",
+      },
     ],
   },
   {
-    title: "Risk controls",
-    body: "Limit size, slippage, exposure, and loss before any order can pass gates.",
-    paths: [
-      "risk.alpaca.max_position_usd",
-      "risk.alpaca.market_order_slippage_threshold",
-      "trading_loop_interval_seconds",
+    title: "Market Scan",
+    body: "Controls how many markets and symbols enter the pipeline before the model or risk gates run.",
+    icon: LineChart,
+    settings: [
+      {
+        path: "scanner.polymarket.market_data_limit",
+        kind: "range",
+        fallback: 100,
+        min: 1,
+        max: 250,
+        step: 1,
+        unit: "count",
+        stage: "Market data",
+        note: "This is the control that changes how many Polymarket candidates are considered before scanner filters run.",
+      },
+      {
+        path: "scanner.polymarket.min_depth",
+        kind: "number",
+        fallback: 500,
+        min: 0,
+        step: 50,
+        unit: "count",
+        stage: "Scanner filter",
+      },
+      {
+        path: "scanner.polymarket.min_liquidity",
+        kind: "number",
+        fallback: 500,
+        min: 0,
+        step: 50,
+        unit: "count",
+        stage: "Scanner filter",
+      },
+      {
+        path: "scanner.polymarket.max_spread",
+        kind: "range",
+        fallback: 5,
+        min: 0,
+        max: 20,
+        step: 0.1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Scanner filter",
+      },
+      {
+        path: "scanner.polymarket.min_volume",
+        kind: "number",
+        fallback: 0,
+        min: 0,
+        step: 100,
+        unit: "count",
+        stage: "Scanner filter",
+      },
+      {
+        path: "scanner.polymarket.min_hours_to_resolution",
+        kind: "range",
+        fallback: 4,
+        min: 0,
+        max: 168,
+        step: 1,
+        unit: "hours",
+        stage: "Scanner filter",
+      },
+      {
+        path: "scanner.polymarket.max_hours_to_resolution",
+        kind: "range",
+        fallback: 168,
+        min: 1,
+        max: 720,
+        step: 1,
+        unit: "hours",
+        stage: "Scanner filter",
+      },
+      {
+        path: "scanner.alpaca.min_quote_liquidity",
+        kind: "number",
+        fallback: 1,
+        min: 0,
+        step: 1,
+        unit: "count",
+        stage: "Stock scanner",
+      },
+      {
+        path: "scanner.alpaca.max_spread",
+        kind: "range",
+        fallback: 0.5,
+        min: 0.01,
+        max: 5,
+        step: 0.01,
+        unit: "usd",
+        stage: "Stock scanner",
+      },
+      {
+        path: "scanner.alpaca.min_history_bars",
+        kind: "range",
+        fallback: 2,
+        min: 1,
+        max: 30,
+        step: 1,
+        unit: "count",
+        stage: "Stock scanner",
+      },
     ],
   },
   {
-    title: "Model budgets",
-    body: "Keep provider usage and scoring costs visible before the next run.",
-    paths: ["llm.openai.budget_usd", "llm.claude.budget_usd"],
+    title: "Signals And Models",
+    body: "Controls which signals run and how confident the model must be before a candidate can move forward.",
+    icon: Bot,
+    settings: [
+      { path: "strategies.arbitrage.enabled", kind: "switch", fallback: true, stage: "Strategy" },
+      { path: "strategies.convergence.enabled", kind: "switch", fallback: true, stage: "Strategy" },
+      { path: "strategies.whale_copy.enabled", kind: "switch", fallback: false, stage: "Strategy" },
+      {
+        path: "reasoning.max_prompts_per_provider_per_run",
+        kind: "range",
+        fallback: 100,
+        min: 1,
+        max: 500,
+        step: 1,
+        unit: "count",
+        stage: "Model budget",
+      },
+      {
+        path: "reasoning.polymarket.min_confidence",
+        kind: "range",
+        fallback: 75,
+        min: 0,
+        max: 100,
+        step: 1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Reasoning gate",
+      },
+      {
+        path: "reasoning.polymarket.min_edge",
+        kind: "range",
+        fallback: 7,
+        min: 0,
+        max: 30,
+        step: 0.5,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Strategy gate",
+      },
+      {
+        path: "reasoning.alpaca.min_confidence",
+        kind: "range",
+        fallback: 60,
+        min: 0,
+        max: 100,
+        step: 1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Reasoning gate",
+      },
+      {
+        path: "reasoning.alpaca.min_edge",
+        kind: "range",
+        fallback: 2,
+        min: 0,
+        max: 20,
+        step: 0.5,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Strategy gate",
+      },
+      { path: "scanner.alpaca.strategies.momentum.enabled", kind: "switch", fallback: true, stage: "Stock signal" },
+      { path: "scanner.alpaca.strategies.mean_reversion.enabled", kind: "switch", fallback: true, stage: "Stock signal" },
+      { path: "scanner.alpaca.strategies.gap.enabled", kind: "switch", fallback: true, stage: "Stock signal" },
+      { path: "scanner.alpaca.strategies.liquidity.enabled", kind: "switch", fallback: true, stage: "Stock signal" },
+      { path: "scanner.alpaca.strategies.volatility.enabled", kind: "switch", fallback: true, stage: "Stock signal" },
+      { path: "scanner.alpaca.strategies.unusual_volume.enabled", kind: "switch", fallback: true, stage: "Stock signal" },
+    ],
   },
   {
-    title: "Notifications",
-    body: "Control who receives alerts and how quickly repeated alerts can fire.",
-    paths: ["notifications.recipients", "notifications.cooldown_seconds"],
+    title: "Risk Limits",
+    body: "Controls the order-size and loss checks that run before an order can be placed.",
+    icon: ShieldCheck,
+    settings: [
+      { path: "risk.polymarket.max_position_usd", kind: "number", fallback: 25, min: 0, step: 1, unit: "usd", stage: "Risk gate" },
+      { path: "risk.polymarket.max_daily_loss_usd", kind: "number", fallback: 100, min: 0, step: 1, unit: "usd", stage: "Risk gate" },
+      {
+        path: "risk.polymarket.max_open_positions",
+        kind: "range",
+        fallback: 5,
+        min: 1,
+        max: 100,
+        step: 1,
+        unit: "count",
+        stage: "Risk gate",
+      },
+      {
+        path: "risk.polymarket.market_order_slippage_threshold",
+        kind: "range",
+        fallback: 2,
+        min: 0,
+        max: 10,
+        step: 0.1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Execution gate",
+      },
+      { path: "risk.alpaca.max_position_usd", kind: "number", fallback: 100, min: 0, step: 1, unit: "usd", stage: "Risk gate" },
+      { path: "risk.alpaca.max_daily_loss_usd", kind: "number", fallback: 250, min: 0, step: 1, unit: "usd", stage: "Risk gate" },
+      {
+        path: "risk.alpaca.max_open_positions",
+        kind: "range",
+        fallback: 10,
+        min: 1,
+        max: 100,
+        step: 1,
+        unit: "count",
+        stage: "Risk gate",
+      },
+      {
+        path: "risk.alpaca.max_portfolio_allocation_per_symbol",
+        kind: "range",
+        fallback: 10,
+        min: 1,
+        max: 100,
+        step: 1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Risk gate",
+      },
+      {
+        path: "risk.alpaca.market_order_slippage_threshold",
+        kind: "range",
+        fallback: 0.5,
+        min: 0,
+        max: 10,
+        step: 0.1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Execution gate",
+      },
+    ],
+  },
+  {
+    title: "Budgets And Alerts",
+    body: "Controls model spend caps, alert thresholds, repeated alert timing, and trade emails.",
+    icon: Bell,
+    settings: [
+      { path: "llm.openai.budget_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "Model budget" },
+      { path: "llm.claude.budget_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "Model budget" },
+      { path: "notifications.email_on_trade_placed", kind: "switch", fallback: false, stage: "Alerts" },
+      { path: "notifications.thresholds.daily_loss_usd", kind: "number", fallback: 100, min: 0, step: 1, unit: "usd", stage: "Alerts" },
+      { path: "notifications.thresholds.model_spend_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "Alerts" },
+      {
+        path: "notifications.thresholds.venue_degradation_minutes",
+        kind: "range",
+        fallback: 15,
+        min: 1,
+        max: 240,
+        step: 1,
+        unit: "minutes",
+        stage: "Alerts",
+      },
+      {
+        path: "notifications.cooldown_seconds",
+        kind: "range",
+        fallback: 3600,
+        min: 60,
+        max: 86400,
+        step: 60,
+        unit: "seconds",
+        stage: "Alerts",
+      },
+      { path: "notifications.digest_schedule_utc", kind: "text", fallback: "13:00", stage: "Daily digest" },
+    ],
   },
 ];
 
@@ -111,6 +634,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   );
   const [currentVersion, setCurrentVersion] = useState(initialSnapshot?.version ?? "");
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
+  const [pendingDrafts, setPendingDrafts] = useState<Partial<Record<AllowedConfigPath, ConfigValue>>>({});
   const selectedDetail = CONFIG_PATH_DETAILS[path];
   const currentValue = valueAtPath(settings, path);
   const resolvedSymbols = symbolsFromValue(valueAtPath(settings, "alpaca.symbol_universe"));
@@ -159,11 +683,11 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     ]);
   }
 
-  async function saveConfigPatch(patchPath: AllowedConfigPath, nextValue: ConfigValue) {
-    await saveConfigPatches([{ path: patchPath, value: nextValue }]);
+  async function saveConfigPatch(patchPath: AllowedConfigPath, nextValue: ConfigValue): Promise<boolean> {
+    return saveConfigPatches([{ path: patchPath, value: nextValue }]);
   }
 
-  async function saveConfigPatches(patches: ConfigPatchDraft[]) {
+  async function saveConfigPatches(patches: ConfigPatchDraft[]): Promise<boolean> {
     const nextVersion = nextConfigVersion(currentVersion);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "POST",
@@ -179,10 +703,10 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       const currentVersion = parseCurrentVersion(result.message);
       if (result.status === 409 && currentVersion) {
         setSaveState({ status: "conflict", currentVersion });
-        return;
+        return false;
       }
       setSaveState({ status: "error", message: result.message });
-      return;
+      return false;
     }
 
     const savedVersion = result.data.new_version ?? nextVersion;
@@ -194,7 +718,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       syncStockUniverseDrafts(refreshed.data.settings);
       setValue(formatValueForInput(valueAtPath(refreshed.data.settings, path)));
       setSaveState({ status: "saved", version: refreshed.data.version });
-      return;
+      return true;
     }
     setSettings((currentSettings) =>
       patches.reduce(
@@ -205,6 +729,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     setCurrentVersion(savedVersion);
     setExpectedVersion(savedVersion);
     setSaveState({ status: "saved", version: savedVersion });
+    return true;
   }
 
   function syncStockUniverseDrafts(nextSettings: Record<string, unknown>) {
@@ -222,41 +747,124 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     setSaveState({ status: "idle" });
   }
 
+  function updatePreferenceDraft(settingPath: AllowedConfigPath, nextValue: ConfigValue) {
+    setPendingDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [settingPath]: nextValue,
+    }));
+    setSaveState({ status: "idle" });
+  }
+
+  async function onPreferenceSave(setting: SettingDefinition) {
+    const nextValue = preferenceDraftValue(setting, settings, pendingDrafts);
+    const saved = await saveConfigPatch(setting.path, nextValue);
+    if (!saved) {
+      return;
+    }
+    setPendingDrafts((currentDrafts) => {
+      const nextDrafts = { ...currentDrafts };
+      delete nextDrafts[setting.path];
+      return nextDrafts;
+    });
+  }
+
   return (
-    <section className="panel">
+    <section className="panel config-preferences-panel">
       <div className="panel-heading">
         <div>
-          <p className="section-label">Controls</p>
-          <h2>Config</h2>
+          <p className="section-label">Settings</p>
+          <h2>Trading Preferences</h2>
         </div>
         <span className="status ok">applies next loop</span>
       </div>
       {initialSnapshot ? (
-        <p>
-          Current version: {currentVersion || initialSnapshot.version}. Environment:{" "}
-          {initialSnapshot.environment}.
-        </p>
+        <div className="config-page-summary" aria-label="Current config state">
+          <div>
+            <SlidersHorizontal aria-hidden="true" size={18} />
+            <span>Environment</span>
+            <strong>{initialSnapshot.environment}</strong>
+          </div>
+          <div>
+            <Clock aria-hidden="true" size={18} />
+            <span>Version</span>
+            <strong>{currentVersion || initialSnapshot.version}</strong>
+          </div>
+          <div>
+            <DollarSign aria-hidden="true" size={18} />
+            <span>Apply timing</span>
+            <strong>Next loop</strong>
+          </div>
+          <div>
+            <ShieldCheck aria-hidden="true" size={18} />
+            <span>Saved for</span>
+            <strong>{initialSnapshot.username || initialSnapshot.config_owner || "shared"}</strong>
+          </div>
+        </div>
       ) : null}
       {loadError ? <p className="status-message">{loadError}</p> : null}
-      <div className="config-group-grid" aria-label="Common configuration groups">
-        {CONFIG_GROUPS.map((group) => (
-          <article className="config-group-card" key={group.title}>
-            <strong>{group.title}</strong>
-            <p>{group.body}</p>
-            <div className="config-path-actions">
-              {group.paths.map((groupPath) => (
-                <button
-                  className={`config-path-button ${path === groupPath ? "active" : ""}`}
-                  key={groupPath}
-                  type="button"
-                  onClick={() => onPathChange(groupPath)}
-                >
-                  {CONFIG_PATH_DETAILS[groupPath].label}
-                </button>
-              ))}
-            </div>
-          </article>
+      <div className="config-stage-strip" aria-label="How config changes move through the app">
+        <div>
+          <span>1</span>
+          <strong>Market data</strong>
+          <small>What gets pulled from venues.</small>
+        </div>
+        <div>
+          <span>2</span>
+          <strong>Scanner and model</strong>
+          <small>Which candidates survive scoring.</small>
+        </div>
+        <div>
+          <span>3</span>
+          <strong>Risk and trade gates</strong>
+          <small>Whether an order can be placed.</small>
+        </div>
+        <div>
+          <span>4</span>
+          <strong>Alerts</strong>
+          <small>Who is notified and when.</small>
+        </div>
+      </div>
+      <nav className="config-preference-nav" aria-label="Settings sections">
+        {PREFERENCE_SECTIONS.map((section) => (
+          <a href={`#${sectionId(section.title)}`} key={section.title}>
+            {section.title}
+          </a>
         ))}
+      </nav>
+      <div className="preference-section-list">
+        {PREFERENCE_SECTIONS.map((section) => {
+          const Icon = section.icon;
+          return (
+            <section className="preference-section" id={sectionId(section.title)} key={section.title}>
+              <div className="preference-section-heading">
+                <div className="preference-section-title">
+                  <Icon aria-hidden="true" size={19} strokeWidth={2.2} />
+                  <div>
+                    <h3>{section.title}</h3>
+                    <p>{section.body}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="preference-row-list">
+                {section.settings.map((setting) => {
+                  const currentSettingValue = valueAtPath(settings, setting.path);
+                  const draftValue = preferenceDraftValue(setting, settings, pendingDrafts);
+                  return (
+                    <PreferenceRow
+                      currentValue={currentSettingValue}
+                      draftValue={draftValue}
+                      hasPendingChange={hasPendingPreferenceChange(setting, currentSettingValue, draftValue)}
+                      key={setting.path}
+                      onChange={(nextValue) => updatePreferenceDraft(setting.path, nextValue)}
+                      onSave={() => void onPreferenceSave(setting)}
+                      setting={setting}
+                    />
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
       </div>
       <form className="symbol-editor" onSubmit={onStockUniverseSubmit}>
         <div>
@@ -320,6 +928,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           </Disclosure>
         ) : null}
         <button className="button primary" type="submit">
+          <Save aria-hidden="true" size={15} />
           Save stock universe
         </button>
       </form>
@@ -401,6 +1010,425 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       {saveState.status === "error" ? <p className="status-message">{saveState.message}</p> : null}
     </section>
   );
+}
+
+function PreferenceRow({
+  currentValue,
+  draftValue,
+  hasPendingChange,
+  onChange,
+  onSave,
+  setting,
+}: {
+  currentValue: unknown;
+  draftValue: ConfigValue;
+  hasPendingChange: boolean;
+  onChange: (value: ConfigValue) => void;
+  onSave: () => void;
+  setting: SettingDefinition;
+}) {
+  const detail = CONFIG_PATH_DETAILS[setting.path];
+  const inputId = sectionId(`setting-${setting.path}`);
+  const terms = termsForSetting(setting, detail);
+
+  return (
+    <div className="preference-row">
+      <div className="preference-copy">
+        <div className="preference-title-row">
+          <label htmlFor={inputId}>{detail.label}</label>
+          <span className="preference-stage">{setting.stage}</span>
+          <SettingHelpDialog
+            currentValue={formatPreferenceDisplay(setting, currentValue)}
+            detail={detail}
+            path={setting.path}
+            setting={setting}
+            terms={terms}
+          />
+        </div>
+        <p>{detail.description}</p>
+        {setting.note ? <p className="preference-note">{setting.note}</p> : null}
+        <small>{detail.effect}</small>
+        <code>{setting.path}</code>
+      </div>
+      <div className="preference-control">
+        {renderPreferenceControl(setting, inputId, draftValue, onChange)}
+        <div className="preference-value-summary" aria-live="polite">
+          <span>Current: {formatPreferenceDisplay(setting, currentValue)}</span>
+          {hasPendingChange ? <strong>New: {formatPreferenceDisplay(setting, draftValue)}</strong> : null}
+        </div>
+        <button
+          className={`button preference-save-button ${hasPendingChange ? "primary" : ""}`.trim()}
+          disabled={!hasPendingChange}
+          onClick={onSave}
+          type="button"
+        >
+          <Save aria-hidden="true" size={15} />
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SettingHelpDialog({
+  currentValue,
+  detail,
+  path,
+  setting,
+  terms,
+}: {
+  currentValue: string;
+  detail: (typeof CONFIG_PATH_DETAILS)[AllowedConfigPath];
+  path: AllowedConfigPath;
+  setting: SettingDefinition;
+  terms: GlossaryTerm[];
+}) {
+  const descriptionId = `${sectionId(`setting-help-${path}`)}-description`;
+
+  return (
+    <Dialog.Root>
+      <Dialog.Trigger asChild>
+        <button
+          aria-label={`Explain ${detail.label}`}
+          className="icon-button preference-help-button"
+          type="button"
+        >
+          <CircleHelp aria-hidden="true" size={15} />
+        </button>
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content setting-help-dialog" aria-describedby={descriptionId}>
+          <div className="dialog-heading">
+            <CircleHelp aria-hidden="true" size={22} strokeWidth={2.4} />
+            <div>
+              <Dialog.Title>{detail.label}</Dialog.Title>
+              <Dialog.Description id={descriptionId}>{detail.description}</Dialog.Description>
+            </div>
+          </div>
+          <div className="setting-help-summary">
+            <div>
+              <span>Stage</span>
+              <strong>{setting.stage}</strong>
+            </div>
+            <div>
+              <span>Current value</span>
+              <strong>{currentValue}</strong>
+            </div>
+            <div>
+              <span>Applies</span>
+              <strong>Next loop</strong>
+            </div>
+          </div>
+          <div className="setting-help-body">
+            <section>
+              <h3>What this changes</h3>
+              <p>{detail.effect}</p>
+              {setting.note ? <p>{setting.note}</p> : null}
+            </section>
+            <section>
+              <h3>Terms in this setting</h3>
+              <dl className="setting-term-list">
+                {terms.map((term) => (
+                  <div key={term.term}>
+                    <dt>{term.term}</dt>
+                    <dd>{term.definition}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+            <section>
+              <h3>System path</h3>
+              <p>
+                Stored as <code>{path}</code> in your active database config version for this environment.
+              </p>
+            </section>
+          </div>
+          <div className="dialog-actions">
+            <Dialog.Close asChild>
+              <button className="button" type="button">
+                <X aria-hidden="true" size={15} />
+                Close
+              </button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function termsForSetting(
+  setting: SettingDefinition,
+  detail: (typeof CONFIG_PATH_DETAILS)[AllowedConfigPath],
+): GlossaryTerm[] {
+  const source = [
+    detail.label,
+    detail.description,
+    detail.effect,
+    detail.valueHint,
+    setting.stage,
+    setting.note,
+    setting.path,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const matched = CONFIG_GLOSSARY.filter((entry) =>
+    entry.matches.some((match) => source.includes(match.toLowerCase())),
+  ).map(({ term, definition }) => ({ term, definition }));
+  if (matched.length) {
+    return matched;
+  }
+  return [
+    {
+      term: "Setting",
+      definition:
+        "A saved runtime value used by the app when it starts the next loop. It is stored for your user in this environment, not just this browser session.",
+    },
+  ];
+}
+
+function renderPreferenceControl(
+  setting: SettingDefinition,
+  inputId: string,
+  value: ConfigValue,
+  onChange: (value: ConfigValue) => void,
+) {
+  if (setting.kind === "switch") {
+    const checked = Boolean(value);
+    return (
+      <label className="preference-switch-control" htmlFor={inputId}>
+        <input
+          checked={checked}
+          id={inputId}
+          onChange={(event) => onChange(event.target.checked)}
+          type="checkbox"
+        />
+        <span className="preference-switch-track" aria-hidden="true">
+          <span />
+        </span>
+        <strong>{checked ? "On" : "Off"}</strong>
+      </label>
+    );
+  }
+
+  if (setting.kind === "select") {
+    return (
+      <select
+        className="preference-select"
+        id={inputId}
+        value={String(value)}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {setting.options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  if (setting.kind === "text") {
+    return (
+      <input
+        className="preference-text-input"
+        id={inputId}
+        type="text"
+        value={String(value)}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    );
+  }
+
+  if (setting.kind === "range") {
+    const displayValue = displayNumberForSetting(setting, value);
+    const clampedDisplayValue = clamp(displayValue, setting.min, setting.max);
+    return (
+      <div className="preference-range-control">
+        <input
+          aria-describedby={`${inputId}-range`}
+          id={inputId}
+          max={setting.max}
+          min={setting.min}
+          onChange={(event) => onChange(configNumberFromDisplay(setting, event.target.valueAsNumber))}
+          step={setting.step}
+          type="range"
+          value={clampedDisplayValue}
+        />
+        <label className="preference-number-field">
+          <span id={`${inputId}-range`}>{formatUnitLabel(setting.unit)}</span>
+          <input
+            max={setting.max}
+            min={setting.min}
+            onChange={(event) => onChange(configNumberFromDisplay(setting, event.target.valueAsNumber))}
+            step={setting.step}
+            type="number"
+            value={trimNumber(displayValue)}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  const displayValue = displayNumberForSetting(setting, value);
+  return (
+    <label className="preference-number-field preference-number-only" htmlFor={inputId}>
+      <span>{formatUnitLabel(setting.unit)}</span>
+      <input
+        id={inputId}
+        min={setting.min}
+        onChange={(event) => onChange(configNumberFromDisplay(setting, event.target.valueAsNumber))}
+        step={setting.step ?? 1}
+        type="number"
+        value={trimNumber(displayValue)}
+      />
+    </label>
+  );
+}
+
+function preferenceDraftValue(
+  setting: SettingDefinition,
+  settings: Record<string, unknown> | undefined,
+  pendingDrafts: Partial<Record<AllowedConfigPath, ConfigValue>>,
+): ConfigValue {
+  const pending = pendingDrafts[setting.path];
+  if (pending !== undefined) {
+    return pending;
+  }
+  return normalizedPreferenceValue(setting, valueAtPath(settings, setting.path));
+}
+
+function normalizedPreferenceValue(setting: SettingDefinition, value: unknown): ConfigValue {
+  if (setting.kind === "switch") {
+    return typeof value === "boolean" ? value : (setting.fallback ?? false);
+  }
+  if (setting.kind === "select") {
+    const stringValue = typeof value === "string" ? value : setting.fallback;
+    return setting.options.some((option) => option.value === stringValue) ? stringValue : setting.fallback;
+  }
+  if (setting.kind === "text") {
+    return typeof value === "string" ? value : setting.fallback;
+  }
+  const parsed = Number(value);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+  return configNumberFromDisplay(setting, setting.fallback);
+}
+
+function hasPendingPreferenceChange(
+  setting: SettingDefinition,
+  currentValue: unknown,
+  draftValue: ConfigValue,
+): boolean {
+  return !configValuesEqual(normalizedPreferenceValue(setting, currentValue), draftValue);
+}
+
+function displayNumberForSetting(
+  setting: Extract<SettingDefinition, { kind: "number" | "range" }>,
+  value: ConfigValue,
+): number {
+  const parsed = Number(value);
+  const fallback = configNumberFromDisplay(setting, setting.fallback);
+  const configValue = Number.isFinite(parsed) ? parsed : fallback;
+  return configValue * (setting.displayMultiplier ?? 1);
+}
+
+function configNumberFromDisplay(
+  setting: Extract<SettingDefinition, { kind: "number" | "range" }>,
+  displayValue: number,
+): number {
+  const fallback = setting.fallback;
+  const parsed = Number.isFinite(displayValue) ? displayValue : fallback;
+  return parsed / (setting.displayMultiplier ?? 1);
+}
+
+function formatPreferenceDisplay(setting: SettingDefinition, value: unknown): string {
+  const normalized = normalizedPreferenceValue(setting, value);
+  if (setting.kind === "switch") {
+    return normalized ? "On" : "Off";
+  }
+  if (setting.kind === "select") {
+    return setting.options.find((option) => option.value === normalized)?.label ?? String(normalized);
+  }
+  if (setting.kind === "text") {
+    return String(normalized || "not set");
+  }
+  const displayValue = displayNumberForSetting(setting, normalized);
+  if (setting.unit === "usd") {
+    return formatUsd(displayValue);
+  }
+  if (setting.unit === "percent") {
+    return `${trimNumber(displayValue)}%`;
+  }
+  if (setting.unit === "seconds") {
+    return formatDurationSeconds(displayValue);
+  }
+  if (setting.unit === "minutes") {
+    return `${trimNumber(displayValue)} min`;
+  }
+  if (setting.unit === "hours") {
+    return `${trimNumber(displayValue)} hr`;
+  }
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(displayValue);
+}
+
+function formatUnitLabel(unit: SettingUnit): string {
+  if (unit === "usd") {
+    return "USD";
+  }
+  if (unit === "percent") {
+    return "%";
+  }
+  if (unit === "seconds") {
+    return "sec";
+  }
+  if (unit === "minutes") {
+    return "min";
+  }
+  if (unit === "hours") {
+    return "hr";
+  }
+  return "count";
+}
+
+function configValuesEqual(left: ConfigValue, right: ConfigValue): boolean {
+  if (typeof left === "number" && typeof right === "number") {
+    return Math.abs(left - right) < 0.0000001;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: Math.abs(value) < 1 ? 4 : 2,
+    style: "currency",
+  }).format(value);
+}
+
+function formatDurationSeconds(value: number): string {
+  if (value >= 3600 && value % 3600 === 0) {
+    return `${trimNumber(value / 3600)} hr`;
+  }
+  if (value >= 60 && value % 60 === 0) {
+    return `${trimNumber(value / 60)} min`;
+  }
+  return `${trimNumber(value)} sec`;
+}
+
+function trimNumber(value: number): string {
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function sectionId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function parseValue(

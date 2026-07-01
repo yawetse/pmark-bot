@@ -1540,6 +1540,67 @@ def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:
     assert audit_rows[0]["metadata"]["path"] == "venues.polymarket_us.enabled"
 
 
+def test_req_ui_005_04_config_api_persists_settings_per_user() -> None:
+    """TST-REQ-UI-005-04: Validates REQ-UI-005
+
+    Given: two authorized users in the same environment
+    When: each user saves a different trading loop setting
+    Then: each user reads back their own active config version from the database layer
+    """
+    settings = AppSettings(
+        allowed_usernames=("yaw", "alex"),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    yaw_token = app.state.services.auth.create_session_token(username="yaw")
+    alex_token = app.state.services.auth.create_session_token(username="alex")
+
+    def mutation_headers(token: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3000",
+            "X-CSRF-Token": "csrf-token",
+        }
+
+    yaw_save = client.put(
+        "/api/config",
+        headers=mutation_headers(yaw_token),
+        json={
+            "environment": "development",
+            "version": "v1",
+            "patches": [
+                {"op": "replace", "path": "trading_loop_interval_seconds", "value": 60},
+            ],
+        },
+    )
+    alex_save = client.put(
+        "/api/config",
+        headers=mutation_headers(alex_token),
+        json={
+            "environment": "development",
+            "version": "v1",
+            "patches": [
+                {"op": "replace", "path": "trading_loop_interval_seconds", "value": 120},
+            ],
+        },
+    )
+    yaw_current = client.get("/api/config/current", headers={"Authorization": f"Bearer {yaw_token}"})
+    alex_current = client.get("/api/config/current", headers={"Authorization": f"Bearer {alex_token}"})
+    rows = app.state.services.registry.state.rows("shared.config_versions")
+
+    assert yaw_save.status_code == 200
+    assert alex_save.status_code == 200
+    assert yaw_current.json()["username"] == "yaw"
+    assert yaw_current.json()["settings"]["trading_loop_interval_seconds"] == 60
+    assert alex_current.json()["username"] == "alex"
+    assert alex_current.json()["settings"]["trading_loop_interval_seconds"] == 120
+    assert {(row["username"], row["version"]) for row in rows} == {("yaw", "v1"), ("alex", "v1")}
+    assert all(row["active"] for row in rows)
+
+
 def test_req_alp_014_03_config_api_saves_presets_and_additive_symbols() -> None:
     """TST-REQ-ALP-014-03: Validates REQ-ALP-014 and REQ-UI-005
 

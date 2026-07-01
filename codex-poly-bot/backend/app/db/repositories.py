@@ -33,6 +33,16 @@ class SchemaViolationError(ValueError):
     """Raised when a repository is used with the wrong schema."""
 
 
+SHARED_CONFIG_USERNAME = "__shared__"
+
+
+def normalize_config_username(username: str | None) -> str:
+    """Return the config owner key used by shared config version rows."""
+
+    value = (username or "").strip()
+    return value or SHARED_CONFIG_USERNAME
+
+
 @dataclass
 class DatabaseState:
     """Local repository state used by tests and dry-run development."""
@@ -231,13 +241,22 @@ class SharedRepositories:
         if schema_name != SHARED_SCHEMA:
             raise SchemaViolationError("shared records must use the shared schema")
 
-    def record_config_version(self, *, environment: Environment, version: str, payload: dict, active: bool = True) -> dict:
+    def record_config_version(
+        self,
+        *,
+        environment: Environment,
+        version: str,
+        payload: dict,
+        active: bool = True,
+        username: str | None = None,
+    ) -> dict:
         self.ensure_schema(SHARED_SCHEMA)
         return self.state.insert(
             f"{SHARED_SCHEMA}.config_versions",
             {
                 "id": str(uuid4()),
                 "environment": environment.value,
+                "username": normalize_config_username(username),
                 "version": version,
                 "active": active,
                 "payload": payload,
