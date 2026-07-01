@@ -42,7 +42,7 @@ class AppSettings:
 
     allowed_usernames: tuple[str, ...] = ("yaw",)
     signing_secret: str = "local-dev-session-secret"
-    trusted_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
+    trusted_origins: tuple[str, ...] = ("http://localhost:3100", "http://127.0.0.1:3100")
     csrf_token: str = "local-dev-csrf-token"
     environment: Environment = Environment.LOCAL
     runtime_env: dict[str, str] = field(default_factory=dict)
@@ -212,7 +212,7 @@ def _trusted_origins_from_env() -> tuple[str, ...]:
     nextauth_url = os.environ.get("NEXTAUTH_URL")
     if nextauth_url:
         configured.append(nextauth_url)
-    return tuple(dict.fromkeys(configured)) or ("http://localhost:3000", "http://127.0.0.1:3000")
+    return tuple(dict.fromkeys(configured)) or ("http://localhost:3100", "http://127.0.0.1:3100")
 
 
 def _environment_from_env() -> Environment:

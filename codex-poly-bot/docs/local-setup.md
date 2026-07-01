@@ -44,11 +44,11 @@ Plain `docker compose up` still works with the compose defaults, but it will not
 
 1. Run `./scripts/setup-local.sh` from the project root. The script creates `backend/.venv`, installs backend test dependencies from `backend/pyproject.toml`, and runs the safe setup tests.
 2. Install frontend dependencies with `cd frontend && npm install`.
-3. Start local services with `docker compose --env-file .env.local up`. The compose contract starts Postgres, the FastAPI backend on port `8000`, and the Next.js dashboard on port `3000`.
+3. Start local services with `docker compose --env-file .env.local up`. The compose contract starts Postgres, the FastAPI backend on port `8000`, and the Next.js dashboard on host port `3100`.
 4. Run backend tests directly with `backend/.venv/bin/python -m pytest`.
 5. Run frontend checks with `cd frontend && npm run typecheck && npm run test:auth-boundary && npm run test:dashboard-controls && npm run test:dashboard-operations`.
 6. Run the backend API with `backend/.venv/bin/uvicorn app.main:create_app --factory --app-dir backend --reload --port 8000`.
-7. Run the dashboard with `cd frontend && npm run dev`.
+7. Run the dashboard with `cd frontend && npm run dev`, then open `http://127.0.0.1:3100`.
 
 For local dashboard testing without GitHub OAuth secrets, start the frontend with `ALLOW_LOCAL_AUTH_BYPASS=true`, `DASHBOARD_ALLOWED_USERS=yaw`, and local session secrets. This bypass is disabled in production.
 

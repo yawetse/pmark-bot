@@ -419,7 +419,7 @@ def test_req_ui_004_05_dashboard_preferences_persist_theme_timezone_and_costs() 
         "/api/preferences",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={
@@ -510,7 +510,7 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "/api/operations/manual-run",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={"environment": "development"},
@@ -689,7 +689,7 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
     auth_headers = {"Authorization": f"Bearer {token}", "X-Environment": "development"}
     mutation_headers = {
         **auth_headers,
-        "Origin": "http://localhost:3000",
+        "Origin": "http://localhost:3100",
         "X-CSRF-Token": "csrf-token",
     }
 
@@ -822,7 +822,7 @@ def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> No
     client = TestClient(app)
     headers = {
         "Authorization": f"Bearer {token}",
-        "Origin": "http://localhost:3000",
+        "Origin": "http://localhost:3100",
         "X-CSRF-Token": "csrf-token",
     }
 
@@ -865,7 +865,7 @@ def test_req_ui_004_12_daily_tick_summary_endpoint_supports_cached_and_forced_ru
     client, token = _client()
     headers = {
         "Authorization": f"Bearer {token}",
-        "Origin": "http://localhost:3000",
+        "Origin": "http://localhost:3100",
         "X-CSRF-Token": "csrf-token",
     }
 
@@ -1317,7 +1317,7 @@ def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() ->
         "/api/preferences",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={
@@ -1391,7 +1391,7 @@ def test_req_ui_010_03_dashboard_summary_uses_real_aws_billing_when_available() 
         "/api/preferences",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={
@@ -1446,7 +1446,7 @@ def test_req_ui_010_04_ai_usage_import_reports_provider_status_separately() -> N
         "/api/economics/ai-usage-import",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={"environment": "development", "provider": "openai"},
@@ -1516,7 +1516,7 @@ def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:
         "/api/config",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={
@@ -1561,7 +1561,7 @@ def test_req_ui_005_04_config_api_persists_settings_per_user() -> None:
     def mutation_headers(token: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         }
 
@@ -1614,7 +1614,7 @@ def test_req_alp_014_03_config_api_saves_presets_and_additive_symbols() -> None:
         "/api/config",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={
@@ -1652,7 +1652,7 @@ def test_req_str_003_05_config_api_saves_scanner_thresholds() -> None:
         "/api/config",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={
@@ -1761,7 +1761,7 @@ def test_req_ui_008_03_kill_switch_api_disables_live_and_returns_progress() -> N
         "/api/kill-switch",
         headers={
             "Authorization": f"Bearer {token}",
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
         json={"environment": "development", "reason": "operator stop"},

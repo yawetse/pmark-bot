@@ -629,7 +629,7 @@ def test_req_dep_001_04_docker_compose_runs_backend_and_frontend_apps() -> None:
     assert "uvicorn" in text
     assert "app.main:create_app" in text
     assert "8000:8000" in text
-    assert "3000:3000" in text
+    assert "3100:3000" in text
     assert "frontend placeholder" not in text
     assert "backend safe defaults ok" not in text
 
