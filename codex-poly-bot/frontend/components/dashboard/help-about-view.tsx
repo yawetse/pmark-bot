@@ -12,7 +12,7 @@ const COMPONENTS = [
   {
     name: "Next.js dashboard",
     role: "Operator UI for status, config, model views, comparison, operations, system readiness, and this help page.",
-    runs: "Local port 3000 or the frontend ECS workload.",
+    runs: "Local port 3100 or the frontend ECS workload.",
   },
   {
     name: "FastAPI backend",
@@ -73,7 +73,7 @@ const ENVIRONMENTS = [
   {
     name: "local",
     purpose: "Workstation and Docker testing",
-    runtime: "Postgres, backend on 8000, dashboard on 3000",
+    runtime: "Postgres, backend on 8000, dashboard on 3100",
     trading: "Dry run, venues disabled, local auth bypass allowed outside production",
   },
   {

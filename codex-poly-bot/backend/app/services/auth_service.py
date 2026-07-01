@@ -58,7 +58,7 @@ class AuthService:
     ):
         self.allowed_usernames = {username.lower() for username in allowed_usernames}
         self.signing_secret = signing_secret.encode()
-        self.trusted_origins = trusted_origins or {"http://localhost:3000"}
+        self.trusted_origins = trusted_origins or {"http://localhost:3100"}
         self.registry = registry or RepositoryRegistry()
         self.audit_service = AuditService(self.registry)
         self.token_ttl_seconds = token_ttl_seconds
