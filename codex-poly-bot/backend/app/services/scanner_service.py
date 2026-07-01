@@ -15,7 +15,7 @@ from app.domain import Environment, Venue
 from app.services.stock_universe import resolve_alpaca_symbol_universe
 
 
-DEFAULT_POLYMARKET_MARKET_DATA_LIMIT = 25
+DEFAULT_POLYMARKET_MARKET_DATA_LIMIT = 100
 MAX_POLYMARKET_MARKET_DATA_LIMIT = 250
 
 DEFAULT_SCANNER_CONFIG: dict[str, Any] = {

@@ -11,7 +11,13 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.db import PersistenceUnavailableError, RepositoryRegistry, UnitOfWork
+from app.db import (
+    PersistenceUnavailableError,
+    RepositoryRegistry,
+    SHARED_CONFIG_USERNAME,
+    UnitOfWork,
+    normalize_config_username,
+)
 from app.domain import Environment, ModelProvider, Venue
 from app.services.audit_service import ActorContext, AuditService, ConfigChange, ConfigMutationResult
 from app.services.auth_service import DashboardAccessResult
@@ -136,7 +142,7 @@ class ConfigService:
     def __init__(self, registry: RepositoryRegistry | None = None):
         self.registry = registry or RepositoryRegistry()
         self.audit_service = AuditService(self.registry)
-        self._last_good_snapshots: dict[Environment, RuntimeConfigSnapshot] = {}
+        self._last_good_snapshots: dict[tuple[Environment, str], RuntimeConfigSnapshot] = {}
 
     def save_config_patches(
         self,
@@ -147,6 +153,7 @@ class ConfigService:
         expected_version: str | None,
         version: str,
         patches: list[ConfigPatchOperation],
+        username: str | None = None,
     ) -> ConfigSaveResult:
         """Validate and persist dashboard config patches.
 
@@ -158,7 +165,7 @@ class ConfigService:
         if not patches:
             raise ConfigValidationError("config update requires at least one patch")
 
-        current_payload = self._current_payload(environment)
+        current_payload = self._current_payload(environment, username=username)
         next_payload = deepcopy(current_payload)
         first_change: ConfigChange | None = None
         for patch in patches:
@@ -191,6 +198,7 @@ class ConfigService:
             version=version,
             payload=next_payload,
             expected_version=expected_version,
+            username=username,
         )
 
     def save_config_change(
@@ -202,13 +210,17 @@ class ConfigService:
         version: str,
         payload: dict[str, Any],
         expected_version: str | None = None,
+        username: str | None = None,
     ) -> ConfigSaveResult:
         """Persist a new version after auditing the dashboard change.
 
         REQ: REQ-UI-006, REQ-UI-007, REQ-OBS-004
         """
 
-        if expected_version is not None and expected_version != self.current_version(environment):
+        if expected_version is not None and expected_version != self.current_version(
+            environment,
+            username=username,
+        ):
             raise ConfigConflictError("config version conflict")
 
         with UnitOfWork(self.registry.state) as unit:
@@ -217,9 +229,10 @@ class ConfigService:
                 environment=environment,
                 change=change,
             )
-            self._deactivate_active_versions(environment)
+            self._deactivate_active_versions(environment, username=username)
             config_version = self.registry.shared().record_config_version(
                 environment=environment,
+                username=username,
                 version=version,
                 payload=deepcopy(payload),
             )
@@ -230,24 +243,29 @@ class ConfigService:
         )
         return ConfigSaveResult(mutation=mutation, applies_on_next_loop=True)
 
-    def config_for_next_loop(self, environment: Environment) -> ConfigReloadResult:
+    def config_for_next_loop(
+        self,
+        environment: Environment,
+        username: str | None = None,
+    ) -> ConfigReloadResult:
         """Load one config snapshot for the next trading loop.
 
         REQ: REQ-UI-007, REQ-OBS-006
         """
 
         try:
-            row = self._latest_config_row(environment)
+            row = self._latest_config_row(environment, username=username)
         except PersistenceUnavailableError as exc:
-            return self._degraded_reload(environment, str(exc))
+            return self._degraded_reload(environment, str(exc), username=username)
 
+        owner = normalize_config_username(username)
         if row is None:
             fallback = RuntimeConfigSnapshot(
                 environment=environment,
                 version="bootstrap",
                 payload={},
             )
-            self._last_good_snapshots[environment] = fallback
+            self._last_good_snapshots[(environment, owner)] = fallback
             return ConfigReloadResult(snapshot=fallback)
 
         snapshot = RuntimeConfigSnapshot(
@@ -255,32 +273,51 @@ class ConfigService:
             version=row["version"],
             payload=self._with_stock_universe_snapshots(environment, deepcopy(row["payload"])),
         )
-        self._last_good_snapshots[environment] = snapshot
+        self._last_good_snapshots[(environment, owner)] = snapshot
         return ConfigReloadResult(snapshot=snapshot)
 
-    def current_version(self, environment: Environment) -> str | None:
+    def current_version(self, environment: Environment, username: str | None = None) -> str | None:
         """Return the newest active config version for an environment."""
 
-        row = self._latest_config_row(environment)
+        row = self._latest_config_row(environment, username=username)
         return row["version"] if row else None
 
-    def _latest_config_row(self, environment: Environment) -> dict | None:
+    def _latest_config_row(self, environment: Environment, username: str | None = None) -> dict | None:
+        owner = normalize_config_username(username)
         rows = [
             row
             for row in self.registry.state.rows("shared.config_versions")
             if row["environment"] == environment.value and row["active"]
         ]
-        if not rows:
+        owner_rows = [
+            row
+            for row in rows
+            if normalize_config_username(row.get("username")) == owner
+        ]
+        if owner_rows:
+            return max(owner_rows, key=lambda row: row["created_at"])
+        if owner == SHARED_CONFIG_USERNAME:
             return None
-        return max(rows, key=lambda row: row["created_at"])
+        shared_rows = [
+            row
+            for row in rows
+            if normalize_config_username(row.get("username")) == SHARED_CONFIG_USERNAME
+        ]
+        if not shared_rows:
+            return None
+        return max(shared_rows, key=lambda row: row["created_at"])
 
-    def _deactivate_active_versions(self, environment: Environment) -> None:
+    def _deactivate_active_versions(self, environment: Environment, username: str | None = None) -> None:
+        owner = normalize_config_username(username)
         for row in self.registry.state.rows("shared.config_versions"):
-            if row["environment"] == environment.value:
+            if (
+                row["environment"] == environment.value
+                and normalize_config_username(row.get("username")) == owner
+            ):
                 row["active"] = False
 
-    def _current_payload(self, environment: Environment) -> dict[str, Any]:
-        row = self._latest_config_row(environment)
+    def _current_payload(self, environment: Environment, username: str | None = None) -> dict[str, Any]:
+        row = self._latest_config_row(environment, username=username)
         if row is not None:
             return self._with_stock_universe_snapshots(environment, deepcopy(row["payload"]))
         return self._with_stock_universe_snapshots(environment, default_config_payload())
@@ -611,15 +648,21 @@ class ConfigService:
             raise ConfigValidationError(f"{path} must be between 0 and 1")
         return parsed
 
-    def _degraded_reload(self, environment: Environment, message: str) -> ConfigReloadResult:
-        prior = self._last_good_snapshots.get(environment)
+    def _degraded_reload(
+        self,
+        environment: Environment,
+        message: str,
+        username: str | None = None,
+    ) -> ConfigReloadResult:
+        owner = normalize_config_username(username)
+        prior = self._last_good_snapshots.get((environment, owner))
         if prior is None:
             prior = RuntimeConfigSnapshot(
                 environment=environment,
                 version="bootstrap",
                 payload={},
             )
-            self._last_good_snapshots[environment] = prior
+            self._last_good_snapshots[(environment, owner)] = prior
 
         health_message = f"config reload failed: {message}"
         try:

@@ -1,6 +1,19 @@
 "use client";
 
-import { Bot, FlaskConical, HelpCircle, PlayCircle, Plus, Save, Trash2 } from "lucide-react";
+import {
+  ArrowRight,
+  Bot,
+  CheckCircle2,
+  FlaskConical,
+  HelpCircle,
+  PlayCircle,
+  Plus,
+  Save,
+  Settings2,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
@@ -97,7 +110,7 @@ type ScenarioResponse = {
 
 type ScenarioState =
   | { status: "loading" }
-  | { status: "ready"; data: ScenarioResponse }
+  | { status: "ready"; data: ScenarioResponse; configSnapshot: ConfigSnapshot | null }
   | { status: "error"; message: string };
 
 type ConfigDraft = {
@@ -110,6 +123,8 @@ type ConfigValue = string | boolean | number | string[] | Record<string, unknown
 
 type ConfigSnapshot = {
   environment: string;
+  username?: string | null;
+  config_owner?: string;
   version: string;
   settings: Record<string, unknown>;
 };
@@ -126,14 +141,160 @@ type SaveState =
   | { status: "saved"; label: string }
   | { status: "error"; message: string };
 
+type ScenarioLeverUnit = "count" | "hours" | "percent" | "usd";
+
+type ScenarioLever =
+  | {
+      kind: "range";
+      path: AllowedConfigPath;
+      label: string;
+      description: string;
+      stage: string;
+      fallback: number;
+      min: number;
+      max: number;
+      step: number;
+      unit: ScenarioLeverUnit;
+      displayMultiplier?: number;
+    }
+  | {
+      kind: "switch";
+      path: AllowedConfigPath;
+      label: string;
+      description: string;
+      stage: string;
+      fallback: boolean;
+    };
+
+type LeverRow = {
+  path: AllowedConfigPath;
+  label: string;
+  description: string;
+  stage: string;
+  currentValue: ConfigValue;
+  nextValue: ConfigValue;
+  currentDisplay: string;
+  nextDisplay: string;
+  changed: boolean;
+};
+
+const SCENARIO_LEVERS: ScenarioLever[] = [
+  {
+    kind: "switch",
+    path: "venues.polymarket_us.enabled",
+    label: "Polymarket US",
+    description: "Allows Polymarket US markets to enter the tick.",
+    stage: "Venue",
+    fallback: false,
+  },
+  {
+    kind: "range",
+    path: "scanner.polymarket.market_data_limit",
+    label: "Markets pulled",
+    description: "How many active Polymarket markets are fetched before filters run.",
+    stage: "Market data",
+    fallback: 100,
+    min: 1,
+    max: 250,
+    step: 1,
+    unit: "count",
+  },
+  {
+    kind: "range",
+    path: "scanner.polymarket.min_liquidity",
+    label: "Minimum liquidity",
+    description: "Lower this to let thinner order books reach later checks.",
+    stage: "Scanner",
+    fallback: 500,
+    min: 0,
+    max: 5000,
+    step: 50,
+    unit: "usd",
+  },
+  {
+    kind: "range",
+    path: "scanner.polymarket.min_depth",
+    label: "Minimum depth",
+    description: "Lower this to allow smaller bid or ask books.",
+    stage: "Scanner",
+    fallback: 500,
+    min: 0,
+    max: 5000,
+    step: 50,
+    unit: "count",
+  },
+  {
+    kind: "range",
+    path: "scanner.polymarket.max_spread",
+    label: "Maximum spread",
+    description: "Raise this to diagnose wider bid/ask markets.",
+    stage: "Scanner",
+    fallback: 0.05,
+    min: 0.005,
+    max: 0.2,
+    step: 0.005,
+    unit: "percent",
+    displayMultiplier: 100,
+  },
+  {
+    kind: "range",
+    path: "scanner.polymarket.max_hours_to_resolution",
+    label: "Resolution window",
+    description: "Raise this to include markets that resolve farther out.",
+    stage: "Scanner",
+    fallback: 168,
+    min: 1,
+    max: 720,
+    step: 12,
+    unit: "hours",
+  },
+  {
+    kind: "range",
+    path: "reasoning.polymarket.min_confidence",
+    label: "Model confidence",
+    description: "Lower this to diagnose candidates the model scores with less certainty.",
+    stage: "Reasoning",
+    fallback: 0.75,
+    min: 0.3,
+    max: 0.95,
+    step: 0.01,
+    unit: "percent",
+    displayMultiplier: 100,
+  },
+  {
+    kind: "range",
+    path: "reasoning.polymarket.min_edge",
+    label: "Minimum edge",
+    description: "Lower this to allow smaller probability gaps into strategy checks.",
+    stage: "Reasoning",
+    fallback: 0.07,
+    min: 0.005,
+    max: 0.25,
+    step: 0.005,
+    unit: "percent",
+    displayMultiplier: 100,
+  },
+  {
+    kind: "range",
+    path: "risk.polymarket.max_position_usd",
+    label: "Max position",
+    description: "Raise this only for dry-run diagnosis of risk gate blocks.",
+    stage: "Risk",
+    fallback: 25,
+    min: 1,
+    max: 250,
+    step: 1,
+    unit: "usd",
+  },
+];
+
 export function ScenarioView() {
   const [state, setState] = useState<ScenarioState>({ status: "loading" });
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStepKey, setSelectedStepKey] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [configDrafts, setConfigDrafts] = useState<ConfigDraft[]>([
-    { id: "config-draft-1", path: "scanner.polymarket.max_spread", value: "0.08" },
-  ]);
+  const [leverDrafts, setLeverDrafts] = useState<Record<string, ConfigValue>>({});
+  const [configDrafts, setConfigDrafts] = useState<ConfigDraft[]>([]);
   const [actionState, setActionState] = useState<"idle" | "running">("idle");
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
 
@@ -153,6 +314,18 @@ export function ScenarioView() {
     );
   }, [selectedStepKey, state]);
 
+  const leverRows = useMemo(() => {
+    if (state.status !== "ready") {
+      return [];
+    }
+    return SCENARIO_LEVERS.map((lever) => leverRow(lever, state.configSnapshot?.settings ?? {}, leverDrafts));
+  }, [leverDrafts, state]);
+
+  const changedLeverRows = useMemo(
+    () => leverRows.filter((row) => row.changed),
+    [leverRows],
+  );
+
   async function loadScenario({
     runId = selectedRunId,
     stepKey = selectedStepKey,
@@ -165,21 +338,28 @@ export function ScenarioView() {
     configOverrides?: Array<{ path: string; value: string }>;
   }) {
     setActionState("running");
-    const result = await dashboardApi<ScenarioResponse>("scenario/analyze", {
-      method: "POST",
-      body: JSON.stringify({
-        runId: runId || null,
-        stepKey: stepKey || null,
-        prompt: nextPrompt || null,
-        configOverrides,
+    const [result, configSnapshot] = await Promise.all([
+      dashboardApi<ScenarioResponse>("scenario/analyze", {
+        method: "POST",
+        body: JSON.stringify({
+          runId: runId || null,
+          stepKey: stepKey || null,
+          prompt: nextPrompt || null,
+          configOverrides,
+        }),
       }),
-    });
+      dashboardApi<ConfigSnapshot>("config/current"),
+    ]);
     setActionState("idle");
     if (!result.ok) {
       setState({ status: "error", message: result.message });
       return;
     }
-    setState({ status: "ready", data: result.data });
+    setState({
+      status: "ready",
+      data: result.data,
+      configSnapshot: configSnapshot.ok ? configSnapshot.data : null,
+    });
     setSelectedRunId(result.data.run?.id ?? "");
     setSelectedStepKey(result.data.selectedStepKey ?? result.data.steps[0]?.key ?? "");
   }
@@ -191,11 +371,14 @@ export function ScenarioView() {
 
   function onConfigSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const scenarioDrafts = scenarioDraftsFromRows(changedLeverRows);
+    if (!scenarioDrafts.length) {
+      setSaveState({ status: "error", message: "Move at least one lever, then analyze the scenario." });
+      return;
+    }
     void loadScenario({
       stepKey: selectedStep?.key ?? selectedStepKey,
-      configOverrides: configDrafts
-        .map((draft) => ({ path: draft.path.trim(), value: draft.value.trim() }))
-        .filter((draft) => draft.path),
+      configOverrides: scenarioDrafts,
     });
   }
 
@@ -221,22 +404,28 @@ export function ScenarioView() {
   }
 
   function removeConfigDraft(id: string) {
-    setConfigDrafts((drafts) =>
-      drafts.length === 1 ? drafts : drafts.filter((draft) => draft.id !== id),
-    );
+    setConfigDrafts((drafts) => drafts.filter((draft) => draft.id !== id));
   }
 
   function loadAiConfigSet() {
     if (state.status !== "ready" || !state.data.recommendedConfigSet.patches.length) {
       return;
     }
-    setConfigDrafts(
-      state.data.recommendedConfigSet.patches.map((patch, index) => ({
-        id: `ai-config-${index}-${patch.path}`,
-        path: patch.path,
-        value: formatDraftValue(patch.value),
-      })),
-    );
+    const nextLeverDrafts: Record<string, ConfigValue> = {};
+    const advancedDrafts: ConfigDraft[] = [];
+    for (const [index, patch] of state.data.recommendedConfigSet.patches.entries()) {
+      if (SCENARIO_LEVERS.some((lever) => lever.path === patch.path)) {
+        nextLeverDrafts[patch.path] = parseScenarioDraftValue(patch.value);
+      } else {
+        advancedDrafts.push({
+          id: `ai-config-${index}-${patch.path}`,
+          path: patch.path,
+          value: formatDraftValue(patch.value),
+        });
+      }
+    }
+    setLeverDrafts((currentDrafts) => ({ ...currentDrafts, ...nextLeverDrafts }));
+    setConfigDrafts(advancedDrafts);
     setSaveState({ status: "idle" });
   }
 
@@ -254,7 +443,8 @@ export function ScenarioView() {
   }
 
   async function applyTestConfig() {
-    await saveConfigDrafts(configDrafts, "Test settings applied");
+    const drafts = [...scenarioDraftsFromRows(changedLeverRows), ...configDrafts];
+    await saveConfigDrafts(drafts, "Scenario settings applied");
   }
 
   async function saveConfigDrafts(
@@ -348,25 +538,26 @@ export function ScenarioView() {
 
   return (
     <div className="page-stack scenario-view">
-      <section className="operator-panel">
+      <section className="operator-panel scenario-hero-panel">
         <div className="panel-heading">
           <div>
             <p className="section-label">Scenario</p>
-            <h1>Tick Walkthrough</h1>
+            <h1>Scenario Lab</h1>
           </div>
           <span className="status idle">{state.data.model}</span>
         </div>
         <p className="panel-note">{state.data.message}</p>
         <div className="scenario-selector-row">
           <label>
-            Tick
+            Tick data
             <select
               value={selectedRunId}
               onChange={(event) => {
                 setSelectedRunId(event.target.value);
-                void loadScenario({ runId: event.target.value, stepKey: "" });
+                setSelectedStepKey("");
               }}
             >
+              <option value="">Latest tick</option>
               {state.data.runs.length ? null : <option value="">No runs recorded</option>}
               {state.data.runs.map((run) => (
                 <option key={run.id} value={run.id}>
@@ -376,14 +567,23 @@ export function ScenarioView() {
             </select>
           </label>
           <button
-            className="button"
+            className="button primary"
             disabled={actionState === "running"}
             type="button"
             onClick={() => void loadScenario({ runId: selectedRunId, stepKey: selectedStepKey })}
           >
             <PlayCircle aria-hidden="true" size={16} />
-            Refresh
+            Analyze
           </button>
+        </div>
+        <div className="scenario-summary-strip" aria-label="Current scenario summary">
+          <ScenarioSummaryItem label="Tick" value={state.data.run?.status ?? "No tick"} />
+          <ScenarioSummaryItem label="Trigger" value={state.data.run?.trigger ?? "None"} />
+          <ScenarioSummaryItem label="Gate" value={selectedStep?.label ?? "No step"} />
+          <ScenarioSummaryItem
+            label="Config"
+            value={state.configSnapshot?.username || state.configSnapshot?.config_owner || "user"}
+          />
         </div>
       </section>
 
@@ -463,23 +663,61 @@ export function ScenarioView() {
         />
       )}
 
-      <div className="scenario-help-grid">
-        <Panel eyebrow="Help with AI" title="Ask about this scenario">
-          <form className="scenario-form" onSubmit={onPromptSubmit}>
-            <label>
-              Prompt
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                rows={4}
-                placeholder="What settings get me past scanner?"
+      <Panel eyebrow="Levers" title="Move settings to test a pass path" className="scenario-lever-panel">
+        <form className="scenario-form" onSubmit={onConfigSubmit}>
+          <div className="scenario-lever-grid">
+            {SCENARIO_LEVERS.map((lever) => (
+              <ScenarioLeverControl
+                key={lever.path}
+                lever={lever}
+                row={leverRows.find((item) => item.path === lever.path)}
+                value={leverDrafts[lever.path]}
+                onChange={(value) => {
+                  setLeverDrafts((currentDrafts) => ({ ...currentDrafts, [lever.path]: value }));
+                  setSaveState({ status: "idle" });
+                }}
               />
-            </label>
-            <button className="button primary" disabled={actionState === "running"} type="submit">
-              <Bot aria-hidden="true" size={16} />
-              Help with AI
+            ))}
+          </div>
+          <div className="scenario-config-actions">
+            <button className="button" type="button" onClick={loadAiConfigSet}>
+              <Sparkles aria-hidden="true" size={16} />
+              Use recommended
             </button>
-          </form>
+            <button className="button" disabled={actionState === "running"} type="submit">
+              <FlaskConical aria-hidden="true" size={16} />
+              Analyze scenario
+            </button>
+            <button
+              className="button primary"
+              disabled={saveState.status === "submitting" || !changedLeverRows.length}
+              type="button"
+              onClick={() => void applyTestConfig()}
+            >
+              <Save aria-hidden="true" size={16} />
+              Apply scenario settings
+            </button>
+          </div>
+        </form>
+        <SaveStatus state={saveState} />
+      </Panel>
+
+      <ScenarioBeforeAfter
+        configTests={state.data.configTests}
+        generatedAt={state.data.generatedAt}
+        leverRows={leverRows}
+        run={state.data.run}
+        selectedStep={selectedStep}
+      />
+
+      <div className="scenario-help-grid">
+        <Panel eyebrow="Recommended path" title="Suggested next move">
+          <ScenarioConfigPlan
+            configSet={state.data.recommendedConfigSet}
+            onApply={applyAiConfigSet}
+            onLoad={loadAiConfigSet}
+            disabled={actionState === "running" || saveState.status === "submitting"}
+          />
           <div className="scenario-answer">
             <strong>{state.data.answer.title}</strong>
             <p>{state.data.answer.body}</p>
@@ -489,16 +727,45 @@ export function ScenarioView() {
               ))}
             </ul>
           </div>
-          <ScenarioConfigPlan
-            configSet={state.data.recommendedConfigSet}
-            onApply={applyAiConfigSet}
-            onLoad={loadAiConfigSet}
-            disabled={actionState === "running" || saveState.status === "submitting"}
-          />
         </Panel>
 
-        <Panel eyebrow="Test config" title="Try settings together">
-          <form className="scenario-form" onSubmit={onConfigSubmit}>
+        <Panel eyebrow="Ask" title="Ask about this tick">
+          <form className="scenario-form" onSubmit={onPromptSubmit}>
+            <label>
+              Question
+              <textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                rows={4}
+                placeholder="What setting is blocking this trade?"
+              />
+            </label>
+            <button className="button primary" disabled={actionState === "running"} type="submit">
+              <Bot aria-hidden="true" size={16} />
+              Ask
+            </button>
+          </form>
+        </Panel>
+      </div>
+
+      <details className="scenario-advanced-editor">
+        <summary>
+          <Settings2 aria-hidden="true" size={16} />
+          Advanced path editor
+        </summary>
+        <Panel eyebrow="Advanced" title="Test a specific config path">
+          <form
+            className="scenario-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void loadScenario({
+                stepKey: selectedStep?.key ?? selectedStepKey,
+                configOverrides: configDrafts
+                  .map((draft) => ({ path: draft.path.trim(), value: draft.value.trim() }))
+                  .filter((draft) => draft.path),
+              });
+            }}
+          >
             {configDrafts.map((draft) => (
               <div className="scenario-config-row" key={draft.id}>
                 <label>
@@ -517,7 +784,6 @@ export function ScenarioView() {
                 </label>
                 <button
                   className="icon-button"
-                  disabled={configDrafts.length === 1}
                   type="button"
                   onClick={() => removeConfigDraft(draft.id)}
                   aria-label="Remove setting"
@@ -531,35 +797,188 @@ export function ScenarioView() {
                 <Plus aria-hidden="true" size={16} />
                 Add setting
               </button>
-              <button className="button" disabled={actionState === "running"} type="submit">
+              <button className="button" disabled={!configDrafts.length || actionState === "running"} type="submit">
                 <FlaskConical aria-hidden="true" size={16} />
-                Test settings
-              </button>
-              <button
-                className="button primary"
-                disabled={saveState.status === "submitting"}
-                type="button"
-                onClick={() => void applyTestConfig()}
-              >
-                <Save aria-hidden="true" size={16} />
-                Apply settings
+                Test path
               </button>
             </div>
           </form>
-          <SaveStatus state={saveState} />
-          <div className="scenario-test-list">
-            {state.data.configTests.map((test) => (
-              <article key={`${test.path}-${test.value}`}>
-                <strong>{test.path || "No path"}</strong>
-                <small>Current: {test.currentValue ?? "unknown"} | Test: {test.value || "empty"}</small>
-                <p>{test.impact}</p>
-                <small>{test.recommendation}</small>
-              </article>
-            ))}
-          </div>
         </Panel>
-      </div>
+      </details>
     </div>
+  );
+}
+
+function ScenarioSummaryItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ScenarioLeverControl({
+  lever,
+  onChange,
+  row,
+}: {
+  lever: ScenarioLever;
+  row?: LeverRow;
+  value?: ConfigValue;
+  onChange: (value: ConfigValue) => void;
+}) {
+  const currentDisplay = row?.currentDisplay ?? formatLeverDisplay(lever, lever.fallback);
+  const nextDisplay = row?.nextDisplay ?? currentDisplay;
+  if (lever.kind === "switch") {
+    const checked = Boolean(row?.nextValue ?? lever.fallback);
+    return (
+      <article className="scenario-lever-card" data-changed={row?.changed ? "true" : undefined}>
+        <div className="scenario-lever-heading">
+          <div>
+            <span>{lever.stage}</span>
+            <strong>{lever.label}</strong>
+          </div>
+          <button
+            aria-checked={checked}
+            className="scenario-switch"
+            role="switch"
+            type="button"
+            onClick={() => onChange(!checked)}
+          >
+            <span aria-hidden="true" />
+          </button>
+        </div>
+        <p>{lever.description}</p>
+        <div className="scenario-lever-values">
+          <span>Current {currentDisplay}</span>
+          <strong>Scenario {nextDisplay}</strong>
+        </div>
+      </article>
+    );
+  }
+
+  const value = Number(row?.nextValue ?? lever.fallback);
+  return (
+    <article className="scenario-lever-card" data-changed={row?.changed ? "true" : undefined}>
+      <div className="scenario-lever-heading">
+        <div>
+          <span>{lever.stage}</span>
+          <strong>{lever.label}</strong>
+        </div>
+        {row?.changed ? <CheckCircle2 aria-label="Changed" size={17} /> : null}
+      </div>
+      <p>{lever.description}</p>
+      <input
+        aria-label={lever.label}
+        max={lever.max}
+        min={lever.min}
+        step={lever.step}
+        type="range"
+        value={value}
+        onChange={(event) => onChange(roundLeverNumber(Number(event.target.value), lever.step))}
+      />
+      <div className="scenario-lever-values">
+        <span>Current {currentDisplay}</span>
+        <strong>Scenario {nextDisplay}</strong>
+      </div>
+    </article>
+  );
+}
+
+function ScenarioBeforeAfter({
+  configTests,
+  generatedAt,
+  leverRows,
+  run,
+  selectedStep,
+}: {
+  configTests: ConfigTest[];
+  generatedAt: string;
+  leverRows: LeverRow[];
+  run?: ScenarioRun | null;
+  selectedStep: ScenarioStep | null;
+}) {
+  const changedRows = leverRows.filter((row) => row.changed);
+  const rowsForCurrent = changedRows.length ? changedRows : leverRows.slice(0, 5);
+  const testByPath = new Map(configTests.map((test) => [test.path, test]));
+
+  return (
+    <section className="scenario-before-after" aria-label="Scenario before and after">
+      <article>
+        <div className="scenario-card-heading">
+          <PlayCircle aria-hidden="true" size={18} />
+          <div>
+            <span>Tick</span>
+            <strong>{run?.status ?? "No tick selected"}</strong>
+          </div>
+        </div>
+        <dl>
+          <div>
+            <dt>Trigger</dt>
+            <dd>{run?.trigger ?? "None"}</dd>
+          </div>
+          <div>
+            <dt>Started</dt>
+            <dd>{formatDateTime(run?.startedAt)}</dd>
+          </div>
+          <div>
+            <dt>Analyzed</dt>
+            <dd>{formatDateTime(generatedAt)}</dd>
+          </div>
+          <div>
+            <dt>Gate</dt>
+            <dd>{selectedStep ? `${selectedStep.label}: ${selectedStep.status}` : "No step"}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article>
+        <div className="scenario-card-heading">
+          <SlidersHorizontal aria-hidden="true" size={18} />
+          <div>
+            <span>Current settings</span>
+            <strong>{changedRows.length ? `${changedRows.length} selected` : "Baseline"}</strong>
+          </div>
+        </div>
+        <div className="scenario-setting-list">
+          {rowsForCurrent.map((row) => (
+            <div key={`current-${row.path}`}>
+              <span>{row.label}</span>
+              <strong>{row.currentDisplay}</strong>
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article>
+        <div className="scenario-card-heading">
+          <ArrowRight aria-hidden="true" size={18} />
+          <div>
+            <span>Scenario</span>
+            <strong>{changedRows.length ? "After changes" : "No changes yet"}</strong>
+          </div>
+        </div>
+        {changedRows.length ? (
+          <div className="scenario-setting-list">
+            {changedRows.map((row) => {
+              const test = testByPath.get(row.path);
+              return (
+                <div key={`after-${row.path}`}>
+                  <span>{row.label}</span>
+                  <strong>
+                    {row.currentDisplay} <ArrowRight aria-hidden="true" size={13} /> {row.nextDisplay}
+                  </strong>
+                  <small>{test?.impact ?? row.description}</small>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="panel-note">Move a lever, then analyze the scenario to compare the pass path.</p>
+        )}
+      </article>
+    </section>
   );
 }
 
@@ -668,6 +1087,119 @@ function formatDateTime(value: string | null | undefined): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function leverRow(
+  lever: ScenarioLever,
+  settings: Record<string, unknown>,
+  drafts: Record<string, ConfigValue>,
+): LeverRow {
+  const currentValue = coerceLeverValue(lever, valueAtPath(settings, lever.path));
+  const nextValue = coerceLeverValue(
+    lever,
+    Object.prototype.hasOwnProperty.call(drafts, lever.path) ? drafts[lever.path] : currentValue,
+  );
+  return {
+    path: lever.path,
+    label: lever.label,
+    description: lever.description,
+    stage: lever.stage,
+    currentValue,
+    nextValue,
+    currentDisplay: formatLeverDisplay(lever, currentValue),
+    nextDisplay: formatLeverDisplay(lever, nextValue),
+    changed: !sameConfigValue(currentValue, nextValue),
+  };
+}
+
+function coerceLeverValue(lever: ScenarioLever, rawValue: unknown): ConfigValue {
+  if (lever.kind === "switch") {
+    if (typeof rawValue === "boolean") {
+      return rawValue;
+    }
+    if (typeof rawValue === "string") {
+      return rawValue.toLowerCase() === "true";
+    }
+    return lever.fallback;
+  }
+  const numericValue = Number(rawValue ?? lever.fallback);
+  if (!Number.isFinite(numericValue)) {
+    return lever.fallback;
+  }
+  return clamp(roundLeverNumber(numericValue, lever.step), lever.min, lever.max);
+}
+
+function scenarioDraftsFromRows(rows: LeverRow[]): Array<{ path: string; value: string }> {
+  return rows
+    .filter((row) => row.changed)
+    .map((row) => ({ path: row.path, value: formatDraftValue(row.nextValue) }));
+}
+
+function parseScenarioDraftValue(value: string): ConfigValue {
+  const parsed = parseConfigValue(value);
+  return parsed.ok ? parsed.value : value;
+}
+
+function valueAtPath(source: Record<string, unknown>, path: string): unknown {
+  let current: unknown = source;
+  for (const part of path.split(".")) {
+    if (!isPlainObject(current) || !(part in current)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function formatLeverDisplay(lever: ScenarioLever, value: ConfigValue): string {
+  if (lever.kind === "switch") {
+    return value ? "On" : "Off";
+  }
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return String(value);
+  }
+  if (lever.unit === "percent") {
+    return `${formatNumber(numericValue * (lever.displayMultiplier ?? 100))}%`;
+  }
+  if (lever.unit === "usd") {
+    return `$${formatNumber(numericValue)}`;
+  }
+  if (lever.unit === "hours") {
+    return `${formatNumber(numericValue)}h`;
+  }
+  return formatNumber(numericValue);
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: value < 1 ? 2 : 1,
+    minimumFractionDigits: 0,
+  }).format(value);
+}
+
+function sameConfigValue(left: ConfigValue, right: ConfigValue): boolean {
+  if (typeof left === "boolean" || typeof right === "boolean") {
+    return left === right;
+  }
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return Math.abs(leftNumber - rightNumber) < 0.000001;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function roundLeverNumber(value: number, step: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  const decimals = String(step).includes(".") ? String(step).split(".")[1].length : 0;
+  return Number(value.toFixed(Math.max(decimals, 0)));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 function parseConfigDrafts(

@@ -14,9 +14,11 @@ from app.db.repositories import (
     PersistenceGate,
     PersistenceUnavailableError,
     RepositoryRegistry,
+    SHARED_CONFIG_USERNAME,
     SchemaViolationError,
     UnitOfWork,
     live_order_persistence_gate,
+    normalize_config_username,
 )
 from app.db.session import PersistenceConfigurationError, create_session_factory
 from app.db.schema import (
@@ -46,11 +48,13 @@ __all__ = [
     "RepositoryRegistry",
     "RetentionPolicy",
     "SHARED_SCHEMA",
+    "SHARED_CONFIG_USERNAME",
     "SchemaViolationError",
     "UnitOfWork",
     "create_session_factory",
     "live_order_persistence_gate",
     "migration_plan",
+    "normalize_config_username",
     "provider_schema",
     "retention_policy",
     "run_migrations",
