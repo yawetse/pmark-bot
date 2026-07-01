@@ -18,6 +18,7 @@ from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider
 from app.observability import (
     record_span_failure,
+    record_span_event,
     set_span_attributes,
     start_observability_span,
 )
@@ -168,9 +169,8 @@ class TickSummaryService:
 
         failures: list[tuple[str, Exception]] = []
         latest_run_id = _latest_run_id(request.runs)
-        for attempt_number, candidate_model in enumerate(
-            _summary_model_candidates(self.environ), start=1
-        ):
+        model_candidates = _summary_model_candidates(self.environ)
+        for attempt_number, candidate_model in enumerate(model_candidates, start=1):
             with start_observability_span(
                 "tick_summary.model_attempt",
                 attributes={
@@ -249,12 +249,19 @@ class TickSummaryService:
                         "latest_run_id": latest_run_id or "",
                         "window_minutes": request.window_minutes,
                     }
-                    record_span_failure(
-                        span,
-                        exc,
-                        event_name="tick_summary_model_failed",
-                        attributes=failure_payload,
-                    )
+                    if attempt_number == len(model_candidates):
+                        record_span_failure(
+                            span,
+                            exc,
+                            event_name="tick_summary_model_failed",
+                            attributes=failure_payload,
+                        )
+                    else:
+                        record_span_event(
+                            span,
+                            event_name="tick_summary_model_retry",
+                            attributes={"status": "retrying", **failure_payload},
+                        )
                     LOGGER.warning(
                         "tick_summary_model_failed %s",
                         json.dumps(

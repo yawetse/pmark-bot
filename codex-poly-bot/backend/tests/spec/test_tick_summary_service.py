@@ -45,18 +45,34 @@ class RecordingSummaryTransport:
         }
 
 
+class AlwaysFailingSummaryTransport:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def post_json(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.calls.append({"url": url, "headers": headers, "payload": payload})
+        raise RuntimeError(f"{payload['model']} unavailable")
+
+
 def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypatch) -> None:
     """TST-REQ-OBS-005-09: Validates REQ-OBS-005
 
     Given: the configured OpenAI tick summary model fails
     When: a fallback model is configured
-    Then: the summary retries with the fallback and records provider usage plus an APM failure
+    Then: the summary retries with the fallback and records provider usage plus a non-error retry event
     """
 
     registry = RepositoryRegistry()
     transport = RecordingSummaryTransport()
     spans: list[dict[str, Any]] = []
     recorded_failures: list[dict[str, Any]] = []
+    recorded_events: list[dict[str, Any]] = []
 
     @contextmanager
     def recording_span(name: str, *, attributes: dict[str, Any] | None = None):
@@ -80,6 +96,20 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
             }
         )
 
+    def record_event(
+        span: dict[str, Any] | None,
+        *,
+        event_name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        recorded_events.append(
+            {
+                "span": span,
+                "event_name": event_name,
+                "attributes": dict(attributes or {}),
+            }
+        )
+
     def set_attributes(span: dict[str, Any] | None, attributes: dict[str, Any] | None) -> None:
         if span is not None:
             span["attributes"].update(attributes or {})
@@ -91,6 +121,10 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
     monkeypatch.setattr(
         "app.services.tick_summary_service.record_span_failure",
         record_failure,
+    )
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.record_span_event",
+        record_event,
     )
     monkeypatch.setattr(
         "app.services.tick_summary_service.set_span_attributes",
@@ -143,18 +177,136 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
     assert spans[0]["attributes"]["attempt_number"] == 1
     assert spans[1]["attributes"]["model"] == "gpt-4.1-nano"
     assert spans[1]["attributes"]["status"] == "success"
-    assert recorded_failures == [
+    assert recorded_failures == []
+    assert recorded_events == [
         {
             "span": spans[0],
-            "event_name": "tick_summary_model_failed",
-            "error_type": "RuntimeError",
+            "event_name": "tick_summary_model_retry",
             "attributes": {
+                "status": "retrying",
                 "model": "unavailable-model",
                 "attempt_number": 1,
                 "environment": "development",
                 "prompt_version": "tick-summary-v1",
                 "error_type": "RuntimeError",
                 "message": "model not available",
+                "input_hash": result.input_hash,
+                "latest_run_id": "run-1",
+                "window_minutes": 10,
+            },
+        }
+    ]
+
+
+def test_req_obs_005_tick_summary_records_apm_failure_when_all_models_fail(monkeypatch) -> None:
+    """TST-REQ-OBS-005-12: Validates REQ-OBS-005
+
+    Given: every configured OpenAI tick summary model fails
+    When: no fallback can produce a summary
+    Then: the terminal model attempt is recorded as an APM failure
+    """
+
+    registry = RepositoryRegistry()
+    transport = AlwaysFailingSummaryTransport()
+    spans: list[dict[str, Any]] = []
+    recorded_failures: list[dict[str, Any]] = []
+    recorded_events: list[dict[str, Any]] = []
+
+    @contextmanager
+    def recording_span(name: str, *, attributes: dict[str, Any] | None = None):
+        span = {"name": name, "attributes": dict(attributes or {})}
+        spans.append(span)
+        yield span
+
+    def record_failure(
+        span: dict[str, Any] | None,
+        exc: Exception,
+        *,
+        event_name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        recorded_failures.append(
+            {
+                "span": span,
+                "event_name": event_name,
+                "error_type": exc.__class__.__name__,
+                "attributes": dict(attributes or {}),
+            }
+        )
+
+    def record_event(
+        span: dict[str, Any] | None,
+        *,
+        event_name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
+        recorded_events.append(
+            {
+                "span": span,
+                "event_name": event_name,
+                "attributes": dict(attributes or {}),
+            }
+        )
+
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.start_observability_span",
+        recording_span,
+    )
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.record_span_failure",
+        record_failure,
+    )
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.record_span_event",
+        record_event,
+    )
+    service = TickSummaryService(
+        registry=registry,
+        environ={
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_TICK_SUMMARY_MODEL": "unavailable-model",
+            "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "also-unavailable",
+        },
+        transport=transport,
+    )
+
+    result = service.summarize(
+        TickSummaryRequest(
+            environment=Environment.DEVELOPMENT,
+            generated_at=datetime(2026, 6, 26, 12, 0, tzinfo=UTC),
+            runs=[
+                {
+                    "id": "run-1",
+                    "trigger": "scheduled",
+                    "status": "partial",
+                    "metadata": {"actor": "scheduler"},
+                    "steps": [],
+                }
+            ],
+        )
+    )
+
+    assert result.status == "error"
+    assert result.model == "also-unavailable"
+    assert result.error_code == "RuntimeError"
+    assert [call["payload"]["model"] for call in transport.calls] == [
+        "unavailable-model",
+        "also-unavailable",
+    ]
+    assert recorded_events[0]["event_name"] == "tick_summary_model_retry"
+    assert recorded_events[0]["attributes"]["status"] == "retrying"
+    assert recorded_failures == [
+        {
+            "span": spans[1],
+            "event_name": "tick_summary_model_failed",
+            "error_type": "RuntimeError",
+            "attributes": {
+                "model": "also-unavailable",
+                "attempt_number": 2,
+                "environment": "development",
+                "prompt_version": "tick-summary-v1",
+                "error_type": "RuntimeError",
+                "message": "also-unavailable unavailable",
                 "input_hash": result.input_hash,
                 "latest_run_id": "run-1",
                 "window_minutes": 10,
