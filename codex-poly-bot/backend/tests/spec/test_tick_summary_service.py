@@ -70,6 +70,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
         *,
         event_name: str,
         attributes: dict[str, Any] | None = None,
+        mark_span_error: bool = True,
     ) -> None:
         recorded_failures.append(
             {
@@ -77,6 +78,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
                 "event_name": event_name,
                 "error_type": exc.__class__.__name__,
                 "attributes": dict(attributes or {}),
+                "mark_span_error": mark_span_error,
             }
         )
 
@@ -159,6 +161,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
                 "latest_run_id": "run-1",
                 "window_minutes": 10,
             },
+            "mark_span_error": False,
         }
     ]
 
