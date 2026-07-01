@@ -1,6 +1,6 @@
 # Implementation Gap Closure Checklist
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
 
 Purpose: track the remaining work needed to turn the current dashboard-visible loop into the full trading methodology described in `pmbot.md`, with equivalent support for Polymarket and stock trades.
 
@@ -239,8 +239,8 @@ uses the shared data grid for provider usage imports and cost history.
 - [x] Frontend checks cover each new dashboard table and control.
 - [x] Migration safety passes with no destructive changes.
 - [x] A local dry-run records all five pipeline steps with real records behind each step.
-- [ ] Development deployment passes health checks.
-- [ ] Production deployment passes health checks.
+- [x] Development deployment passes health checks.
+- [x] Production deployment passes health checks.
 - [ ] Live trading release evidence in `docs/live-trading-checklist.md` is complete for each venue.
 
 Live-trading enablement note: AWS production currently has `LIVE_ENABLED=true`,
@@ -249,6 +249,23 @@ and `ALPACA_ACCOUNT_STATUS=active`. The runtime now attaches concrete venue subm
 when required credentials are present, so the remaining production gate is operational
 evidence: dry-run/live-gated proof, risk cap review, kill-switch proof, account
 balance/buying-power checks, and final operator approval.
+
+Deployment evidence:
+
+- Development release: GitHub Actions run `28446297361` completed successfully for
+  commit `fdf5c46b55b0610433b3a4ced278287dd7fa6dda`; the `Deploy development`
+  job completed successfully, CloudFormation stack `codex-poly-bot-development`
+  is `UPDATE_COMPLETE`, both ECS services report one desired and one running task,
+  and `https://dev-codex-poly-bot.repetere.net/health` returns `{"status":"ok"}`.
+- Production release: GitHub Actions run `28447147003` completed successfully for
+  commit `629d175d410c93dfeefe86ae7696ac999bc22f0c`; the `Deploy production`
+  job completed successfully, CloudFormation stack `codex-poly-bot-production`
+  is `UPDATE_COMPLETE`, both ECS services report one desired and one running task,
+  and `https://codex-poly-bot.repetere.net/health` returns `{"status":"ok"}`.
+- Release support checks: ACM certificate
+  `arn:aws:acm:us-east-1:506304330252:certificate/872f44c7-48b8-4944-baa1-56a7fd6e5929`
+  is `ISSUED`; the configured SES identity `asyncdoc.net` is verified with
+  sending enabled.
 
 ## Current Next Slice
 
