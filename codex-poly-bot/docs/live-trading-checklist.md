@@ -20,6 +20,7 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 ## Dry-Run Evidence
 
 - Run `scripts/polymarket-readonly-smoke.py --environment production` to confirm Polymarket US account and market read access without attempting order operations.
+- Run `scripts/polymarket-operational-gates-smoke.py --notional 1.00` to prove Polymarket entry, exit, kill-switch, and notification wiring without a real venue call or real email.
 - Run the trading loop in dry-run mode with the target venue and provider.
 - Confirm simulated orders are recorded and no venue submission method is called.
 - Confirm recent audit events and health indicators are visible in the dashboard.

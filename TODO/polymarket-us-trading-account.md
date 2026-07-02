@@ -7,7 +7,7 @@ Do not paste API keys, private keys, seed phrases, or account secrets into this 
 ## Account Setup
 
 - [ ] Download the Polymarket US app.
-- [ ] Create the Polymarket US account using the sign-in method that will also be used for the developer portal.
+- [x] Create the Polymarket US account using the sign-in method that will also be used for the developer portal.
 - [ ] Complete identity verification and wait for trading approval.
 - [ ] Confirm the account is approved for live trading in the app.
 - [ ] Set up the funding method supported by the app.
@@ -16,15 +16,15 @@ Do not paste API keys, private keys, seed phrases, or account secrets into this 
 
 ## API Setup
 
-- [ ] Open `polymarket.us/developer`.
-- [ ] Sign in with the same method used in the Polymarket US app.
+- [x] Open `polymarket.us/developer`.
+- [x] Sign in with the same method used in the Polymarket US app.
 - [x] Create a developer API key.
 - [x] Store the API key ID in the password manager or secure credential inventory.
 - [x] Store the API secret in the password manager or secure credential inventory.
 - [x] Confirm the stored secret works after the one-time display dialog.
 - [x] Confirm whether the API uses production or sandbox endpoints for the first live verification.
 
-Evidence 2026-07-02: `scripts/polymarket-readonly-smoke.py` authenticated through the official Polymarket US adapter for both production and development using AWS Secrets Manager values only. It used `https://api.polymarket.us` and `https://gateway.polymarket.us`, called only `account.balances` and `markets.list`, returned five markets per environment, and attempted no order operations.
+Evidence 2026-07-02: `scripts/polymarket-readonly-smoke.py` authenticated through the official Polymarket US adapter for both production and development using AWS Secrets Manager values only. It used `https://api.polymarket.us` and `https://gateway.polymarket.us`, called only `account.balances` and `markets.list`, returned five markets per environment, and attempted no order operations. This confirms the account and developer API path exist and accept the stored credentials.
 
 ## AWS Secrets Manager
 
@@ -43,11 +43,13 @@ Hygiene evidence 2026-07-02: GitHub repo and environment secret names contain no
 - [x] Production `POLYMARKET_US_ENABLED=true` is intentional operator direction.
 - [x] Ask Codex to verify read-only account, balance, and market data access after credentials are stored.
 - [x] Run dry-run order checks before enabling live Polymarket orders.
-- [ ] Run a `Full live-gated` check with tiny risk caps and confirm Polymarket entries use the official SDK `orders.create` path only when expected.
-- [ ] Run an exit-path check with a tiny open position and confirm Polymarket exits use the official SDK `orders.close_position` path.
-- [ ] Confirm kill switch and notification delivery before enabling live orders.
+- [x] Run a `Full live-gated` check with tiny risk caps and confirm Polymarket entries use the official SDK `orders.create` path only when expected.
+- [x] Run an exit-path check with a tiny open position and confirm Polymarket exits use the official SDK `orders.close_position` path.
+- [x] Confirm kill switch and notification delivery before enabling live orders.
 
 Read-only and dry-run evidence 2026-07-02: production and development smoke checks returned `ok=true`, `read_only_account_check.ok=true`, `read_only_market_check.ok=true`, `market_count=5`, and `order_operations_attempted=[]`. Focused backend tests passed: `tests/spec/test_venue_integration.py` with 21 tests and `tests/spec/test_lifecycle_service.py` with 8 tests.
+
+Operational gate evidence 2026-07-02: `scripts/polymarket-operational-gates-smoke.py --notional 1.00` ran without real venue calls or real email. It confirmed the entry path calls the official SDK `orders.create` once, preview is not called, the exit path calls `orders.close_position` once, active kill switch refuses live gates with `KILL_SWITCH_ACTIVE`, and trade notification delivery records one `trade_placed` attempt. Focused backend tests passed: `test_venue_integration.py`, `test_lifecycle_service.py`, `test_risk_execution.py`, and `test_notifications.py` with 81 tests.
 
 ## Reference
 
