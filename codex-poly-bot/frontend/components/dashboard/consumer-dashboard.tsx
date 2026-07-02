@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   Bell,
   CheckCircle2,
@@ -85,6 +86,19 @@ type RecommendationPlan = {
   tone: "ok" | "waiting" | "blocked";
   summary: string;
   patches: RecommendationPatch[];
+};
+
+type DashboardAction = {
+  title: string;
+  body: string;
+  href?: string;
+  linkLabel?: string;
+};
+
+type SafetySummary = {
+  label: string;
+  tone: "ok" | "waiting" | "blocked";
+  detail: string;
 };
 
 const DAILY_WINDOW_MINUTES = 24 * 60;
@@ -188,6 +202,46 @@ export function ConsumerDashboard() {
   const marketData = marketDataState.status === "ready" ? marketDataState.data : null;
   const tickSchedule = tickScheduleState.status === "ready" ? tickScheduleState.data : null;
   const notifications = notificationsState.status === "ready" ? notificationsState.data : null;
+  const liveEnabled = useMemo(() => booleanConfigValue(valueAtPath(settings, "live_enabled")), [settings]);
+  const activeVenueLabels = useMemo(() => enabledVenueLabels(settings), [settings]);
+  const activeVenueSummary = useMemo(
+    () => (activeVenueLabels.length ? activeVenueLabels.join(", ") : "none"),
+    [activeVenueLabels],
+  );
+  const safetySummary = useMemo(
+    () =>
+      dashboardSafetySummary({
+        configState,
+        operationsState,
+        operations,
+        liveEnabled,
+        activeVenueLabels,
+      }),
+    [activeVenueLabels, configState, liveEnabled, operations, operationsState],
+  );
+  const actionItems = useMemo(
+    () =>
+      dashboardActionItems({
+        configState,
+        operationsState,
+        notificationsState,
+        operations,
+        notifications,
+        liveEnabled,
+        activeVenueLabels,
+      }),
+    [activeVenueLabels, configState, liveEnabled, notifications, notificationsState, operations, operationsState],
+  );
+  const heroSummary = useMemo(
+    () =>
+      dashboardHeroSummary({
+        liveEnabled,
+        operations,
+        activeVenueSummary,
+        actionItems,
+      }),
+    [actionItems, activeVenueSummary, liveEnabled, operations],
+  );
   const countdownSeconds = useMemo(() => secondsUntilTick(tickSchedule, nowMs), [tickSchedule, nowMs]);
   const countdownDue = countdownSeconds !== null && countdownSeconds <= 0;
   const pnlData = useMemo(() => (economics ? pnlChartData(economics) : []), [economics]);
@@ -351,7 +405,24 @@ export function ConsumerDashboard() {
         <div>
           <p className="section-label">Dashboard</p>
           <h1 id="consumer-dashboard-title">{lastTick.title}</h1>
-          <p>{lastTick.body}</p>
+          <div className="summary-copy">
+            <p>{lastTick.body}</p>
+            <p>{heroSummary}</p>
+          </div>
+          <div className="guide-actions" aria-label="Primary dashboard controls">
+            <Link className="button primary" href="/dashboard/operations">
+              <RefreshCw aria-hidden="true" size={16} />
+              Operate
+            </Link>
+            <Link className="button subtle" href="/dashboard/config">
+              <Settings2 aria-hidden="true" size={16} />
+              Configure
+            </Link>
+            <Link className="button subtle" href="/dashboard/system">
+              <CheckCircle2 aria-hidden="true" size={16} />
+              Verify system
+            </Link>
+          </div>
         </div>
         <div className={`consumer-status-badge ${lastTick.tone}`}>
           {lastTick.tone === "blocked" ? <CircleAlert aria-hidden="true" size={20} /> : <CheckCircle2 aria-hidden="true" size={20} />}
@@ -384,6 +455,74 @@ export function ConsumerDashboard() {
       </div>
 
       <div className="consumer-grid">
+        <section className="consumer-panel" aria-labelledby="dashboard-safety-title">
+          <div className="consumer-panel-heading">
+            <div>
+              <p className="section-label">Safety</p>
+              <h2 id="dashboard-safety-title">Current mode</h2>
+            </div>
+            <span className={`status ${safetySummary.tone}`}>{safetySummary.label}</span>
+          </div>
+          <div className="consumer-metric-list">
+            <Metric label="Trading mode" value={liveEnabled ? "Live flag on" : "Dry run"} />
+            <Metric label="Kill switch" value={operations?.killSwitch ?? "loading"} />
+            <Metric label="Active venues" value={activeVenueSummary} />
+          </div>
+          <p className="panel-note">{safetySummary.detail}</p>
+        </section>
+
+        <section className="consumer-panel" aria-labelledby="dashboard-actions-title">
+          <div className="consumer-panel-heading">
+            <div>
+              <p className="section-label">Action needed</p>
+              <h2 id="dashboard-actions-title">Next operator step</h2>
+            </div>
+            <span className={`status ${actionItems.length ? "waiting" : "ok"}`}>
+              {actionItems.length ? `${actionItems.length} item${actionItems.length === 1 ? "" : "s"}` : "clear"}
+            </span>
+          </div>
+          <ol className="action-list">
+            {actionItems.map((action) => (
+              <li key={action.title}>
+                <strong>{action.title}</strong>
+                <span>{action.body}</span>
+                {action.href ? (
+                  <Link className="inline-link" href={action.href}>
+                    {action.linkLabel}
+                  </Link>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="consumer-panel" aria-labelledby="dashboard-controls-title">
+          <div className="consumer-panel-heading">
+            <div>
+              <p className="section-label">Primary controls</p>
+              <h2 id="dashboard-controls-title">What I can do now</h2>
+            </div>
+            <Settings2 aria-hidden="true" size={20} />
+          </div>
+          <div className="control-list">
+            <DashboardControlLink
+              body="Run a dry-run workflow, review open orders, or inspect the kill switch."
+              href="/dashboard/operations"
+              title="Operate"
+            />
+            <DashboardControlLink
+              body="Change venue, live mode, notification, scanner, and model settings."
+              href="/dashboard/config"
+              title="Configure"
+            />
+            <DashboardControlLink
+              body="Check credentials, scheduler, notifications, and account readiness."
+              href="/dashboard/system"
+              title="Verify system"
+            />
+          </div>
+        </section>
+
         <section className="consumer-panel span-2" aria-labelledby="pnl-chart-title">
           <div className="consumer-panel-heading">
             <div>
@@ -632,6 +771,217 @@ export function ConsumerDashboard() {
       </div>
     </section>
   );
+}
+
+function DashboardControlLink({
+  href,
+  title,
+  body,
+}: {
+  href: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <Link className="control-link" href={href}>
+      <strong>{title}</strong>
+      <span>{body}</span>
+    </Link>
+  );
+}
+
+function dashboardHeroSummary({
+  liveEnabled,
+  operations,
+  activeVenueSummary,
+  actionItems,
+}: {
+  liveEnabled: boolean;
+  operations: OperationsSummaryView | null;
+  activeVenueSummary: string;
+  actionItems: DashboardAction[];
+}): string {
+  const mode = liveEnabled ? "live flag on" : "dry run";
+  const killSwitch = operations?.killSwitch ?? "loading";
+  const nextAction = actionItems[0]?.title.toLowerCase() ?? "monitor the next tick";
+  return `Current mode: ${mode}. Kill switch: ${killSwitch}. Active venues: ${activeVenueSummary}. Next step: ${nextAction}.`;
+}
+
+function dashboardSafetySummary({
+  configState,
+  operationsState,
+  operations,
+  liveEnabled,
+  activeVenueLabels,
+}: {
+  configState: PanelState<ConfigSnapshot>;
+  operationsState: PanelState<OperationsSummaryView>;
+  operations: OperationsSummaryView | null;
+  liveEnabled: boolean;
+  activeVenueLabels: string[];
+}): SafetySummary {
+  if (configState.status === "loading" || operationsState.status === "loading") {
+    return {
+      label: "loading",
+      tone: "waiting",
+      detail: "Loading config and operations gates before showing the current run posture.",
+    };
+  }
+  if (configState.status === "error" || operationsState.status === "error") {
+    return {
+      label: "blocked",
+      tone: "blocked",
+      detail: "One or more dashboard APIs could not load. Check backend health before changing run settings.",
+    };
+  }
+  if (operations?.killSwitch === "active") {
+    return {
+      label: "stopped",
+      tone: "blocked",
+      detail: "The kill switch is active. Review Operations before any run or live-mode change.",
+    };
+  }
+  if (liveEnabled && activeVenueLabels.length === 0) {
+    return {
+      label: "gated",
+      tone: "blocked",
+      detail: "Live mode is enabled, but no venue is active. Enable a venue only after account and risk checks are ready.",
+    };
+  }
+  if (liveEnabled) {
+    return {
+      label: "live flag on",
+      tone: "waiting",
+      detail: "Live mode is on. Keep orders, risk gates, notifications, and the kill switch visible while monitoring.",
+    };
+  }
+  return {
+    label: "dry run",
+    tone: "ok",
+    detail: "Live order submission is off. Use this state for scanner, model, and configuration checks.",
+  };
+}
+
+function dashboardActionItems({
+  configState,
+  operationsState,
+  notificationsState,
+  operations,
+  notifications,
+  liveEnabled,
+  activeVenueLabels,
+}: {
+  configState: PanelState<ConfigSnapshot>;
+  operationsState: PanelState<OperationsSummaryView>;
+  notificationsState: PanelState<NotificationSettingsView>;
+  operations: OperationsSummaryView | null;
+  notifications: NotificationSettingsView | null;
+  liveEnabled: boolean;
+  activeVenueLabels: string[];
+}): DashboardAction[] {
+  const actions: DashboardAction[] = [];
+
+  if (configState.status === "error") {
+    actions.push({
+      title: "Recover config status",
+      body: configState.message,
+      href: "/dashboard/system",
+      linkLabel: "Open system",
+    });
+  }
+  if (operationsState.status === "error") {
+    actions.push({
+      title: "Recover operations status",
+      body: operationsState.message,
+      href: "/dashboard/operations",
+      linkLabel: "Open operations",
+    });
+  }
+  if (operations?.killSwitch === "active") {
+    actions.push({
+      title: "Review kill switch",
+      body: "The emergency control is active. Clear or keep it intentionally before changing run settings.",
+      href: "/dashboard/operations",
+      linkLabel: "Open operations",
+    });
+  }
+  if (activeVenueLabels.length === 0) {
+    actions.push({
+      title: "Choose an active venue",
+      body: "No venue is enabled for scanning or trading. Keep live mode off until the target account is ready.",
+      href: "/dashboard/config",
+      linkLabel: "Open config",
+    });
+  }
+  if (operations && operations.manualReviewState !== "clear") {
+    actions.push({
+      title: "Check manual review",
+      body: `Manual review is ${operations.manualReviewState}. Confirm the queue before running the next workflow.`,
+      href: "/dashboard/operations",
+      linkLabel: "Open operations",
+    });
+  }
+  if ((operations?.openOrders ?? 0) > 0) {
+    actions.push({
+      title: "Review open orders",
+      body: `${operations?.openOrders ?? 0} order${operations?.openOrders === 1 ? "" : "s"} still need a terminal state.`,
+      href: "/dashboard/operations",
+      linkLabel: "Open operations",
+    });
+  }
+  if (notificationsState.status === "error" || (notificationsState.status === "ready" && !notificationsReady(notifications))) {
+    actions.push({
+      title: "Confirm notifications",
+      body:
+        notificationsState.status === "error"
+          ? notificationsState.message
+          : "Trade alerts need at least one recipient before live operation.",
+      href: "/dashboard/config",
+      linkLabel: "Open config",
+    });
+  }
+  if (actions.length === 0 && !liveEnabled) {
+    actions.push({
+      title: "Stay in dry run or prepare signoff",
+      body: "The current posture is safe for dry-run checks. Use Operations for the next run or Config for a planned change.",
+      href: "/dashboard/operations",
+      linkLabel: "Open operations",
+    });
+  }
+  if (actions.length === 0) {
+    actions.push({
+      title: "Monitor the next tick",
+      body: "No immediate blocker is visible. Watch the next scheduled loop and review orders after it completes.",
+      href: "/dashboard/operations",
+      linkLabel: "Open operations",
+    });
+  }
+
+  return actions.slice(0, 3);
+}
+
+function enabledVenueLabels(settings: Record<string, unknown>): string[] {
+  return [
+    ["Polymarket US", "venues.polymarket_us.enabled"],
+    ["Polymarket International", "venues.polymarket_international.enabled"],
+    ["Alpaca", "venues.alpaca.enabled"],
+  ]
+    .filter(([, path]) => booleanConfigValue(valueAtPath(settings, path)))
+    .map(([label]) => label);
+}
+
+function booleanConfigValue(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+function notificationsReady(notifications: NotificationSettingsView | null): boolean {
+  if (!notifications) {
+    return false;
+  }
+  if (notifications.state === "blocked") {
+    return false;
+  }
+  return (notifications.recipientCount ?? 0) > 0;
 }
 
 async function loadPanel<T>(

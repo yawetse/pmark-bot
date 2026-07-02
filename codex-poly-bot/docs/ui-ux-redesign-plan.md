@@ -57,6 +57,31 @@ The 2026-06-26 second pass uses the installed external Claude skills and the alr
 - Motion: Use subtle motion only for state changes, save feedback, loading skeletons, and disclosure transitions. Respect `prefers-reduced-motion`.
 - Imagery: Do not add decorative imagery. This is an operations app. Visual effort should go into data views, hierarchy, and feedback.
 
+## Visual System Tokens
+
+Source: `frontend/app/globals.css`, reviewed 2026-07-02 against UI/UX Pro Max guidance for a dense operational fintech dashboard. The app already uses semantic CSS variables, light/dark theme overrides, custom dashboard primitives, AG Grid theme variables, Radix dialog styling, and Lucide icons. Future UI code should extend this token layer before adding route-local values.
+
+| Token group | Current tokens and classes | Usage rule |
+| --- | --- | --- |
+| Color | `--background`, `--foreground`, `--muted`, `--border`, `--border-strong`, `--surface`, `--surface-raised`, `--surface-strong`, `--surface-input`, `--surface-tint` | Use semantic surface and text variables for every shell, panel, table, and form field. Add both light and dark values before adding a new semantic color. |
+| Accent and action | `--accent`, `--accent-strong`, `--accent-soft`, `--focus`, `--button-foreground`, `.button.primary`, `.theme-option.active` | Use teal for active, selected, saved, and safe operator states. Use `--focus` only for keyboard focus rings and not for ordinary emphasis. |
+| Risk and status | `--danger`, `--status-ok-bg`, `--status-ok-fg`, `--status-blocked-bg`, `--status-idle-bg`, `--status-idle-fg`, `--status-waiting-bg`, `--status-waiting-fg`, `--mode-ok-border`, `--mode-blocked-border`, `--mode-waiting-border`, `--dot-ok`, `--dot-idle`, `--dot-waiting` | Keep `ok`, `blocked`, `idle`, and `waiting` as the only core status meanings unless a new trading state needs its own copy, border, and color token. Status color must be paired with text, icon, or shape. |
+| Type | `Inter, ui-sans-serif, system-ui`, panel `h1` at `28px`, panel `h2` at `17px`, auth `h1` at `30px`, section labels at `11px`, body and form copy at `13px` to `14px`, metric values at `19px` or `26px` | Keep the app compact. Use page titles for state or task, compact panel headings for sections, and tabular or stable numeric treatment for metrics where layout shift would be visible. |
+| Spacing | Shell padding `28px 32px 44px`, topbar padding `14px 32px`, panel padding `20px`, component gaps `8px`, `10px`, `12px`, `14px`, `15px`, `18px`, `20px`, and `24px` | Keep spacing on a 4px or 8px rhythm. Use tighter gaps for repeated controls and wider gaps for route sections. Do not use one-off spacing unless a fixed-format control needs it. |
+| Radius | Panels, dialogs, cards, AG Grid wrapper, and empty states use `8px`; buttons, inputs, theme controls, and skip links use `6px`; brand mark uses `4px`; status chips and dots use `999px` | Keep rectangular UI at `8px` or less. Reserve `999px` for chips, dots, and circular stage markers. |
+| Elevation and layers | `--shadow-soft`, `--shadow-subtle`, sticky `.topbar` `z-index: 20`, overflow menu `z-index: 30`, dialog overlay/content `z-index: 40/41`, skip link `z-index: 100` | Use subtle shadows only to separate raised operational surfaces. Do not add decorative glow. Keep modal and menu z-index values in the existing layer order. |
+| Forms | `.form-stack`, `.symbol-editor`, `.grid-filter`, `.danger-zone`, `.dialog-form`, inputs/selects/textareas with `min-height: 40px`, `border-radius: 6px`, visible labels, and focus rings | Every field needs a visible label, helper or recovery text when needed, and route-specific error copy. Long text edits should use textarea sizing and grouped disclosure rather than raw path-first editing by default. |
+| Tables and grids | `.table-wrap`, `.dashboard-grid-block`, `.dashboard-grid-heading`, `.grid-filter`, `.dashboard-data-grid`, AG Grid CSS variables, native table `min-width: 680px` | Keep exact records in AG Grid or responsive table wrappers. Search, title, empty state, and horizontal overflow behavior should be standardized in `DashboardDataGrid`. |
+| Messages and empty states | `.status-message`, `.panel-note`, `.empty-state`, `.empty-state-actions`, `.loading-line`, `.loading-dot`, `.dialog-*`, `.button.danger` | Messages should say what happened, whether trading or the next loop is affected, and the next operator action. Loading skeletons must respect `prefers-reduced-motion`; danger messages must use text plus `--danger`. |
+
+Implementation rules:
+
+- Use `var(--...)` tokens in components and route CSS. Raw hex values belong in `:root` and theme overrides only.
+- Preserve both light and dark theme support even when the product direction favors dark mode.
+- Keep page-level overflow hidden on the x-axis. Tables and AG Grid wrappers own horizontal overflow.
+- Use Lucide icons with text labels for navigation, action buttons, status, and disclosure controls. Do not use emojis as structural icons.
+- Keep high-risk actions visually separate from normal primary actions and pair them with confirmation copy.
+
 ## UX Redesign Plan
 
 - Primary dashboard flow: Start with "Current mode", "Action needed", "Next scheduled loop", and "Manual run" above the fold. Move lower-detail loop internals, market records, and cost tables into expandable sections.
@@ -88,6 +113,40 @@ The 2026-06-26 second pass uses the installed external Claude skills and the alr
 
 Recommended first visualization library: Recharts, subject to approval before install. It fits React dashboards with common charts and lighter implementation cost. Keep AG Grid for exact records, audit trails, reconciliation, filtering, and export-like lookup workflows.
 
+## Economics And Comparison Visualization Specification
+
+This app already includes Recharts, so the second pass should not add another chart package. Use Recharts only for summary visuals and keep AG Grid as the source for exact values, caveats, import status, and audit trails.
+
+### Economics
+
+| Data question | Source fields | Chart | Empty state | Table fallback |
+| --- | --- | --- | --- | --- |
+| Is trading profitable after recorded costs? | `profitability.netAfterRecordedCostsUsd`, `profitability.status`, `trading.totalPnlUsd`, `ai.totalCostUsd`, `aws.dailyInfraCostEstimateUsd` | Summary metrics plus a net-after-cost line chart | Show the latest net value and "Waiting for more P&L snapshots" when fewer than two snapshots exist | Cost history grid |
+| Which recorded cost drives the current run rate? | `ai.totalCostUsd`, `aws.dailyInfraCostEstimateUsd` | Horizontal cost-composition bar with explicit AI and AWS labels | Show both cost values as zero-value rows and explain whether the cost source is estimated | Provider token spend grid and cost history grid |
+| Are model costs stale or estimated? | `ai.freshness`, `ai.errorState`, `ai.providers[].usageSources`, `ai.providers[].costSources`, `ai.providers[].latestImportStatus` | No chart; use status metrics and disclosure details | Show "No token spend recorded" and keep import actions visible | Provider token spend grid and provider import runs grid |
+| Is infrastructure cost estimated or actual? | `aws.source`, `aws.scope`, `aws.estimated`, `aws.message`, `history.snapshotsThisMonth` | No chart until multiple daily cost snapshots exist | Show the AWS billing message and period fields | Cost history grid |
+
+Economics chart rules:
+- Use line charts only when there are at least two dated snapshots.
+- Use bars for cost composition because the question is allocation, not trend.
+- Show `profitability.status` and net-after-cost as text outside the chart so the operator does not need to inspect a tooltip.
+- Tooltips must include formatted USD values and the snapshot date or cost category.
+- If a value is provider-estimated, table rows must expose the source and caveat before the chart is treated as decision support.
+
+### Comparison
+
+| Data question | Source fields | Chart | Empty state | Table fallback |
+| --- | --- | --- | --- | --- |
+| Which provider is performing better? | `metrics[].group`, `metrics[].metric`, `metrics[].value`, `metrics[].caveat` | Bar chart for numeric comparison metrics, capped to the highest-signal eight metrics | Show "No numeric metrics" when values cannot be parsed | Comparison detail grid |
+| Which metric needs caution before action? | `metrics[].caveat`, `degraded_sections` | No standalone chart; show caveats in tooltip and grid detail | Keep the summary cards visible with "Unavailable" values | Comparison detail grid |
+| Is model cost changing the trading decision? | Metrics containing cost, P&L, drawdown, win rate, return-to-risk | Summary cards first, chart second | Show unavailable values in cards without hiding the grid | Comparison detail grid |
+
+Comparison chart rules:
+- Parse only numeric metric values for charts; keep percentages, USD, and ratio strings in the exact grid.
+- Do not compare providers visually until both providers have enough closed positions, order records, and cost records to avoid a false side-by-side read.
+- Keep caveats attached to tooltip and grid rows because comparison data can be partial.
+- Use tables, not charts, for raw prompts, decisions, position records, order records, and model-error rows.
+
 ## Accessibility And Responsive Plan
 
 - Keyboard: Confirm tab order for top nav, theme control, config forms, manual run buttons, AG Grid filters, and kill switch controls. Add skip-to-content if top nav grows.
@@ -114,20 +173,57 @@ Recommended first visualization library: Recharts, subject to approval before in
 
 ## UI/UX Polish Checklist
 
-- [ ] [Vercel web design guidelines] Capture baseline screenshots for `/login`, `/access-denied`, `/dashboard`, `/dashboard/config`, `/dashboard/operations`, `/dashboard/models`, `/dashboard/models/claude`, `/dashboard/models/openai`, `/dashboard/comparison`, `/dashboard/system`, and `/dashboard/help`. Acceptance: screenshots show desktop and mobile layout, empty states, blocked states, and primary controls. Verify with browser or Playwright screenshots.
-- [ ] [UI/UX Pro Max] Document the Poly Bot visual system. Acceptance: tokens for color, type, spacing, radius, elevation, status, forms, tables, and messages are written before code changes. Verify by reviewing `frontend/app/globals.css`.
-- [ ] [Bencium UX designer] Redesign the main dashboard around current state, action needed, manual run, next loop, and detail inspection. Acceptance: the first viewport answers "is the bot safe, what needs action, and what can I do now?" Verify with desktop and mobile screenshots.
-- [ ] [Bencium UX designer] Redesign `/dashboard/operations` into workflow sections for pipeline, scanner, reasoning, strategy, execution, exit, imports, orders, and kill switch. Acceptance: each section has summary, detail, and recovery action. Verify with interaction review and route screenshots.
-- [ ] [Bencium UX designer] Add `/dashboard/models` and demote provider routes from global navigation to model-workspace details. Acceptance: top-level nav is task-based and providers remain deep-linkable. Verify with route screenshots.
-- [ ] [Bencium UX designer] Add expandable details to model, operations, config, and help/reference surfaces. Acceptance: first view shows summary and action, exact records are available through disclosure. Verify with interaction review.
-- [ ] [Bencium UX designer] Redesign `/dashboard/config` into grouped setting sections with an advanced editor. Acceptance: common edits no longer require choosing raw config paths first. Verify with form interaction tests and conflict/error-state checks.
-- [ ] [AccessLint plugin] Check contrast, keyboard order, labels, focus states, ARIA, status indicators, and color-only cues across the touched routes. Acceptance: no obvious WCAG A/AA failures remain in the changed UI. Verify with keyboard pass and contrast checks.
-- [ ] [Vercel composition patterns] Extract shared primitives for panel, metric, status chip, message, form section, disclosure, and empty state. Acceptance: repeated route markup uses shared components without changing the data contracts. Verify with code review and typecheck.
-- [ ] [Vercel React best practices] Review touched client components for avoidable re-renders, unstable object creation, heavy imports, and table/list costs. Acceptance: no new obvious render or bundle regression is introduced. Verify with `npm run build` and targeted code review.
-- [ ] [Vercel web design guidelines] Extend `DashboardDataGrid` with consistent title, search, density, empty action, and responsive behavior. Acceptance: all grid-heavy routes use one consistent grid shell. Verify with grid screenshots and keyboard checks.
-- [ ] [UI/UX Pro Max] Add a data visualization specification for economics and comparison before installing chart packages. Acceptance: chart data questions, chart types, empty states, and table fallbacks are documented. Verify with design review.
-- [ ] [AccessLint plugin] Design high-risk action confirmations for live mode and kill switch. Acceptance: irreversible or live-trading-affecting actions require clear scope and confirmation. Verify with interaction tests.
-- [ ] [Vercel web design guidelines] Run final responsive and interaction QA. Acceptance: desktop and mobile screenshots match the redesign plan, text fits containers, controls remain usable, and no framework overlay or console errors appear. Verify with Browser or Playwright plus `npm run typecheck`.
+- [x] [Vercel web design guidelines] Capture baseline screenshots for `/login`, `/access-denied`, `/dashboard`, `/dashboard/config`, `/dashboard/operations`, `/dashboard/models`, `/dashboard/models/claude`, `/dashboard/models/openai`, `/dashboard/comparison`, `/dashboard/system`, and `/dashboard/help`. Acceptance: screenshots show desktop and mobile layout, empty states, blocked states, and primary controls. Verify with browser or Playwright screenshots.
+  - Evidence 2026-07-02: Browser captured 22 full-page screenshots at desktop `1440x900` and mobile `390x844` under `/tmp/codex-poly-bot-ui-baseline-20260702`.
+  - Manifest: `/tmp/codex-poly-bot-ui-baseline-20260702/manifest.json`.
+  - Validation: local frontend `http://127.0.0.1:3100`, backend health `http://127.0.0.1:8000/health`, local auth bypass, no route failures, no Next error templates, no application error text, no browser warning/error logs, and mobile `scrollWidth` matched viewport width.
+  - Supplemental evidence: `/tmp/codex-poly-bot-ui-baseline-20260702/desktop-dashboard__operations-viewport.png` verifies the above-the-fold operations controls because the full-page capture repeats sticky navigation.
+- [x] [UI/UX Pro Max] Document the Poly Bot visual system. Acceptance: tokens for color, type, spacing, radius, elevation, status, forms, tables, and messages are written before code changes. Verify by reviewing `frontend/app/globals.css`.
+  - Evidence 2026-07-02: Added `Visual System Tokens` from the current `frontend/app/globals.css` token and component layer.
+  - Verification: reviewed root theme variables, body typography, panel/status styles, form controls, status messages, metrics, AG Grid/table wrappers, dialog layers, and danger controls in `frontend/app/globals.css`.
+- [x] [Bencium UX designer] Redesign the main dashboard around current state, action needed, manual run, next loop, and detail inspection. Acceptance: the first viewport answers "is the bot safe, what needs action, and what can I do now?" Verify with desktop and mobile screenshots.
+  - Evidence 2026-07-02: `ConsumerDashboard` now shows current mode, kill switch, active venues, next step, and primary controls in the hero, with safety/action/control panels immediately below tick timing.
+  - Verification: `npm run typecheck`, `npm run test:dashboard-controls`, `npm run test:dashboard-operations`, and Browser screenshots at `/tmp/codex-poly-bot-dashboard-command-summary-20260702-v3` for desktop `1440x900` and mobile `390x844`.
+- [x] [Bencium UX designer] Redesign `/dashboard/operations` into workflow sections for pipeline, scanner, reasoning, strategy, execution, exit, imports, orders, and kill switch. Acceptance: each section has summary, detail, and recovery action. Verify with interaction review and route screenshots.
+  - Evidence 2026-07-02: Operations workflow map covers run pipeline, scanner, reasoning, strategy, execution, exit, imports, orders, and kill switch, with detail disclosures and stable anchors for orders and emergency control.
+  - Verification: `npm run typecheck`, `npm run test:dashboard-operations`, and Browser screenshots at `/tmp/codex-poly-bot-operations-workflow-20260702` for desktop `1440x900` and mobile `390x844`.
+- [x] [Bencium UX designer] Add `/dashboard/models` and demote provider routes from global navigation to model-workspace details. Acceptance: top-level nav is task-based and providers remain deep-linkable. Verify with route screenshots.
+  - Evidence 2026-07-02: `/dashboard/models` renders a provider workspace with Claude and OpenAI detail links, while `/dashboard/models/claude` and `/dashboard/models/openai` remain deep-linkable provider pages.
+  - Verification: Browser screenshots at `/tmp/codex-poly-bot-model-workspace-20260702`; global nav contains Status, Operations, Data, Scenario, Config, Models, Performance, System, and Help, with no Claude/OpenAI top-level entries.
+- [x] [Bencium UX designer] Add expandable details to model, operations, config, and help/reference surfaces. Acceptance: first view shows summary and action, exact records are available through disclosure. Verify with interaction review.
+  - Evidence 2026-07-02: Models, operations, config, and help use shared `Disclosure` triggers for exact records, advanced config editing, presets, infrastructure/reference rows, and release workflow detail.
+  - Verification: Browser disclosure pass saved screenshots at `/tmp/codex-poly-bot-disclosure-surfaces-20260702`; `/dashboard/models/claude` had 3 triggers, `/dashboard/operations` had 16, `/dashboard/config` had 2, and `/dashboard/help` had 5, with no route errors or browser warning/error logs.
+- [x] [Bencium UX designer] Redesign `/dashboard/config` into grouped setting sections with an advanced editor. Acceptance: common edits no longer require choosing raw config paths first. Verify with form interaction tests and conflict/error-state checks.
+  - Evidence 2026-07-02: Config exposes grouped sections for Trading Access, Market Scan, Signals And Models, Risk Limits, and Budgets And Alerts, with the raw path editor moved behind `Advanced Path-Based Editor`.
+  - Verification: `npm run test:dashboard-controls` and Browser config route check confirmed all groups, the advanced editor disclosure, no route error, and no browser warning/error logs.
+- [x] [AccessLint plugin] Check contrast, keyboard order, labels, focus states, ARIA, status indicators, and color-only cues across the touched routes. Acceptance: no obvious WCAG A/AA failures remain in the changed UI. Verify with keyboard pass and contrast checks.
+  - Evidence 2026-07-02: AccessLint scanned authenticated `/dashboard`, `/dashboard/operations`, `/dashboard/config`, `/dashboard/models`, and `/dashboard/help` with 94 rules and zero violations per route.
+  - Fix: unique aria labels were added to repeated dashboard loading skeleton landmarks in `DashboardLoadingPanels`.
+  - Evidence files: `/tmp/codex-poly-bot-accesslint-20260702/*.json`.
+- [x] [Vercel composition patterns] Extract shared primitives for panel, metric, status chip, message, form section, disclosure, and empty state. Acceptance: repeated route markup uses shared components without changing the data contracts. Verify with code review and typecheck.
+  - Evidence 2026-07-02: `dashboard-primitives.tsx` now owns the reusable form-section structure alongside panel, metric, status, message, disclosure, and empty-state primitives.
+  - Refactor: `/dashboard/config` grouped settings use `FormSection`; `/dashboard/operations` summary and workflow map use shared status, message, panel, and metric primitives without changing route data contracts.
+  - Verification: `npm run typecheck`, `npm run test:dashboard-controls`, and `npm run test:dashboard-operations`.
+- [x] [Vercel React best practices] Review touched client components for avoidable re-renders, unstable object creation, heavy imports, and table/list costs. Acceptance: no new obvious render or bundle regression is introduced. Verify with `npm run build` and targeted code review.
+  - Evidence 2026-07-02: memoized consumer dashboard safety/action summaries so the one-second countdown does not recompute operator guidance, and memoized operations order-event splits with a hoisted terminal-state lookup.
+  - Review: no inline component definitions were added, no new heavy package imports were introduced, and shared primitives keep route components focused on data assembly.
+  - Verification: `npm run typecheck`, `npm run test:dashboard-controls`, `npm run test:dashboard-operations`, and `npm run build`.
+- [x] [Vercel web design guidelines] Extend `DashboardDataGrid` with consistent title, search, density, empty action, and responsive behavior. Acceptance: all grid-heavy routes use one consistent grid shell. Verify with grid screenshots and keyboard checks.
+  - Evidence 2026-07-02: `DashboardDataGrid` now renders one shell for populated and empty states, including heading, filter placement, density class, empty action area, and responsive horizontal scroll for populated grids.
+  - Refactor: Data Explorer empty query results now use `DashboardDataGrid` instead of bypassing the grid shell.
+  - Fix: page-size selector now includes each grid's active page size, clearing the AG Grid warning seen during browser verification.
+  - Verification: `npm run typecheck`, `npm run test:dashboard-controls`, `npm run test:dashboard-operations`, and Browser screenshots at `/tmp/codex-poly-bot-grid-shell-20260702` for desktop and mobile operations/model grids. Current browser pass had no warning/error logs, no Next overlay, and viewport-width `scrollWidth`.
+- [x] [UI/UX Pro Max] Add a data visualization specification for economics and comparison before installing chart packages. Acceptance: chart data questions, chart types, empty states, and table fallbacks are documented. Verify with design review.
+  - Evidence 2026-07-02: Added `Economics And Comparison Visualization Specification` with source fields, chart types, empty states, table fallbacks, and chart rules for economics and comparison.
+  - Decision: no new chart package is needed because Recharts is already present; AG Grid remains the exact-record and caveat fallback.
+- [x] [AccessLint plugin] Design high-risk action confirmations for live mode and kill switch. Acceptance: irreversible or live-trading-affecting actions require clear scope and confirmation. Verify with interaction tests.
+  - Evidence 2026-07-02: live-mode changes from grouped preferences and the advanced path editor now route through a scoped confirmation dialog before saving.
+  - Evidence 2026-07-02: kill-switch confirmation now shows environment scope, action, and impact, and resets the confirmation checkbox when the dialog closes.
+  - Verification: Browser interaction pass at `/tmp/codex-poly-bot-high-risk-confirmations-20260702` confirmed live-mode and kill-switch final action buttons are disabled until the checkbox is checked, with no submit action performed, no warning/error logs, and no Next overlay.
+- [x] [Vercel web design guidelines] Run final responsive and interaction QA. Acceptance: desktop and mobile screenshots match the redesign plan, text fits containers, controls remain usable, and no framework overlay or console errors appear. Verify with Browser or Playwright plus `npm run typecheck`.
+  - Evidence 2026-07-02: final responsive sweep covered `/dashboard`, `/dashboard/config`, `/dashboard/operations`, `/dashboard/data`, `/dashboard/models`, `/dashboard/models/claude`, `/dashboard/comparison`, and `/dashboard/help` at desktop `1440x900` and mobile `390x844`.
+  - Evidence files: `/tmp/codex-poly-bot-final-responsive-qa-20260702`.
+  - Verification: `npm run typecheck`, `npm run test:auth-boundary`, `npm run test:dashboard-controls`, `npm run test:dashboard-operations`, `npm run build`, and a Playwright/System Chrome sweep with 16 screenshots, no failures, no framework overlay, no warning/error logs, and no page-level horizontal overflow.
 
 ## Implementation Scope For Second Pass
 
