@@ -45,6 +45,21 @@ class RecordingSummaryTransport:
         }
 
 
+class FailingSummaryTransport:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def post_json(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.calls.append({"url": url, "headers": headers, "payload": payload})
+        raise RuntimeError(f"{payload['model']} unavailable")
+
+
 def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypatch) -> None:
     """TST-REQ-OBS-005-09: Validates REQ-OBS-005
 
@@ -70,6 +85,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
         *,
         event_name: str,
         attributes: dict[str, Any] | None = None,
+        mark_error: bool = True,
     ) -> None:
         recorded_failures.append(
             {
@@ -77,6 +93,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
                 "event_name": event_name,
                 "error_type": exc.__class__.__name__,
                 "attributes": dict(attributes or {}),
+                "mark_error": mark_error,
             }
         )
 
@@ -148,6 +165,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
             "span": spans[0],
             "event_name": "tick_summary_model_failed",
             "error_type": "RuntimeError",
+            "mark_error": False,
             "attributes": {
                 "model": "unavailable-model",
                 "attempt_number": 1,
@@ -161,6 +179,67 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
             },
         }
     ]
+
+
+def test_req_obs_005_tick_summary_marks_only_exhausted_failures_as_trace_errors(monkeypatch) -> None:
+    """TST-REQ-OBS-005-12: Validates REQ-OBS-005
+
+    Given: all configured OpenAI tick summary models fail
+    When: no fallback can recover the summary
+    Then: only the exhausted final attempt is marked as a trace error
+    """
+
+    recorded_markers: list[bool] = []
+
+    @contextmanager
+    def recording_span(name: str, *, attributes: dict[str, Any] | None = None):
+        yield {"name": name, "attributes": dict(attributes or {})}
+
+    def record_failure(
+        span: dict[str, Any] | None,
+        exc: Exception,
+        *,
+        event_name: str,
+        attributes: dict[str, Any] | None = None,
+        mark_error: bool = True,
+    ) -> None:
+        recorded_markers.append(mark_error)
+
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.start_observability_span",
+        recording_span,
+    )
+    monkeypatch.setattr(
+        "app.services.tick_summary_service.record_span_failure",
+        record_failure,
+    )
+
+    result = TickSummaryService(
+        registry=RepositoryRegistry(),
+        environ={
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_TICK_SUMMARY_MODEL": "primary-model",
+            "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "fallback-model",
+        },
+        transport=FailingSummaryTransport(),
+    ).summarize(
+        TickSummaryRequest(
+            environment=Environment.PRODUCTION,
+            generated_at=datetime(2026, 7, 2, 23, 39, tzinfo=UTC),
+            runs=[
+                {
+                    "id": "run-prod-1",
+                    "trigger": "scheduled",
+                    "status": "partial",
+                    "metadata": {"actor": "scheduler"},
+                    "steps": [],
+                }
+            ],
+        )
+    )
+
+    assert result.status == "error"
+    assert recorded_markers == [False, True]
 
 
 def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -> None:

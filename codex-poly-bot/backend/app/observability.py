@@ -257,6 +257,7 @@ def record_span_failure(
     *,
     event_name: str,
     attributes: Mapping[str, object] | None = None,
+    mark_error: bool = True,
 ) -> None:
     """Record an application failure event and mark the span as failed.
 
@@ -267,7 +268,7 @@ def record_span_failure(
         return
     payload = {
         "event_name": event_name,
-        "status": "error",
+        "status": "error" if mark_error else "retrying",
         "error_type": exc.__class__.__name__,
         "error_message": _safe_span_error_message(exc),
         **dict(attributes or {}),
@@ -276,7 +277,7 @@ def record_span_failure(
     set_span_attributes(span, payload)
 
     record_exception = getattr(span, "record_exception", None)
-    if callable(record_exception):
+    if mark_error and callable(record_exception):
         record_exception(exc, attributes=span_attributes)
 
     add_event = getattr(span, "add_event", None)
@@ -284,7 +285,7 @@ def record_span_failure(
         add_event(event_name, attributes=span_attributes)
 
     set_status = getattr(span, "set_status", None)
-    if callable(set_status) and Status is not None and StatusCode is not None:
+    if mark_error and callable(set_status) and Status is not None and StatusCode is not None:
         set_status(
             Status(
                 StatusCode.ERROR,
