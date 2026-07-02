@@ -220,7 +220,10 @@ Comparison chart rules:
   - Evidence 2026-07-02: live-mode changes from grouped preferences and the advanced path editor now route through a scoped confirmation dialog before saving.
   - Evidence 2026-07-02: kill-switch confirmation now shows environment scope, action, and impact, and resets the confirmation checkbox when the dialog closes.
   - Verification: Browser interaction pass at `/tmp/codex-poly-bot-high-risk-confirmations-20260702` confirmed live-mode and kill-switch final action buttons are disabled until the checkbox is checked, with no submit action performed, no warning/error logs, and no Next overlay.
-- [ ] [Vercel web design guidelines] Run final responsive and interaction QA. Acceptance: desktop and mobile screenshots match the redesign plan, text fits containers, controls remain usable, and no framework overlay or console errors appear. Verify with Browser or Playwright plus `npm run typecheck`.
+- [x] [Vercel web design guidelines] Run final responsive and interaction QA. Acceptance: desktop and mobile screenshots match the redesign plan, text fits containers, controls remain usable, and no framework overlay or console errors appear. Verify with Browser or Playwright plus `npm run typecheck`.
+  - Evidence 2026-07-02: final responsive sweep covered `/dashboard`, `/dashboard/config`, `/dashboard/operations`, `/dashboard/data`, `/dashboard/models`, `/dashboard/models/claude`, `/dashboard/comparison`, and `/dashboard/help` at desktop `1440x900` and mobile `390x844`.
+  - Evidence files: `/tmp/codex-poly-bot-final-responsive-qa-20260702`.
+  - Verification: `npm run typecheck`, `npm run test:auth-boundary`, `npm run test:dashboard-controls`, `npm run test:dashboard-operations`, `npm run build`, and a Playwright/System Chrome sweep with 16 screenshots, no failures, no framework overlay, no warning/error logs, and no page-level horizontal overflow.
 
 ## Implementation Scope For Second Pass
 
