@@ -46,6 +46,8 @@ export function DashboardDataGrid<T extends object>({
   const [quickFilterText, setQuickFilterText] = useState("");
   const deferredQuickFilterText = useDeferredValue(quickFilterText);
   const filterId = useId();
+  const headingId = `${filterId}-heading`;
+  const hasRows = rows.length > 0;
   const defaultColDef = useMemo<ColDef<T>>(
     () => ({
       autoHeight: true,
@@ -58,24 +60,21 @@ export function DashboardDataGrid<T extends object>({
     }),
     [],
   );
+  const pageSizeSelector = useMemo(
+    () => Array.from(new Set([pageSize, 10, 25, 50])).sort((left, right) => left - right),
+    [pageSize],
+  );
   const gridHeight = height ?? Math.min(560, Math.max(300, rows.length * 48 + 150));
 
-  if (rows.length === 0) {
-    return (
-      <div className="empty-state">
-        <strong>{emptyTitle}</strong>
-        <p>{emptyBody}</p>
-        {emptyAction ? <div className="empty-state-actions">{emptyAction}</div> : null}
-      </div>
-    );
-  }
-
   return (
-    <div className={`dashboard-grid-block ${density === "compact" ? "compact" : ""}`.trim()}>
+    <div
+      aria-labelledby={title ? headingId : undefined}
+      className={`dashboard-grid-block ${density === "compact" ? "compact" : ""}`.trim()}
+    >
       <div className="dashboard-grid-heading">
         {title || description ? (
           <div>
-            {title ? <h3>{title}</h3> : null}
+            {title ? <h3 id={headingId}>{title}</h3> : null}
             {description ? <p>{description}</p> : null}
           </div>
         ) : null}
@@ -87,35 +86,48 @@ export function DashboardDataGrid<T extends object>({
             type="search"
             value={quickFilterText}
             onChange={(event) => setQuickFilterText(event.target.value)}
-            placeholder={searchPlaceholder}
+            placeholder={hasRows ? searchPlaceholder : "No rows to filter"}
             autoComplete="off"
+            disabled={!hasRows}
           />
         </label>
       </div>
-      <div
-        aria-label={title ?? "Dashboard data grid"}
-        className="dashboard-data-grid"
-        data-density={density}
-        style={{ height: gridHeight }}
-      >
-        <AgGridProvider modules={GRID_MODULES}>
-          <AgGridReact<T>
-            columnDefs={columns}
-            defaultColDef={defaultColDef}
-            getRowId={
-              getRowId
-                ? (params: GetRowIdParams<T>) => getRowId(params.data)
-                : undefined
-            }
-            pagination
-            paginationPageSize={pageSize}
-            paginationPageSizeSelector={[10, 25, 50]}
-            quickFilterText={deferredQuickFilterText}
-            rowData={rows}
-            theme={themeQuartz}
-          />
-        </AgGridProvider>
-      </div>
+      {hasRows ? (
+        <div className="dashboard-grid-scroll">
+          <div
+            aria-label={title ?? "Dashboard data grid"}
+            className="dashboard-data-grid"
+            data-density={density}
+            style={{ height: gridHeight }}
+          >
+            <AgGridProvider modules={GRID_MODULES}>
+              <AgGridReact<T>
+                columnDefs={columns}
+                defaultColDef={defaultColDef}
+                getRowId={
+                  getRowId
+                    ? (params: GetRowIdParams<T>) => getRowId(params.data)
+                    : undefined
+                }
+                pagination
+                paginationPageSize={pageSize}
+                paginationPageSizeSelector={pageSizeSelector}
+                quickFilterText={deferredQuickFilterText}
+                rowData={rows}
+                theme={themeQuartz}
+              />
+            </AgGridProvider>
+          </div>
+        </div>
+      ) : (
+        <div className="dashboard-grid-empty">
+          <div className="empty-state">
+            <strong>{emptyTitle}</strong>
+            <p>{emptyBody}</p>
+            {emptyAction ? <div className="empty-state-actions">{emptyAction}</div> : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

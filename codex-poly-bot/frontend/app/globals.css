@@ -117,6 +117,7 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+  overflow-x: hidden;
   background: var(--background);
   color: var(--foreground);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -2282,6 +2283,16 @@ textarea:focus-visible {
   max-width: 320px;
 }
 
+.dashboard-grid-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.dashboard-grid-empty {
+  min-width: 0;
+}
+
 .dashboard-data-grid {
   --ag-background-color: var(--surface);
   --ag-border-color: var(--border);
@@ -2296,8 +2307,12 @@ textarea:focus-visible {
   --ag-input-border-color: var(--border);
   --ag-odd-row-background-color: var(--surface);
   --ag-row-border-color: var(--surface-strong);
-  min-width: 0;
+  min-width: 680px;
   width: 100%;
+}
+
+.dashboard-data-grid[data-density="compact"] {
+  min-width: 560px;
 }
 
 .dashboard-data-grid .ag-root-wrapper {
@@ -2578,11 +2593,13 @@ th {
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;
+    min-width: 0;
     padding: 14px 18px;
   }
 
   .nav {
     justify-content: flex-start;
+    min-width: 0;
     width: 100%;
   }
 
@@ -2594,19 +2611,27 @@ th {
 
   .topbar-actions {
     align-items: flex-start;
-    flex-direction: column;
+    display: grid;
     overflow: visible;
   }
 
   .nav {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     justify-content: flex-start;
     max-width: 100%;
     width: 100%;
   }
 
-  .nav a {
-    min-width: max-content;
+  .nav a,
+  .nav-more,
+  .nav-more summary {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .nav-more summary {
+    width: 100%;
   }
 
   .nav-more-menu {
@@ -2717,6 +2742,11 @@ th {
 
   .preference-save-button {
     justify-self: start;
+  }
+
+  .operator-panel,
+  .panel {
+    padding: 16px;
   }
 }
 
@@ -3440,6 +3470,24 @@ th {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.scenario-lever-actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.scenario-help-button {
+  color: var(--muted);
+  height: 28px;
+  width: 28px;
+}
+
+.scenario-help-button:hover,
+.scenario-help-button:focus-visible {
+  color: var(--accent-strong);
+}
+
 .scenario-card-heading {
   align-items: center;
   grid-template-columns: auto minmax(0, 1fr);
@@ -3600,6 +3648,12 @@ th {
 
 .scenario-plan-patches small {
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.scenario-plan-patches code {
+  color: var(--muted);
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 

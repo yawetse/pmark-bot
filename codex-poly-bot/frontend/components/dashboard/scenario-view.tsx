@@ -1,5 +1,6 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowRight,
   Bot,
@@ -13,6 +14,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -23,7 +25,11 @@ import {
 import { EmptyState, Message, Panel } from "@/components/dashboard/dashboard-primitives";
 import { JsonRecordViewer } from "@/components/dashboard/json-record-viewer";
 import { dashboardApi, type ApiClientResult } from "@/lib/api";
-import { isAllowedConfigPath, type AllowedConfigPath } from "@/lib/config-paths";
+import {
+  CONFIG_PATH_DETAILS,
+  isAllowedConfigPath,
+  type AllowedConfigPath,
+} from "@/lib/config-paths";
 
 // REQ: REQ-UI-004, REQ-UI-008, REQ-DAT-008, REQ-OBS-005
 
@@ -143,6 +149,11 @@ type SaveState =
 
 type ScenarioLeverUnit = "count" | "hours" | "percent" | "usd";
 
+type ScenarioGlossaryTerm = {
+  term: string;
+  definition: string;
+};
+
 type ScenarioLever =
   | {
       kind: "range";
@@ -178,12 +189,70 @@ type LeverRow = {
   changed: boolean;
 };
 
+const SCENARIO_GLOSSARY: Array<ScenarioGlossaryTerm & { matches: string[] }> = [
+  {
+    term: "Venue",
+    definition: "A trading destination such as Polymarket US or Alpaca. Disabled venues do not scan, score, or trade.",
+    matches: ["venue", "polymarket", "alpaca"],
+  },
+  {
+    term: "Market data",
+    definition: "The raw markets or symbols pulled before filters, model scoring, and risk checks run.",
+    matches: ["market data", "markets pulled", "candidate", "candidates"],
+  },
+  {
+    term: "Scanner",
+    definition: "The first filter stage. It narrows raw market data to candidates worth scoring.",
+    matches: ["scanner", "scan", "filter"],
+  },
+  {
+    term: "Liquidity",
+    definition: "How much trading interest is available near the current price. Low liquidity can make orders harder or more expensive to fill.",
+    matches: ["liquidity"],
+  },
+  {
+    term: "Order book",
+    definition: "The current buy and sell interest for a market. Depth is a simple measure of how much is available in that book.",
+    matches: ["order book", "depth", "bid", "ask"],
+  },
+  {
+    term: "Spread",
+    definition: "The gap between the best bid and best ask. Wider spreads can make expected entry or exit prices worse.",
+    matches: ["spread"],
+  },
+  {
+    term: "Resolution",
+    definition: "When a prediction market is expected to settle. A wider window lets more markets into the scan.",
+    matches: ["resolution", "hours"],
+  },
+  {
+    term: "Reasoning",
+    definition: "The model-scoring stage that evaluates candidates that survive scanner filters.",
+    matches: ["reasoning", "model", "confidence", "edge"],
+  },
+  {
+    term: "Confidence",
+    definition: "The model's reported certainty. A lower minimum lets more candidates move to later checks.",
+    matches: ["confidence"],
+  },
+  {
+    term: "Edge",
+    definition: "The gap between the model's estimate and the market price. A lower minimum lets smaller differences move forward.",
+    matches: ["edge"],
+  },
+  {
+    term: "Risk gate",
+    definition: "The safety check that can block orders based on size, losses, positions, allocation, or slippage.",
+    matches: ["risk", "position", "gate"],
+  },
+];
+
 const SCENARIO_LEVERS: ScenarioLever[] = [
   {
     kind: "switch",
     path: "venues.polymarket_us.enabled",
     label: "Polymarket US",
-    description: "Allows Polymarket US markets to enter the tick.",
+    description: "Lets Polymarket US markets enter the next scan when other safety checks pass.",
     stage: "Venue",
     fallback: false,
   },
@@ -191,7 +260,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "scanner.polymarket.market_data_limit",
     label: "Markets pulled",
-    description: "How many active Polymarket markets are fetched before filters run.",
+    description: "How many active Polymarket markets are pulled before scanner filters run.",
     stage: "Market data",
     fallback: 100,
     min: 1,
@@ -203,7 +272,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "scanner.polymarket.min_liquidity",
     label: "Minimum liquidity",
-    description: "Lower this to let thinner order books reach later checks.",
+    description: "Lower this to preview whether thinner markets would reach later checks.",
     stage: "Scanner",
     fallback: 500,
     min: 0,
@@ -215,7 +284,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "scanner.polymarket.min_depth",
     label: "Minimum depth",
-    description: "Lower this to allow smaller bid or ask books.",
+    description: "Lower this to preview whether smaller bid or ask books would pass.",
     stage: "Scanner",
     fallback: 500,
     min: 0,
@@ -227,7 +296,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "scanner.polymarket.max_spread",
     label: "Maximum spread",
-    description: "Raise this to diagnose wider bid/ask markets.",
+    description: "Raise this to preview whether wider bid/ask gaps would still pass.",
     stage: "Scanner",
     fallback: 0.05,
     min: 0.005,
@@ -240,7 +309,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "scanner.polymarket.max_hours_to_resolution",
     label: "Resolution window",
-    description: "Raise this to include markets that resolve farther out.",
+    description: "Raise this to include markets that settle farther in the future.",
     stage: "Scanner",
     fallback: 168,
     min: 1,
@@ -252,7 +321,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "reasoning.polymarket.min_confidence",
     label: "Model confidence",
-    description: "Lower this to diagnose candidates the model scores with less certainty.",
+    description: "Lower this to preview candidates the model scored with less certainty.",
     stage: "Reasoning",
     fallback: 0.75,
     min: 0.3,
@@ -265,7 +334,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "reasoning.polymarket.min_edge",
     label: "Minimum edge",
-    description: "Lower this to allow smaller probability gaps into strategy checks.",
+    description: "Lower this to preview smaller model-versus-market probability gaps.",
     stage: "Reasoning",
     fallback: 0.07,
     min: 0.005,
@@ -278,7 +347,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "risk.polymarket.max_position_usd",
     label: "Max position",
-    description: "Raise this only for dry-run diagnosis of risk gate blocks.",
+    description: "Raise this only to preview risk gate behavior before saving.",
     stage: "Risk",
     fallback: 25,
     min: 1,
@@ -373,7 +442,7 @@ export function ScenarioView() {
     event.preventDefault();
     const scenarioDrafts = scenarioDraftsFromRows(changedLeverRows);
     if (!scenarioDrafts.length) {
-      setSaveState({ status: "error", message: "Move at least one lever, then analyze the scenario." });
+      setSaveState({ status: "error", message: "Change at least one setting, then preview the scenario." });
       return;
     }
     void loadScenario({
@@ -438,13 +507,13 @@ export function ScenarioView() {
         path: patch.path,
         value: formatDraftValue(patch.value),
       })),
-      "AI settings applied",
+      "Suggested settings saved",
     );
   }
 
   async function applyTestConfig() {
     const drafts = [...scenarioDraftsFromRows(changedLeverRows), ...configDrafts];
-    await saveConfigDrafts(drafts, "Scenario settings applied");
+    await saveConfigDrafts(drafts, "Scenario settings saved");
   }
 
   async function saveConfigDrafts(
@@ -457,7 +526,7 @@ export function ScenarioView() {
       return false;
     }
     if (!parsed.patches.length) {
-      setSaveState({ status: "error", message: "Add at least one setting before applying." });
+      setSaveState({ status: "error", message: "Change at least one setting before saving." });
       return false;
     }
 
@@ -542,14 +611,14 @@ export function ScenarioView() {
         <div className="panel-heading">
           <div>
             <p className="section-label">Scenario</p>
-            <h1>Scenario Lab</h1>
+            <h1>Trade simulator</h1>
           </div>
           <span className="status idle">{state.data.model}</span>
         </div>
         <p className="panel-note">{state.data.message}</p>
         <div className="scenario-selector-row">
           <label>
-            Tick data
+            Run to analyze
             <select
               value={selectedRunId}
               onChange={(event) => {
@@ -573,15 +642,15 @@ export function ScenarioView() {
             onClick={() => void loadScenario({ runId: selectedRunId, stepKey: selectedStepKey })}
           >
             <PlayCircle aria-hidden="true" size={16} />
-            Analyze
+            Analyze run
           </button>
         </div>
         <div className="scenario-summary-strip" aria-label="Current scenario summary">
           <ScenarioSummaryItem label="Tick" value={state.data.run?.status ?? "No tick"} />
           <ScenarioSummaryItem label="Trigger" value={state.data.run?.trigger ?? "None"} />
-          <ScenarioSummaryItem label="Gate" value={selectedStep?.label ?? "No step"} />
+          <ScenarioSummaryItem label="Decision stage" value={selectedStep?.label ?? "No step"} />
           <ScenarioSummaryItem
-            label="Config"
+            label="Settings"
             value={state.configSnapshot?.username || state.configSnapshot?.config_owner || "user"}
           />
         </div>
@@ -591,7 +660,7 @@ export function ScenarioView() {
 
       {state.data.steps.length ? (
         <div className="scenario-layout">
-          <Panel eyebrow="Walkthrough" title="Five steps" className="scenario-step-panel">
+          <Panel eyebrow="Decision path" title="Run stages" className="scenario-step-panel">
             <div className="scenario-step-list">
               {state.data.steps.map((step) => (
                 <button
@@ -664,6 +733,9 @@ export function ScenarioView() {
       )}
 
       <Panel eyebrow="Levers" title="Move settings to test a pass path" className="scenario-lever-panel">
+        <p className="panel-note">
+          Preview rule changes against the selected run before saving anything for the next loop.
+        </p>
         <form className="scenario-form" onSubmit={onConfigSubmit}>
           <div className="scenario-lever-grid">
             {SCENARIO_LEVERS.map((lever) => (
@@ -682,11 +754,11 @@ export function ScenarioView() {
           <div className="scenario-config-actions">
             <button className="button" type="button" onClick={loadAiConfigSet}>
               <Sparkles aria-hidden="true" size={16} />
-              Use recommended
+              Load suggestions
             </button>
             <button className="button" disabled={actionState === "running"} type="submit">
               <FlaskConical aria-hidden="true" size={16} />
-              Analyze scenario
+              Preview changes
             </button>
             <button
               className="button primary"
@@ -695,7 +767,7 @@ export function ScenarioView() {
               onClick={() => void applyTestConfig()}
             >
               <Save aria-hidden="true" size={16} />
-              Apply scenario settings
+              Save for next loop
             </button>
           </div>
         </form>
@@ -711,7 +783,7 @@ export function ScenarioView() {
       />
 
       <div className="scenario-help-grid">
-        <Panel eyebrow="Recommended path" title="Suggested next move">
+        <Panel eyebrow="Suggested changes" title="Recommended adjustments">
           <ScenarioConfigPlan
             configSet={state.data.recommendedConfigSet}
             onApply={applyAiConfigSet}
@@ -729,7 +801,7 @@ export function ScenarioView() {
           </div>
         </Panel>
 
-        <Panel eyebrow="Ask" title="Ask about this tick">
+        <Panel eyebrow="Ask" title="Ask why it blocked">
           <form className="scenario-form" onSubmit={onPromptSubmit}>
             <label>
               Question
@@ -737,7 +809,7 @@ export function ScenarioView() {
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
                 rows={4}
-                placeholder="What setting is blocking this trade?"
+                placeholder="Why did this trade stop, and what setting would change that?"
               />
             </label>
             <button className="button primary" disabled={actionState === "running"} type="submit">
@@ -751,9 +823,9 @@ export function ScenarioView() {
       <details className="scenario-advanced-editor">
         <summary>
           <Settings2 aria-hidden="true" size={16} />
-          Advanced path editor
+          Advanced setting override
         </summary>
-        <Panel eyebrow="Advanced" title="Test a specific config path">
+        <Panel eyebrow="Advanced" title="Try a specific setting">
           <form
             className="scenario-form"
             onSubmit={(event) => {
@@ -769,14 +841,14 @@ export function ScenarioView() {
             {configDrafts.map((draft) => (
               <div className="scenario-config-row" key={draft.id}>
                 <label>
-                  Config path
+                  Setting path
                   <input
                     value={draft.path}
                     onChange={(event) => updateConfigDraft(draft.id, "path", event.target.value)}
                   />
                 </label>
                 <label>
-                  Test value
+                  Trial value
                   <input
                     value={draft.value}
                     onChange={(event) => updateConfigDraft(draft.id, "value", event.target.value)}
@@ -799,7 +871,7 @@ export function ScenarioView() {
               </button>
               <button className="button" disabled={!configDrafts.length || actionState === "running"} type="submit">
                 <FlaskConical aria-hidden="true" size={16} />
-                Test path
+                Try override
               </button>
             </div>
           </form>
@@ -839,20 +911,24 @@ function ScenarioLeverControl({
             <span>{lever.stage}</span>
             <strong>{lever.label}</strong>
           </div>
-          <button
-            aria-checked={checked}
-            className="scenario-switch"
-            role="switch"
-            type="button"
-            onClick={() => onChange(!checked)}
-          >
-            <span aria-hidden="true" />
-          </button>
+          <div className="scenario-lever-actions">
+            <ScenarioLeverHelpDialog lever={lever} row={row} />
+            <button
+              aria-checked={checked}
+              aria-label={`${checked ? "Disable" : "Enable"} ${lever.label}`}
+              className="scenario-switch"
+              role="switch"
+              type="button"
+              onClick={() => onChange(!checked)}
+            >
+              <span aria-hidden="true" />
+            </button>
+          </div>
         </div>
         <p>{lever.description}</p>
         <div className="scenario-lever-values">
-          <span>Current {currentDisplay}</span>
-          <strong>Scenario {nextDisplay}</strong>
+          <span>Now {currentDisplay}</span>
+          <strong>Preview {nextDisplay}</strong>
         </div>
       </article>
     );
@@ -866,7 +942,10 @@ function ScenarioLeverControl({
           <span>{lever.stage}</span>
           <strong>{lever.label}</strong>
         </div>
-        {row?.changed ? <CheckCircle2 aria-label="Changed" size={17} /> : null}
+        <div className="scenario-lever-actions">
+          <ScenarioLeverHelpDialog lever={lever} row={row} />
+          {row?.changed ? <CheckCircle2 aria-label="Changed" size={17} /> : null}
+        </div>
       </div>
       <p>{lever.description}</p>
       <input
@@ -879,10 +958,91 @@ function ScenarioLeverControl({
         onChange={(event) => onChange(roundLeverNumber(Number(event.target.value), lever.step))}
       />
       <div className="scenario-lever-values">
-        <span>Current {currentDisplay}</span>
-        <strong>Scenario {nextDisplay}</strong>
+        <span>Now {currentDisplay}</span>
+        <strong>Preview {nextDisplay}</strong>
       </div>
     </article>
+  );
+}
+
+function ScenarioLeverHelpDialog({ lever, row }: { lever: ScenarioLever; row?: LeverRow }) {
+  const detail = CONFIG_PATH_DETAILS[lever.path];
+  const currentDisplay = row?.currentDisplay ?? formatLeverDisplay(lever, lever.fallback);
+  const nextDisplay = row?.nextDisplay ?? currentDisplay;
+  const terms = termsForScenarioLever(lever, detail);
+  const descriptionId = `${slugId(`scenario-help-${lever.path}`)}-description`;
+
+  return (
+    <Dialog.Root>
+      <Dialog.Trigger asChild>
+        <button
+          aria-label={`Explain ${lever.label}`}
+          className="icon-button scenario-help-button"
+          type="button"
+        >
+          <HelpCircle aria-hidden="true" size={15} />
+        </button>
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content setting-help-dialog" aria-describedby={descriptionId}>
+          <div className="dialog-heading">
+            <HelpCircle aria-hidden="true" size={22} strokeWidth={2.4} />
+            <div>
+              <Dialog.Title>{lever.label}</Dialog.Title>
+              <Dialog.Description id={descriptionId}>{detail.description}</Dialog.Description>
+            </div>
+          </div>
+          <div className="setting-help-summary">
+            <div>
+              <span>Stage</span>
+              <strong>{lever.stage}</strong>
+            </div>
+            <div>
+              <span>Now</span>
+              <strong>{currentDisplay}</strong>
+            </div>
+            <div>
+              <span>Preview</span>
+              <strong>{nextDisplay}</strong>
+            </div>
+          </div>
+          <div className="setting-help-body">
+            <section>
+              <h3>What this changes</h3>
+              <p>{lever.description}</p>
+              <p>{detail.effect}</p>
+            </section>
+            <section>
+              <h3>Terms in this setting</h3>
+              <dl className="setting-term-list">
+                {terms.map((term) => (
+                  <div key={term.term}>
+                    <dt>{term.term}</dt>
+                    <dd>{term.definition}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+            <section>
+              <h3>Saved setting</h3>
+              <p>
+                Saved as <code>{lever.path}</code> in your database config for this environment.
+                Preview changes do not save until you choose Save for next loop.
+              </p>
+            </section>
+          </div>
+          <div className="dialog-actions">
+            <Dialog.Close asChild>
+              <button className="button" type="button">
+                <X aria-hidden="true" size={15} />
+                Close
+              </button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -938,7 +1098,7 @@ function ScenarioBeforeAfter({
           <SlidersHorizontal aria-hidden="true" size={18} />
           <div>
             <span>Current settings</span>
-            <strong>{changedRows.length ? `${changedRows.length} selected` : "Baseline"}</strong>
+            <strong>{changedRows.length ? `${changedRows.length} changed` : "Baseline"}</strong>
           </div>
         </div>
         <div className="scenario-setting-list">
@@ -956,7 +1116,7 @@ function ScenarioBeforeAfter({
           <ArrowRight aria-hidden="true" size={18} />
           <div>
             <span>Scenario</span>
-            <strong>{changedRows.length ? "After changes" : "No changes yet"}</strong>
+            <strong>{changedRows.length ? "Preview" : "No changes yet"}</strong>
           </div>
         </div>
         {changedRows.length ? (
@@ -975,7 +1135,7 @@ function ScenarioBeforeAfter({
             })}
           </div>
         ) : (
-          <p className="panel-note">Move a lever, then analyze the scenario to compare the pass path.</p>
+          <p className="panel-note">Change a setting, then preview the run to compare the decision path.</p>
         )}
       </article>
     </section>
@@ -1006,10 +1166,11 @@ function ScenarioConfigPlan({
         <div className="scenario-plan-patches">
           {configSet.patches.map((patch) => (
             <article key={`${patch.path}-${patch.value}`}>
-              <strong>{patch.path}</strong>
+              <strong>{configPathLabel(patch.path)}</strong>
               <small>
                 {formatDraftValue(patch.currentValue)} to {patch.value}
               </small>
+              {isAllowedConfigPath(patch.path) ? <code>{patch.path}</code> : null}
               <p>{patch.reason}</p>
               <p>{patch.expectedImpact}</p>
             </article>
@@ -1031,7 +1192,7 @@ function ScenarioConfigPlan({
           onClick={onLoad}
         >
           <FlaskConical aria-hidden="true" size={16} />
-          Load settings
+          Load suggestions
         </button>
         <button
           className="button primary"
@@ -1040,7 +1201,7 @@ function ScenarioConfigPlan({
           onClick={onApply}
         >
           <Save aria-hidden="true" size={16} />
-          Apply AI settings
+          Save suggestions
         </button>
       </div>
     </div>
@@ -1214,7 +1375,7 @@ function parseConfigDrafts(
       continue;
     }
     if (!isAllowedConfigPath(path)) {
-      return { ok: false, message: `${path} is not a supported dashboard config path.` };
+      return { ok: false, message: `${path} is not available in dashboard settings.` };
     }
     const parsed = parseConfigValue(draft.value);
     if (!parsed.ok) {
@@ -1287,4 +1448,38 @@ function readableConfigError(message: string): string {
   } catch {
     return message;
   }
+}
+
+function termsForScenarioLever(
+  lever: ScenarioLever,
+  detail: (typeof CONFIG_PATH_DETAILS)[AllowedConfigPath],
+): ScenarioGlossaryTerm[] {
+  const source = [
+    lever.label,
+    lever.description,
+    lever.stage,
+    lever.path,
+    detail.description,
+    detail.effect,
+    detail.valueHint,
+  ].join(" ").toLowerCase();
+  const matched = SCENARIO_GLOSSARY.filter((entry) =>
+    entry.matches.some((match) => source.includes(match.toLowerCase())),
+  ).map(({ term, definition }) => ({ term, definition }));
+  return matched.length
+    ? matched
+    : [
+        {
+          term: "Setting",
+          definition: "A saved value the app reads on the next loop. Preview values stay temporary until you save them.",
+        },
+      ];
+}
+
+function configPathLabel(path: string): string {
+  return isAllowedConfigPath(path) ? CONFIG_PATH_DETAILS[path].label : path;
+}
+
+function slugId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }

@@ -3,6 +3,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { FormEvent, useState } from "react";
 import {
+  AlertTriangle,
   Bell,
   Bot,
   Clock,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { Disclosure } from "@/components/dashboard/dashboard-primitives";
+import { Disclosure, FormSection } from "@/components/dashboard/dashboard-primitives";
 import { dashboardApi } from "@/lib/api";
 import {
   ALLOWED_CONFIG_PATHS,
@@ -66,6 +67,17 @@ type SaveState =
   | { status: "saved"; version: string }
   | { status: "conflict"; currentVersion: string }
   | { status: "error"; message: string };
+
+type LiveModeConfirmationState =
+  | { status: "closed" }
+  | {
+      status: "open";
+      confirmed: boolean;
+      currentValue: unknown;
+      nextValue: ConfigValue;
+      setting: SettingDefinition;
+      source: "advanced" | "preference";
+    };
 
 type ConfigControlsProps = {
   initialSnapshot?: ConfigSnapshot;
@@ -635,6 +647,9 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const [currentVersion, setCurrentVersion] = useState(initialSnapshot?.version ?? "");
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [pendingDrafts, setPendingDrafts] = useState<Partial<Record<AllowedConfigPath, ConfigValue>>>({});
+  const [liveModeConfirmation, setLiveModeConfirmation] = useState<LiveModeConfirmationState>({
+    status: "closed",
+  });
   const selectedDetail = CONFIG_PATH_DETAILS[path];
   const currentValue = valueAtPath(settings, path);
   const resolvedSymbols = symbolsFromValue(valueAtPath(settings, "alpaca.symbol_universe"));
@@ -653,6 +668,15 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     const parsedValue = parseValue(value);
     if (!parsedValue.ok) {
       setSaveState({ status: "error", message: parsedValue.message });
+      return;
+    }
+
+    const liveModeSetting = settingForPath(path);
+    if (
+      liveModeSetting &&
+      requiresLiveModeConfirmation(liveModeSetting.path, currentValue, parsedValue.value)
+    ) {
+      openLiveModeConfirmation("advanced", liveModeSetting, currentValue, parsedValue.value);
       return;
     }
 
@@ -755,16 +779,66 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     setSaveState({ status: "idle" });
   }
 
-  async function onPreferenceSave(setting: SettingDefinition) {
-    const nextValue = preferenceDraftValue(setting, settings, pendingDrafts);
+  function openLiveModeConfirmation(
+    source: "advanced" | "preference",
+    setting: SettingDefinition,
+    currentSettingValue: unknown,
+    nextValue: ConfigValue,
+  ) {
+    setSaveState({ status: "idle" });
+    setLiveModeConfirmation({
+      status: "open",
+      confirmed: false,
+      currentValue: currentSettingValue,
+      nextValue,
+      setting,
+      source,
+    });
+  }
+
+  async function savePreferenceSetting(setting: SettingDefinition, nextValue: ConfigValue): Promise<boolean> {
     const saved = await saveConfigPatch(setting.path, nextValue);
     if (!saved) {
-      return;
+      return false;
     }
     setPendingDrafts((currentDrafts) => {
       const nextDrafts = { ...currentDrafts };
       delete nextDrafts[setting.path];
       return nextDrafts;
+    });
+    return true;
+  }
+
+  async function onPreferenceSave(setting: SettingDefinition) {
+    const currentSettingValue = valueAtPath(settings, setting.path);
+    const nextValue = preferenceDraftValue(setting, settings, pendingDrafts);
+    if (requiresLiveModeConfirmation(setting.path, currentSettingValue, nextValue)) {
+      openLiveModeConfirmation("preference", setting, currentSettingValue, nextValue);
+      return;
+    }
+    await savePreferenceSetting(setting, nextValue);
+  }
+
+  async function confirmLiveModeSave() {
+    if (liveModeConfirmation.status !== "open" || !liveModeConfirmation.confirmed) {
+      return;
+    }
+    const saved =
+      liveModeConfirmation.source === "preference"
+        ? await savePreferenceSetting(liveModeConfirmation.setting, liveModeConfirmation.nextValue)
+        : await saveConfigPatch(liveModeConfirmation.setting.path, liveModeConfirmation.nextValue);
+    if (!saved) {
+      return;
+    }
+    setLiveModeConfirmation({ status: "closed" });
+  }
+
+  function setLiveModeConfirmed(confirmed: boolean) {
+    setLiveModeConfirmation((current) => {
+      if (current.status !== "open") {
+        return current;
+      }
+      return { ...current, confirmed };
     });
   }
 
@@ -835,16 +909,13 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         {PREFERENCE_SECTIONS.map((section) => {
           const Icon = section.icon;
           return (
-            <section className="preference-section" id={sectionId(section.title)} key={section.title}>
-              <div className="preference-section-heading">
-                <div className="preference-section-title">
-                  <Icon aria-hidden="true" size={19} strokeWidth={2.2} />
-                  <div>
-                    <h3>{section.title}</h3>
-                    <p>{section.body}</p>
-                  </div>
-                </div>
-              </div>
+            <FormSection
+              body={section.body}
+              icon={<Icon aria-hidden="true" size={19} strokeWidth={2.2} />}
+              id={sectionId(section.title)}
+              key={section.title}
+              title={section.title}
+            >
               <div className="preference-row-list">
                 {section.settings.map((setting) => {
                   const currentSettingValue = valueAtPath(settings, setting.path);
@@ -862,7 +933,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
                   );
                 })}
               </div>
-            </section>
+            </FormSection>
           );
         })}
       </div>
@@ -999,6 +1070,17 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           </button>
         </form>
       </Disclosure>
+      <LiveModeConfirmationDialog
+        confirmation={liveModeConfirmation}
+        environment={initialSnapshot?.environment ?? process.env.NEXT_PUBLIC_APP_ENV ?? "local"}
+        onConfirm={() => void confirmLiveModeSave()}
+        onConfirmedChange={setLiveModeConfirmed}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLiveModeConfirmation({ status: "closed" });
+          }
+        }}
+      />
       {saveState.status === "saved" ? (
         <p className="status-message">Saved version {saveState.version}. Applies on next loop.</p>
       ) : null}
@@ -1009,6 +1091,95 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       ) : null}
       {saveState.status === "error" ? <p className="status-message">{saveState.message}</p> : null}
     </section>
+  );
+}
+
+function LiveModeConfirmationDialog({
+  confirmation,
+  environment,
+  onConfirm,
+  onConfirmedChange,
+  onOpenChange,
+}: {
+  confirmation: LiveModeConfirmationState;
+  environment: string;
+  onConfirm: () => void;
+  onConfirmedChange: (confirmed: boolean) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  if (confirmation.status !== "open") {
+    return null;
+  }
+  const currentValue = formatPreferenceDisplay(confirmation.setting, confirmation.currentValue);
+  const nextValue = formatPreferenceDisplay(confirmation.setting, confirmation.nextValue);
+  const enablingLive = Boolean(confirmation.nextValue);
+
+  return (
+    <Dialog.Root open onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content" aria-describedby="live-mode-confirmation-body">
+          <div className="dialog-heading">
+            <AlertTriangle aria-hidden="true" size={22} strokeWidth={2.4} />
+            <div>
+              <Dialog.Title>{enablingLive ? "Confirm live mode" : "Confirm live mode change"}</Dialog.Title>
+              <Dialog.Description id="live-mode-confirmation-body">
+                This changes the live trading gate for {environment}. It applies on the next loop after the config save.
+              </Dialog.Description>
+            </div>
+          </div>
+          <div className="setting-help-summary">
+            <div>
+              <span>Current value</span>
+              <strong>{currentValue}</strong>
+            </div>
+            <div>
+              <span>Requested value</span>
+              <strong>{nextValue}</strong>
+            </div>
+            <div>
+              <span>Scope</span>
+              <strong>{environment}</strong>
+            </div>
+          </div>
+          <div className="setting-help-body">
+            <section>
+              <h3>Before saving</h3>
+              <p>
+                Confirm account readiness, venue flags, risk limits, notifications, open orders,
+                and kill switch state before changing this gate.
+              </p>
+            </section>
+          </div>
+          <label className="checkbox-row">
+            <input
+              checked={confirmation.confirmed}
+              type="checkbox"
+              onChange={(event) => onConfirmedChange(event.target.checked)}
+            />
+            <span>
+              I understand this changes whether approved orders can reach a live trading account.
+            </span>
+          </label>
+          <div className="dialog-actions">
+            <Dialog.Close asChild>
+              <button className="button" type="button">
+                <X aria-hidden="true" size={15} />
+                Cancel
+              </button>
+            </Dialog.Close>
+            <button
+              className={enablingLive ? "button danger" : "button primary"}
+              disabled={!confirmation.confirmed}
+              onClick={onConfirm}
+              type="button"
+            >
+              {enablingLive ? "Save live mode" : "Save live mode change"}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -1286,6 +1457,24 @@ function renderPreferenceControl(
       />
     </label>
   );
+}
+
+function settingForPath(path: AllowedConfigPath): SettingDefinition | null {
+  for (const section of PREFERENCE_SECTIONS) {
+    const setting = section.settings.find((item) => item.path === path);
+    if (setting) {
+      return setting;
+    }
+  }
+  return null;
+}
+
+function requiresLiveModeConfirmation(
+  path: AllowedConfigPath,
+  currentValue: unknown,
+  nextValue: ConfigValue,
+): boolean {
+  return path === "live_enabled" && Boolean(currentValue) !== Boolean(nextValue);
 }
 
 function preferenceDraftValue(
