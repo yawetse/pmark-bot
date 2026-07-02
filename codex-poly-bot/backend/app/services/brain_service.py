@@ -16,6 +16,7 @@ from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.domain import Environment, Instrument, InstrumentType, ModelProvider, ScoringOutput, Venue
 from app.services.llm_service import (
     ClaudeMessagesProvider,
+    cost_controlled_openai_scoring_model,
     LlmProvider,
     LlmProviderCredential,
     LlmScoreRequest,
@@ -243,7 +244,7 @@ class BrainService:
                 credential=LlmProviderCredential(api_key=self.environ.get("OPENAI_API_KEY")),
                 remaining_budget=openai_budget,
                 enabled=_provider_enabled(llm_config, ModelProvider.OPENAI),
-                model=str(openai_settings.get("model", "gpt-5")),
+                model=cost_controlled_openai_scoring_model(openai_settings.get("model")),
                 token_pricing=token_pricing_from_env(ModelProvider.OPENAI, self.environ),
             ),
             ClaudeMessagesProvider(

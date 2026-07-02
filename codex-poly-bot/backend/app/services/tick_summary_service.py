@@ -31,7 +31,7 @@ from app.services.llm_service import (
 
 
 DEFAULT_TICK_SUMMARY_MODEL = "gpt-5-nano"
-DEFAULT_TICK_SUMMARY_FALLBACK_MODEL = "gpt-4.1-nano"
+DEFAULT_TICK_SUMMARY_FALLBACK_MODEL = "gpt-5-mini"
 DEFAULT_TICK_SUMMARY_WINDOW_MINUTES = 10
 DEFAULT_TICK_SUMMARY_CACHE_SECONDS = 60
 DEFAULT_TICK_SUMMARY_PROMPT_VERSION = "tick-summary-v1"
@@ -39,8 +39,8 @@ DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS = 60.0
 DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION = Decimal("0.05")
 DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
-DEFAULT_GPT_4_1_NANO_INPUT_COST_PER_MILLION = Decimal("0.10")
-DEFAULT_GPT_4_1_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
+DEFAULT_GPT_5_MINI_INPUT_COST_PER_MILLION = Decimal("0.25")
+DEFAULT_GPT_5_MINI_OUTPUT_COST_PER_MILLION = Decimal("2.00")
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[3] / "docs" / "tick-summary-system-prompt.md"
 LOGGER = logging.getLogger(__name__)
 DEFAULT_TICK_SUMMARY_SYSTEM_PROMPT = """# Tick Summary System Prompt
@@ -527,8 +527,8 @@ def _tick_summary_pricing(model: str, environ: Mapping[str, str]) -> TokenPricin
         )
     if model == DEFAULT_TICK_SUMMARY_FALLBACK_MODEL:
         return TokenPricing(
-            input_cost_per_million_tokens=DEFAULT_GPT_4_1_NANO_INPUT_COST_PER_MILLION,
-            output_cost_per_million_tokens=DEFAULT_GPT_4_1_NANO_OUTPUT_COST_PER_MILLION,
+            input_cost_per_million_tokens=DEFAULT_GPT_5_MINI_INPUT_COST_PER_MILLION,
+            output_cost_per_million_tokens=DEFAULT_GPT_5_MINI_OUTPUT_COST_PER_MILLION,
         )
     return None
 

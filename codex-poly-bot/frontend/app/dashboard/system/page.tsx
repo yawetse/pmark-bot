@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 
 import type { DashboardSummaryView } from "@/components/dashboard/operator-command-center";
-import { StatusOverview } from "@/components/dashboard/status-overview";
-import { WalletStatus } from "@/components/dashboard/wallet-status";
+import { SystemReadinessView } from "@/components/dashboard/system-readiness-view";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
 import { getDashboardSession } from "@/lib/server/session";
 
@@ -22,15 +21,9 @@ export default async function SystemPage() {
   );
 
   return (
-    <div className="content-grid">
-      <StatusOverview items={summary.ok ? summary.data.status.items : undefined} />
-      <WalletStatus credentials={summary.ok ? summary.data.wallet.credentials : undefined} />
-      {summary.ok ? null : (
-        <section className="panel">
-          <h2>System API</h2>
-          <p>{summary.message}</p>
-        </section>
-      )}
-    </div>
+    <SystemReadinessView
+      summary={summary.ok ? summary.data : undefined}
+      loadError={summary.ok ? undefined : summary.message}
+    />
   );
 }

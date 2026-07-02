@@ -23,6 +23,7 @@ from app.services import (
     ClaudeMessagesProvider,
     ConfigPatchOperation,
     ConfigService,
+    ConfigValidationError,
     FakeLlmProvider,
     LlmBudgetLedger,
     LlmProviderCredential,
@@ -31,12 +32,14 @@ from app.services import (
     RepositoryLlmUsageRecorder,
     build_scoring_queue,
     check_scoring_failure_gate,
+    default_config_payload,
     reconcile_scoring_cost,
     record_provider_cost,
     run_llm_scoring,
     TokenPricing,
     token_pricing_from_env,
 )
+from app.services.llm_service import cost_controlled_openai_scoring_model
 
 
 def prediction_instrument() -> Instrument:
@@ -153,7 +156,7 @@ def test_req_llm_001_03_configured_credentials_send_scoring_to_openai_and_claude
     }
     assert openai_transport.calls[0]["url"] == "https://api.openai.com/v1/responses"
     assert openai_transport.calls[0]["headers"]["Authorization"] == "Bearer openai-test-key"
-    assert openai_transport.calls[0]["payload"]["model"] == "gpt-5"
+    assert openai_transport.calls[0]["payload"]["model"] == "gpt-5-mini"
     assert claude_transport.calls[0]["url"] == "https://api.anthropic.com/v1/messages"
     assert claude_transport.calls[0]["headers"]["x-api-key"] == "claude-test-key"
     assert claude_transport.calls[0]["payload"]["model"] == "claude-opus-4-1-20250805"
@@ -564,6 +567,9 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
     """
     auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
     service = ConfigService(auth.registry)
+
+    assert default_config_payload()["llm"]["openai"]["settings"]["model"] == "gpt-5-mini"
+
     result = service.save_config_patches(
         actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
         access=auth.authorize_request(auth.create_session_token(username="yaw")),
@@ -573,12 +579,48 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
         patches=[
             ConfigPatchOperation("replace", "llm.claude.budget_usd", "30.00"),
             ConfigPatchOperation("replace", "llm.claude.settings.temperature", "0.2"),
+            ConfigPatchOperation("replace", "llm.openai.settings.model", "gpt-5-nano"),
         ],
     )
-    payload = result.mutation.config_version["payload"]["llm"]["claude"]
+    claude_payload = result.mutation.config_version["payload"]["llm"]["claude"]
+    openai_payload = result.mutation.config_version["payload"]["llm"]["openai"]
 
-    assert payload["budget_usd"] == "30.00"
-    assert payload["settings"]["temperature"] == "0.2"
+    assert claude_payload["budget_usd"] == "30.00"
+    assert claude_payload["settings"]["temperature"] == "0.2"
+    assert openai_payload["settings"]["model"] == "gpt-5-nano"
+
+
+def test_req_llm_006_02_openai_scoring_model_rejects_full_gpt5() -> None:
+    """TST-REQ-LLM-006-02: Validates REQ-LLM-006
+
+    Given: an authorized dashboard user tries to use full GPT-5 for OpenAI scoring
+    When: the update is saved
+    Then: the config API rejects the expensive model setting
+    """
+    auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
+    service = ConfigService(auth.registry)
+
+    with pytest.raises(ConfigValidationError, match="OpenAI scoring model"):
+        service.save_config_patches(
+            actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+            access=auth.authorize_request(auth.create_session_token(username="yaw")),
+            environment=Environment.DEVELOPMENT,
+            expected_version=None,
+            version="v1",
+            patches=[ConfigPatchOperation("replace", "llm.openai.settings.model", "gpt-5")],
+        )
+
+
+def test_req_llm_006_03_stale_full_gpt5_openai_config_uses_mini() -> None:
+    """TST-REQ-LLM-006-03: Validates REQ-LLM-006
+
+    Given: an older saved config references full GPT-5
+    When: the OpenAI scoring model is resolved
+    Then: the bot falls back to the cost-controlled mini model
+    """
+
+    assert cost_controlled_openai_scoring_model("gpt-5") == "gpt-5-mini"
+    assert cost_controlled_openai_scoring_model("gpt5-nano") == "gpt-5-nano"
 
 
 def test_req_llm_007_01_scoring_config_changes_saved_next_trading_loop_starts() -> None:

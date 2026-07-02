@@ -25,6 +25,7 @@ for (const path of [
   "venues.polymarket_us.enabled",
   "trading_loop_interval_seconds",
   "llm.openai.budget_usd",
+  "llm.openai.settings.model",
   "risk.alpaca.max_position_usd",
   "risk.alpaca.market_order_slippage_threshold",
   "alpaca.symbol_presets",
@@ -40,6 +41,9 @@ for (const token of [
   "CONFIG_PATH_DETAILS",
   "Default venue",
   "Live trading",
+  "OpenAI scoring model",
+  "gpt-5-nano",
+  "gpt-5-mini",
 ]) {
   assert.match(configPaths, new RegExp(token));
 }
@@ -62,6 +66,15 @@ assert.match(configControls, /selectedDetail\.effect/);
 assert.match(configControls, /Expected value/);
 assert.match(configControls, /Current value/);
 assert.doesNotMatch(configControls, /unsupported\.path/);
+
+const apiClient = read("lib/api.ts");
+for (const token of [
+  "looksLikeHtml",
+  "gatewayErrorMessage",
+  "backend gateway returned 502",
+]) {
+  assert.match(apiClient, new RegExp(token));
+}
 
 const configPage = read("app/dashboard/config/page.tsx");
 assert.match(configPage, /serverDashboardApi<ConfigSnapshot>/);
@@ -147,6 +160,10 @@ for (const token of [
   "Aggressive",
   "notifications.email_on_trade_placed",
   "Reset defaults",
+  "recommendation-apply-button",
+  "data-active",
+  "aria-current",
+  "Applying",
   "currentValue",
   "nextValue",
   "refreshConfigSnapshot",

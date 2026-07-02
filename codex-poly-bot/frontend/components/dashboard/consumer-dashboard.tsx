@@ -293,6 +293,7 @@ export function ConsumerDashboard() {
   }
 
   async function applyPlan(plan: RecommendationPlan) {
+    setActivePlanId(plan.id);
     await saveConfigPatches(
       plan.patches.map((patch) => ({ path: patch.path, value: patch.nextValue })),
       `${plan.title} applied`,
@@ -711,7 +712,12 @@ export function ConsumerDashboard() {
             <>
               <div className="recommendation-options">
                 {plans.map((plan) => (
-                  <article className={`recommendation-option ${plan.id}`} key={plan.id}>
+                  <article
+                    aria-current={plan.id === activePlan.id ? "true" : undefined}
+                    className={`recommendation-option ${plan.id}`}
+                    data-active={plan.id === activePlan.id ? "true" : undefined}
+                    key={plan.id}
+                  >
                     <div>
                       <span className={`status ${plan.tone}`}>{plan.id}</span>
                       <h3>{plan.title}</h3>
@@ -722,8 +728,13 @@ export function ConsumerDashboard() {
                         <ChevronDown aria-hidden="true" size={16} />
                         View detail
                       </button>
-                      <button className="button" disabled={!canEditConfig} type="button" onClick={() => void applyPlan(plan)}>
-                        Apply
+                      <button
+                        className="button primary recommendation-apply-button"
+                        disabled={!canEditConfig}
+                        type="button"
+                        onClick={() => void applyPlan(plan)}
+                      >
+                        {saveState.status === "submitting" && activePlan.id === plan.id ? "Applying" : "Apply"}
                       </button>
                     </div>
                   </article>

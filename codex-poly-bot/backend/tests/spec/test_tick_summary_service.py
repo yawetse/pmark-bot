@@ -101,7 +101,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
         environ={
             "OPENAI_API_KEY": "test-key",
             "OPENAI_TICK_SUMMARY_MODEL": "unavailable-model",
-            "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "gpt-4.1-nano",
+            "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "gpt-5-mini",
         },
         transport=transport,
     )
@@ -123,25 +123,25 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
     )
 
     assert result.status == "summarized"
-    assert result.model == "gpt-4.1-nano"
+    assert result.model == "gpt-5-mini"
     assert result.warnings == [
-        "Primary tick summary model failed (unavailable-model: model not available); used gpt-4.1-nano."
+        "Primary tick summary model failed (unavailable-model: model not available); used gpt-5-mini."
     ]
     assert [call["payload"]["model"] for call in transport.calls] == [
         "unavailable-model",
-        "gpt-4.1-nano",
+        "gpt-5-mini",
     ]
     usage_rows = registry.state.rows("shared.ai_usage_events")
     assert len(usage_rows) == 1
-    assert usage_rows[0]["model"] == "gpt-4.1-nano"
-    assert Decimal(str(usage_rows[0]["cost_usd"])) == Decimal("0.0000180")
+    assert usage_rows[0]["model"] == "gpt-5-mini"
+    assert Decimal(str(usage_rows[0]["cost_usd"])) == Decimal("0.0000650")
     assert [span["name"] for span in spans] == [
         "tick_summary.model_attempt",
         "tick_summary.model_attempt",
     ]
     assert spans[0]["attributes"]["model"] == "unavailable-model"
     assert spans[0]["attributes"]["attempt_number"] == 1
-    assert spans[1]["attributes"]["model"] == "gpt-4.1-nano"
+    assert spans[1]["attributes"]["model"] == "gpt-5-mini"
     assert spans[1]["attributes"]["status"] == "success"
     assert recorded_failures == [
         {
@@ -177,7 +177,7 @@ def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -
         registry=registry,
         environ={
             "OPENAI_API_KEY": "test-key",
-            "OPENAI_TICK_SUMMARY_MODEL": "gpt-4.1-nano",
+            "OPENAI_TICK_SUMMARY_MODEL": "gpt-5-nano",
         },
         transport=transport,
     )
