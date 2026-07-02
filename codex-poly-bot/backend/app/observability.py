@@ -293,6 +293,28 @@ def record_span_failure(
         )
 
 
+def record_span_event(
+    span: object | None,
+    *,
+    event_name: str,
+    attributes: Mapping[str, object] | None = None,
+) -> None:
+    """Record a non-error application event on an active span.
+
+    REQ: REQ-OBS-005
+    """
+
+    if span is None:
+        return
+    payload = {"event_name": event_name, **dict(attributes or {})}
+    span_attributes = _prefixed_span_attributes(payload)
+    set_span_attributes(span, payload)
+
+    add_event = getattr(span, "add_event", None)
+    if callable(add_event):
+        add_event(event_name, attributes=span_attributes)
+
+
 def _configure_opentelemetry(app: FastAPI, config: ObservabilityConfig) -> None:
     global _OTEL_CONFIGURED
     global _HTTPX_INSTRUMENTED
