@@ -17,7 +17,7 @@ from app.domain import (
     Venue,
 )
 from app.main import AppSettings, create_app
-from app.observability import build_observability_config
+from app.observability import build_observability_config, record_span_failure
 from app.services import ActorContext, AuditService, CloudWatchLogSink, ConfigChange
 
 
@@ -146,6 +146,49 @@ def test_req_obs_002_03_signoz_exporter_config_resolves_cloud_endpoint_and_heade
     assert config.traces_endpoint == "https://ingest.us.signoz.cloud:443/v1/traces"
     assert config.logs_endpoint == "https://ingest.us.signoz.cloud:443/v1/logs"
     assert config.headers == {"signoz-ingestion-key": "ingest-key"}
+
+def test_req_obs_005_recovered_span_failure_does_not_mark_trace_error() -> None:
+    """TST-REQ-OBS-005-12: Validates REQ-OBS-005
+
+    Given: a provider attempt fails but the workflow recovers through fallback
+    When: the failure is recorded as recovered
+    Then: the span receives event attributes without exception recording or ERROR status
+    """
+
+    class FakeSpan:
+        def __init__(self) -> None:
+            self.attributes: dict[str, object] = {}
+            self.events: list[tuple[str, dict[str, object]]] = []
+            self.exceptions: list[Exception] = []
+            self.statuses: list[object] = []
+
+        def set_attribute(self, key: str, value: object) -> None:
+            self.attributes[key] = value
+
+        def add_event(self, name: str, attributes: dict[str, object]) -> None:
+            self.events.append((name, attributes))
+
+        def record_exception(self, exc: Exception, attributes: dict[str, object]) -> None:
+            self.exceptions.append(exc)
+
+        def set_status(self, status: object) -> None:
+            self.statuses.append(status)
+
+    span = FakeSpan()
+
+    record_span_failure(
+        span,
+        RuntimeError("fallback can recover"),
+        event_name="provider_attempt_failed",
+        attributes={"model": "primary"},
+        mark_span_error=False,
+    )
+
+    assert span.attributes["codex_poly_bot.status"] == "recovered_error"
+    assert span.attributes["codex_poly_bot.model"] == "primary"
+    assert span.events[0][0] == "provider_attempt_failed"
+    assert span.exceptions == []
+    assert span.statuses == []
 
 def test_req_obs_001_03_http_response_logs_include_status_and_request_id(caplog) -> None:
     """TST-REQ-OBS-001-03: Validates REQ-OBS-001

@@ -50,7 +50,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
 
     Given: the configured OpenAI tick summary model fails
     When: a fallback model is configured
-    Then: the summary retries with the fallback and records provider usage plus an APM failure
+    Then: the summary retries with the fallback and records provider usage plus a recovered APM failure
     """
 
     registry = RepositoryRegistry()
@@ -70,6 +70,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
         *,
         event_name: str,
         attributes: dict[str, Any] | None = None,
+        mark_span_error: bool = True,
     ) -> None:
         recorded_failures.append(
             {
@@ -77,6 +78,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
                 "event_name": event_name,
                 "error_type": exc.__class__.__name__,
                 "attributes": dict(attributes or {}),
+                "mark_span_error": mark_span_error,
             }
         )
 
@@ -148,6 +150,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
             "span": spans[0],
             "event_name": "tick_summary_model_failed",
             "error_type": "RuntimeError",
+            "mark_span_error": False,
             "attributes": {
                 "model": "unavailable-model",
                 "attempt_number": 1,
