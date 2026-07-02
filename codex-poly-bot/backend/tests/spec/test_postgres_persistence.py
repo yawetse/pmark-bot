@@ -301,7 +301,7 @@ def test_req_db_003_09_shared_ai_usage_import_rows_keep_provider_attribution() -
             rows=(
                 ProviderUsageRow(
                     provider=ModelProvider.OPENAI,
-                    model="gpt-5",
+                    model="gpt-5-mini",
                     prompt_tokens=100,
                     completion_tokens=40,
                     cost_usd=Decimal("0.12"),
@@ -335,7 +335,7 @@ def test_req_db_003_09_shared_ai_usage_import_rows_keep_provider_attribution() -
 
     assert result.payload["status"] == "completed"
     assert result.payload["importedCount"] == 1
-    assert usage_rows[0]["model"] == "gpt-5"
+    assert usage_rows[0]["model"] == "gpt-5-mini"
     assert usage_rows[0]["pipeline_run_id"] == "run-1"
     assert usage_rows[0]["pipeline_step"] == "brain"
     assert usage_rows[0]["candidate_id"] == "candidate-1"
@@ -366,7 +366,7 @@ def test_req_db_003_10_openai_admin_usage_import_fetches_provider_rows() -> None
                             "start_time": 1_782_345_600,
                             "results": [
                                 {
-                                    "model": "gpt-5",
+                                    "model": "gpt-5-mini",
                                     "input_tokens": 120,
                                     "output_tokens": 30,
                                 }
@@ -384,7 +384,7 @@ def test_req_db_003_10_openai_admin_usage_import_fetches_provider_rows() -> None
                             "start_time": 1_782_345_600,
                             "results": [
                                 {
-                                    "line_item": "gpt-5",
+                                    "line_item": "gpt-5-mini",
                                     "amount": {"value": "0.42", "currency": "usd"},
                                 }
                             ],

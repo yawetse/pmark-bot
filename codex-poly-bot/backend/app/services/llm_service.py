@@ -24,6 +24,22 @@ SCORING_SYSTEM_PROMPT = (
     "estimated_probability, and cost_estimate for the candidate. "
     "Use the requested checks in the output thesis."
 )
+OPENAI_SCORING_MODEL_OPTIONS = ("gpt-5-nano", "gpt-5-mini")
+DEFAULT_OPENAI_SCORING_MODEL = "gpt-5-mini"
+
+
+def cost_controlled_openai_scoring_model(value: Any) -> str:
+    """Return an allowed OpenAI scoring model, defaulting away from full GPT-5."""
+
+    candidate = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "gpt5-nano": "gpt-5-nano",
+        "gpt5-mini": "gpt-5-mini",
+    }
+    normalized = aliases.get(candidate, candidate)
+    if normalized in OPENAI_SCORING_MODEL_OPTIONS:
+        return normalized
+    return DEFAULT_OPENAI_SCORING_MODEL
 
 SCORING_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -329,7 +345,7 @@ class OpenAIResponsesProvider:
         transport: LlmProviderTransport | None = None,
         remaining_budget: Decimal = Decimal("0"),
         enabled: bool = True,
-        model: str = "gpt-5",
+        model: str = DEFAULT_OPENAI_SCORING_MODEL,
         base_url: str = "https://api.openai.com",
         max_output_tokens: int = 800,
         usage_recorder: LlmUsageRecorder | None = None,

@@ -41,12 +41,38 @@ async function proxyToBackend(request: NextRequest, context: RouteContext): Prom
   const backendUrl = backendApiUrl(params.path, request.nextUrl.search);
   const headers = backendHeaders(request, sessionCheck.session.username);
   const body = request.method === "GET" ? undefined : await request.arrayBuffer();
-  const response = await fetch(backendUrl, {
-    method: request.method,
-    headers,
-    body,
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(backendUrl, {
+      method: request.method,
+      headers,
+      body,
+      cache: "no-store",
+    });
+  } catch (error) {
+    logBackendProxyResponse({
+      method: request.method,
+      path: request.nextUrl.pathname,
+      status: 502,
+      durationMs: performance.now() - startedAt,
+    });
+    console.error(
+      "backend_proxy_unavailable",
+      JSON.stringify({
+        event_name: "frontend.backend_proxy.unavailable",
+        method: request.method,
+        path: request.nextUrl.pathname,
+        error_type: error instanceof Error ? error.name : "unknown",
+      }),
+    );
+    return NextResponse.json(
+      {
+        error_code: "backend_gateway_unavailable",
+        message: "The backend gateway returned 502, so the request did not complete.",
+      },
+      { status: 502 },
+    );
+  }
   logBackendProxyResponse({
     method: request.method,
     path: request.nextUrl.pathname,
