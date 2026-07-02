@@ -36,6 +36,7 @@ from app.services.scanner_service import (
     MAX_POLYMARKET_MARKET_DATA_LIMIT,
 )
 from app.services.brain_service import DEFAULT_REASONING_CONFIG
+from app.services.llm_service import DEFAULT_OPENAI_SCORING_MODEL, OPENAI_SCORING_MODEL_OPTIONS
 from app.services.strategy_consensus_service import DEFAULT_STRATEGY_CONSENSUS_CONFIG
 
 
@@ -400,6 +401,11 @@ class ConfigService:
             if len(parts) == 3 and parts[2] == "budget_usd":
                 return str(self._positive_decimal(value, patch.path))
             if len(parts) >= 4 and parts[2] == "settings":
+                if len(parts) == 4 and parts[3] == "model" and parts[1] == ModelProvider.OPENAI.value:
+                    if value not in OPENAI_SCORING_MODEL_OPTIONS:
+                        allowed = ", ".join(OPENAI_SCORING_MODEL_OPTIONS)
+                        raise ConfigValidationError(f"OpenAI scoring model must be one of: {allowed}")
+                    return value
                 if value is None:
                     raise ConfigValidationError(f"{patch.path} cannot be null")
                 return value
@@ -716,7 +722,10 @@ def default_config_payload() -> dict[str, Any]:
         },
         "llm": {
             ModelProvider.CLAUDE.value: {"budget_usd": "20.00", "settings": {}},
-            ModelProvider.OPENAI.value: {"budget_usd": "20.00", "settings": {}},
+            ModelProvider.OPENAI.value: {
+                "budget_usd": "20.00",
+                "settings": {"model": DEFAULT_OPENAI_SCORING_MODEL},
+            },
         },
         "risk": {
             "polymarket": {

@@ -30,6 +30,10 @@ async function errorMessage(response: Response): Promise<string> {
   if (!text) {
     return `Request failed with status ${response.status}.`;
   }
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("text/html") || looksLikeHtml(text)) {
+    return gatewayErrorMessage(response.status);
+  }
   try {
     const parsed = JSON.parse(text) as {
       detail?: { message?: string } | string;
@@ -47,6 +51,20 @@ async function errorMessage(response: Response): Promise<string> {
     }
     return parsed.message ?? parsed.error ?? text;
   } catch {
-    return text;
+    return text.length > 260 ? gatewayErrorMessage(response.status) : text;
   }
+}
+
+function looksLikeHtml(value: string): boolean {
+  return /<html[\s>]/i.test(value) || /<h1>\s*\d{3}\s+/i.test(value);
+}
+
+function gatewayErrorMessage(status: number): string {
+  if (status === 502) {
+    return "The backend gateway returned 502, so the settings were not saved. Check backend health and try Apply again.";
+  }
+  if (status === 503 || status === 504) {
+    return `The backend gateway returned ${status}, so the request did not complete. Check backend health and try again.`;
+  }
+  return `Request failed with status ${status}.`;
 }

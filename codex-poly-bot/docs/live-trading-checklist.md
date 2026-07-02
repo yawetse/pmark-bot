@@ -2,7 +2,7 @@
 
 REQ: REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-006, REQ-EXE-001, REQ-EXE-014, REQ-EXE-017, REQ-OBS-005
 
-Live trading remains blocked for any venue until every item below has evidence in the release record.
+Production live trading is intentionally enabled. Live-order test evidence still remains incomplete for any venue until every item below has evidence in the release record.
 
 The dashboard `Full live-gated` manual run mode does not bypass this checklist. It only allows the pipeline to use the configured live setting after credentials, risk limits, persistence, venue status, and the kill switch allow it.
 
@@ -27,8 +27,8 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 
 ## Live Enablement Controls
 
-- Keep `LIVE_ENABLED=false` until final approval.
-- Enable only the intended venue flag, such as `POLYMARKET_US_ENABLED=true` or `ALPACA_ENABLED=true`.
+- Require final approval before setting `LIVE_ENABLED=true`. Production approval was recorded on 2026-07-02, and production currently runs with `LIVE_ENABLED=true`.
+- Enable only the intended venue flag, such as `POLYMARKET_US_ENABLED=true` or `ALPACA_ENABLED=true`; production currently has both intended venue flags enabled.
 - Confirm concrete live venue submitters are attached for each intended venue and no `LIVE_SUBMITTER_NOT_CONFIGURED` refusal is present in the dry-run/live-gated evidence.
 - Confirm no `LIVE_EXIT_SUBMITTER_NOT_CONFIGURED` refusal is present when open positions cross exit triggers.
 - Confirm risk limits for max position size, max daily loss, max open positions, Kelly cap, and market order slippage.
@@ -39,7 +39,7 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 
 ## Final Approval
 
-Record the operator, environment, venue, model provider, account mode, risk config version, dry-run evidence, and rollback owner before setting live mode.
+Record the operator, environment, venue, model provider, account mode, risk config version, dry-run evidence, and rollback owner before running any order-submitting live test.
 
 ## Venue Submitter Contract
 

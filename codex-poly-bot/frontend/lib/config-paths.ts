@@ -12,6 +12,7 @@ export const ALLOWED_CONFIG_PATHS = [
   "strategies.convergence.enabled",
   "strategies.whale_copy.enabled",
   "llm.openai.budget_usd",
+  "llm.openai.settings.model",
   "llm.claude.budget_usd",
   "reasoning.max_prompts_per_provider_per_run",
   "reasoning.polymarket.prompt_version",
@@ -146,6 +147,12 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "Caps OpenAI model spend for scoring.",
     valueHint: "Positive dollar value, such as 20.00",
     effect: "The bot stops sending new OpenAI scoring requests after budget is exhausted.",
+  },
+  "llm.openai.settings.model": {
+    label: "OpenAI scoring model",
+    description: "Chooses the OpenAI model used when scoring scanner survivors.",
+    valueHint: "gpt-5-mini or gpt-5-nano",
+    effect: "Applies to the next reasoning call. Use nano for the lowest cost or mini when scoring quality matters more.",
   },
   "llm.claude.budget_usd": {
     label: "Claude budget",
