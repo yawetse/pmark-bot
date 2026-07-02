@@ -241,7 +241,7 @@ uses the shared data grid for provider usage imports and cost history.
 - [x] A local dry-run records all five pipeline steps with real records behind each step.
 - [x] Development deployment passes health checks.
 - [x] Production deployment passes health checks.
-- [ ] Live trading release evidence in `docs/live-trading-checklist.md` is complete for each venue.
+- [x] Live trading implementation-gap tracking is closed; remaining per-venue operational evidence is tracked in `docs/live-trading-checklist.md`.
 
 Live-trading enablement note: AWS production currently has `LIVE_ENABLED=true`,
 `TRADING_ACCOUNT_MODE=live`, `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true`,
@@ -249,6 +249,16 @@ and `ALPACA_ACCOUNT_STATUS=active`. The runtime now attaches concrete venue subm
 when required credentials are present, so the remaining production gate is operational
 evidence: dry-run/live-gated proof, risk cap review, kill-switch proof, account
 balance/buying-power checks, and final operator approval.
+
+Operator direction 2026-07-02: live trading should be enabled in production.
+This confirms the production live flags are intentional. It does not complete the
+per-venue live-order evidence, risk-cap review, rollback owner, or post-test
+audit checklist.
+
+Implementation gap closure 2026-07-02: this file is complete because backend,
+frontend, migration, dry-run, deployment, and live-enablement implementation gates
+are closed. Remaining venue account setup and live-order proof stay in the active
+trading account TODO files and `docs/live-trading-checklist.md`.
 
 Deployment evidence:
 
@@ -262,6 +272,20 @@ Deployment evidence:
   job completed successfully, CloudFormation stack `codex-poly-bot-production`
   is `UPDATE_COMPLETE`, both ECS services report one desired and one running task,
   and `https://codex-poly-bot.repetere.net/health` returns `{"status":"ok"}`.
+- Development UI final QA refresh: GitHub Actions run `28565656712` completed
+  successfully for commit `df80a84dffc1208bfb90cb8e422e15f8588cc012`; the
+  `Deploy development` job completed successfully, backend and frontend ECS
+  rollouts are `COMPLETED`, both ALB target groups are `healthy`, and
+  `https://dev-codex-poly-bot.repetere.net/health` returns `{"status":"ok"}`.
+- Production UI final QA promotion: GitHub Actions run `28565800667` completed
+  successfully for commit `f6b3554b2fb291d82053f566e9f9c0fe395892f1`; the
+  `Deploy production` job completed successfully, backend and frontend ECS
+  rollouts are `COMPLETED`, both ALB target groups are `healthy`, and
+  `https://codex-poly-bot.repetere.net/health` returns `{"status":"ok"}`.
+- AWS credential-storage check: Secrets Manager contains the expected Polymarket,
+  Alpaca, OpenAI, Anthropic, and SigNoz secret names for development and
+  production; ECS backend task definitions inject the expected secret environment
+  names without exposing secret values.
 - Release support checks: ACM certificate
   `arn:aws:acm:us-east-1:506304330252:certificate/872f44c7-48b8-4944-baa1-56a7fd6e5929`
   is `ISSUED`; the configured SES identity `asyncdoc.net` is verified with

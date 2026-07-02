@@ -343,6 +343,44 @@ def test_req_ven_004_06_polymarket_us_sdk_preview_does_not_create_live_order() -
     assert result.payload["operation"] == "preview_order"
 
 
+def test_req_ven_004_10_polymarket_us_read_only_checks_do_not_touch_order_methods() -> None:
+    """TST-REQ-VEN-004-10: Validates REQ-VEN-004 and REQ-EXE-017
+
+    Given: a Polymarket US adapter with credentials
+    When: credential and market reads run
+    Then: only account and market resources are called
+    """
+    sdk = FakePolymarketSdkClient()
+    adapter = PolymarketLiveOrderAdapter(
+        config=PolymarketVenueConfig(
+            venue=Venue.POLYMARKET_US,
+            enabled=True,
+            live_enabled=True,
+            client_boundary=PolymarketClientBoundary.OFFICIAL_SDK,
+            base_url=POLYMARKET_US_API_BASE_URL,
+            credential_ref="/codex-poly-bot/production/polymarket/secret-key",
+        ),
+        credentials=PolymarketApiCredentials(key_id="pm-key", secret_key="pm-secret"),
+        client_factory=lambda: sdk,
+    )
+
+    credential_result = adapter.verify_credentials()
+    market_result = adapter.read_markets(limit=5)
+
+    assert credential_result.ok
+    assert credential_result.payload["operation"] == "verify_credentials"
+    assert market_result.ok
+    assert market_result.payload["operation"] == "read_markets"
+    assert market_result.payload["market_count"] == 1
+    assert sdk.account.balance_calls == 1
+    assert sdk.markets.list_calls == [{"limit": 5}]
+    assert sdk.orders.create_calls == []
+    assert sdk.orders.preview_calls == []
+    assert sdk.orders.close_position_calls == []
+    assert "pm-secret" not in str(credential_result.payload)
+    assert "pm-secret" not in str(market_result.payload)
+
+
 def test_req_ven_004_09_polymarket_us_sdk_close_position_uses_official_sdk() -> None:
     """TST-REQ-VEN-004-09: Validates REQ-VEN-004 and REQ-EXT-006
 

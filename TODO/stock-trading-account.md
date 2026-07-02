@@ -36,15 +36,17 @@ Do not paste API keys, brokerage secrets, bank details, or account numbers into 
 
 ## AWS Secrets Manager
 
-- [ ] Add paper Alpaca credentials to AWS Secrets Manager under `/codex-poly-bot/development/...`.
-- [ ] Add live Alpaca credentials to AWS Secrets Manager under `/codex-poly-bot/production/...` only when ready for production.
+- [x] Add paper Alpaca credentials to AWS Secrets Manager under `/codex-poly-bot/development/...`.
+- [x] Add live Alpaca credentials to AWS Secrets Manager under `/codex-poly-bot/production/...` only when ready for production.
 - [ ] Confirm no Alpaca credentials are stored in GitHub secrets, `.env`, shell history, screenshots, or markdown files.
-- [ ] Confirm secret names match the bot's current credential-loading contract before enabling live orders.
+- [x] Confirm secret names match the bot's current credential-loading contract before enabling live orders.
+
+Evidence 2026-07-02: AWS Secrets Manager contains `/codex-poly-bot/development/alpaca/key-id`, `/codex-poly-bot/development/alpaca/secret-key`, and matching production names. ECS injects `ALPACA_KEY_ID` and `ALPACA_SECRET_KEY` into the backend task definition by name only.
 
 ## Bot Enablement Gates
 
-- [ ] Keep `LIVE_ENABLED=false`.
-- [ ] Keep `ALPACA_ENABLED=false`.
+- [x] Production `LIVE_ENABLED=true` is intentional operator direction.
+- [x] Production `ALPACA_ENABLED=true` is intentional operator direction.
 - [x] Ask Codex to verify read-only paper account, buying power, positions, and market data after credentials are stored.
 - [ ] Run paper order checks before any live stock order.
 - [ ] Run dry-run live-account checks before enabling live stock orders.
