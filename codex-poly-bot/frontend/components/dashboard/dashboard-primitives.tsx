@@ -101,6 +101,36 @@ export function EmptyState({
   );
 }
 
+export function FormSection({
+  id,
+  icon,
+  title,
+  body,
+  children,
+}: {
+  id?: string;
+  icon?: ReactNode;
+  title: string;
+  body: string;
+  children: ReactNode;
+}) {
+  const titleId = id ? `${id}-title` : slugId(title);
+  return (
+    <section className="preference-section" id={id} aria-labelledby={titleId}>
+      <div className="preference-section-heading">
+        <div className="preference-section-title">
+          {icon}
+          <div>
+            <h3 id={titleId}>{title}</h3>
+            <p>{body}</p>
+          </div>
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function Message({
   tone = "idle",
   children,

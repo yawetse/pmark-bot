@@ -7,7 +7,7 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
-import { EmptyState, Message, Panel } from "@/components/dashboard/dashboard-primitives";
+import { Message, Panel } from "@/components/dashboard/dashboard-primitives";
 import { dashboardApi } from "@/lib/api";
 
 // REQ: REQ-UI-004, REQ-DAT-008, REQ-OBS-005
@@ -309,19 +309,15 @@ export function DataExplorerView() {
             <small>{state.result.dataset.table}</small>
           </div>
         </div>
-        {state.result.rows.length ? (
-          <DashboardDataGrid
-            rows={state.result.rows}
-            columns={resultColumns}
-            emptyTitle="No rows"
-            emptyBody="The query returned no records."
-            getRowId={(row) => String(row.id ?? JSON.stringify(row))}
-            pageSize={25}
-            searchPlaceholder="Filter query results"
-          />
-        ) : (
-          <EmptyState title="No rows" body={state.result.message || "The query returned no records."} />
-        )}
+        <DashboardDataGrid
+          rows={state.result.rows}
+          columns={resultColumns}
+          emptyTitle="No rows"
+          emptyBody={state.result.message || "The query returned no records."}
+          getRowId={(row) => String(row.id ?? JSON.stringify(row))}
+          pageSize={25}
+          searchPlaceholder="Filter query results"
+        />
       </Panel>
     </div>
   );

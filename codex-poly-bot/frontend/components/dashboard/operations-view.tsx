@@ -2,7 +2,7 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { AlertTriangle } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   EconomicsPanel,
@@ -12,7 +12,14 @@ import {
   DashboardDataGrid,
   type DashboardGridColumn,
 } from "@/components/dashboard/data-grid";
-import { Disclosure } from "@/components/dashboard/dashboard-primitives";
+import {
+  Disclosure,
+  Message,
+  MetricCard,
+  MetricGrid,
+  Panel,
+  StatusChip,
+} from "@/components/dashboard/dashboard-primitives";
 import {
   ManualRunControl,
   type ManualRunResult,
@@ -38,6 +45,8 @@ const PIPELINE_STEP_LABELS = ["Data Fetch", "Scanner", "Reasoning / Brain", "Exe
 const DAILY_TICK_SUMMARY_WINDOW_MINUTES = 24 * 60;
 
 type OrderState = (typeof ORDER_STATES)[number];
+
+const TERMINAL_ORDER_STATES = new Set<OrderState>(["filled", "canceled", "failed", "refused"]);
 
 export type OrderEventView = {
   id: string;
@@ -494,11 +503,13 @@ export function OperationsView({
   const [execution, setExecution] = useState(summary.execution ?? FALLBACK_EXECUTION);
   const [exit, setExit] = useState(summary.exit ?? FALLBACK_EXIT);
   const displayTimeZone = useResolvedTimeZone(timeZone);
-  const pendingEvents = currentSummary.orderEvents.filter(
-    (event) => !["filled", "canceled", "failed", "refused"].includes(event.state),
+  const pendingEvents = useMemo(
+    () => currentSummary.orderEvents.filter((event) => !TERMINAL_ORDER_STATES.has(event.state)),
+    [currentSummary.orderEvents],
   );
-  const terminalEvents = currentSummary.orderEvents.filter((event) =>
-    ["filled", "canceled", "failed", "refused"].includes(event.state),
+  const terminalEvents = useMemo(
+    () => currentSummary.orderEvents.filter((event) => TERMINAL_ORDER_STATES.has(event.state)),
+    [currentSummary.orderEvents],
   );
 
   const onRealtimeSnapshot = useCallback((snapshot: { operations: OperationsSummaryView; marketData: MarketDataPullView }) => {
@@ -526,54 +537,52 @@ export function OperationsView({
             <h1>Trading Activity</h1>
           </div>
           {loadError ? (
-            <span className="status blocked">api unavailable</span>
+            <StatusChip tone="blocked">api unavailable</StatusChip>
           ) : (
-            <span className={`status ${currentSummary.killSwitch === "active" ? "blocked" : "ok"}`}>
+            <StatusChip tone={currentSummary.killSwitch === "active" ? "blocked" : "ok"}>
               kill switch {currentSummary.killSwitch}
-            </span>
+            </StatusChip>
           )}
         </div>
         <p className="panel-note">
           Review the current operating gates first, then move through the run workflow from
           candidate intake to execution, exits, imports, and emergency controls.
         </p>
-        {loadError ? <p className="status-message">{loadError}</p> : null}
-        <div className="metric-grid">
-          <Metric label="Open orders" value={String(currentSummary.openOrders)} />
-          <Metric label="Pending events" value={String(pendingEvents.length)} />
-          <Metric label="Cancel progress" value={currentSummary.cancelProgress} />
-          <Metric label="Manual review" value={currentSummary.manualReview} />
-        </div>
+        {loadError ? <Message>{loadError}</Message> : null}
+        <MetricGrid>
+          <MetricCard label="Open orders" value={String(currentSummary.openOrders)} />
+          <MetricCard label="Pending events" value={String(pendingEvents.length)} />
+          <MetricCard label="Cancel progress" value={currentSummary.cancelProgress} />
+          <MetricCard label="Manual review" value={currentSummary.manualReview} />
+        </MetricGrid>
         <ul className="status-list">
           <li>
             <span>Degraded venue status</span>
-            <span className={`status ${currentSummary.degradedVenueStatus === "none" ? "ok" : "blocked"}`}>
+            <StatusChip tone={currentSummary.degradedVenueStatus === "none" ? "ok" : "blocked"}>
               {currentSummary.degradedVenueStatus}
-            </span>
+            </StatusChip>
           </li>
           <li>
             <span>Manual-review state</span>
-            <span className={`status ${currentSummary.manualReviewState === "clear" ? "ok" : "blocked"}`}>
+            <StatusChip tone={currentSummary.manualReviewState === "clear" ? "ok" : "blocked"}>
               {currentSummary.manualReviewState}
-            </span>
+            </StatusChip>
           </li>
           <li>
             <span>Realtime updates</span>
-            <span className={`status ${realtime.status === "connected" ? "ok" : realtime.status === "offline" ? "blocked" : "idle"}`}>
+            <StatusChip tone={realtime.status === "connected" ? "ok" : realtime.status === "offline" ? "blocked" : "idle"}>
               {realtime.status}
-            </span>
+            </StatusChip>
           </li>
         </ul>
       </section>
 
-      <section className="panel wide-panel" aria-labelledby="workflow-title">
-        <div className="panel-heading">
-          <div>
-            <p className="section-label">Workflow map</p>
-            <h2 id="workflow-title">Operate in sequence</h2>
-          </div>
-          <span className="status idle">dry-run safe</span>
-        </div>
+      <Panel
+        className="wide-panel"
+        eyebrow="Workflow map"
+        status="dry-run safe"
+        title="Operate in sequence"
+      >
         <div className="operation-workflow-grid">
           <WorkflowLink href="#pipeline-title" label="Run pipeline" value={String(pipelineRuns.length)} detail="Recorded runs" />
           <WorkflowLink href="#scanner-title" label="Scanner" value={String(scanner.candidateCount)} detail="Candidates" />
@@ -582,9 +591,10 @@ export function OperationsView({
           <WorkflowLink href="#execution-title" label="Execution" value={String(execution.intentCount)} detail="Intents" />
           <WorkflowLink href="#exit-title" label="Exit" value={String(exit.triggeredCount)} detail="Triggered" />
           <WorkflowLink href="#historical-import-title" label="Imports" value={String(currentSummary.historicalImport?.counts.checkpoints ?? 0)} detail="Checkpoints" />
+          <WorkflowLink href="#pending-orders-title" label="Orders" value={String(currentSummary.openOrders)} detail="Open orders" />
           <WorkflowLink href="#kill-switch-title" label="Kill Switch" value={currentSummary.killSwitch} detail="Emergency control" />
         </div>
-      </section>
+      </Panel>
 
       <ManualRunControl environment={process.env.NEXT_PUBLIC_APP_ENV ?? "local"} onAccepted={onManualRunAccepted} />
 
@@ -622,7 +632,7 @@ export function OperationsView({
       {economics ? <EconomicsPanel economics={economics} /> : null}
 
       <section className="panel wide-panel">
-        <h2>Pending Orders</h2>
+        <h2 id="pending-orders-title">Pending Orders</h2>
         <OrderTable
           emptyTitle="No pending orders"
           emptyBody="No orders are waiting for fill, cancellation, reconciliation, or manual review."
@@ -631,7 +641,7 @@ export function OperationsView({
       </section>
 
       <section className="panel wide-panel">
-        <h2>Trade and Order History</h2>
+        <h2 id="order-history-title">Trade and Order History</h2>
         <OrderTable
           emptyTitle="No trade or order history"
           emptyBody="No simulated or live order events have been recorded yet."
@@ -1567,6 +1577,7 @@ function statusClass(status: string): "ok" | "idle" | "blocked" {
 }
 
 function KillSwitchControl({ active }: { active: boolean }) {
+  const environment = process.env.NEXT_PUBLIC_APP_ENV ?? "local";
   const [reason, setReason] = useState("operator stop");
   const [confirmed, setConfirmed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -1586,7 +1597,7 @@ function KillSwitchControl({ active }: { active: boolean }) {
     const result = await dashboardApi<{ active?: boolean; live_disabled?: boolean }>("kill-switch", {
       method: "POST",
       body: JSON.stringify({
-        environment: process.env.NEXT_PUBLIC_APP_ENV ?? "local",
+        environment,
         reason,
       }),
     });
@@ -1600,6 +1611,7 @@ function KillSwitchControl({ active }: { active: boolean }) {
         ? "Kill switch active. Live trading is disabled."
         : "Kill switch request accepted.",
     });
+    setConfirmed(false);
     setOpen(false);
   }
 
@@ -1613,7 +1625,15 @@ function KillSwitchControl({ active }: { active: boolean }) {
           Dry-run records can still be reviewed.
         </p>
       </div>
-      <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Root
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) {
+            setConfirmed(false);
+          }
+        }}
+      >
         <Dialog.Trigger asChild>
           <button className="button danger" disabled={active || state.status === "submitting"} type="button">
             {active ? "Kill switch active" : "Review kill switch"}
@@ -1627,8 +1647,22 @@ function KillSwitchControl({ active }: { active: boolean }) {
               <div>
                 <Dialog.Title>Activate kill switch</Dialog.Title>
                 <Dialog.Description id="kill-switch-dialog-body">
-                  This disables live trading and asks the backend to cancel known live orders.
+                  This disables live trading for {environment} and asks the backend to cancel known live orders.
                 </Dialog.Description>
+              </div>
+            </div>
+            <div className="setting-help-summary">
+              <div>
+                <span>Scope</span>
+                <strong>{environment}</strong>
+              </div>
+              <div>
+                <span>Action</span>
+                <strong>Stop live orders</strong>
+              </div>
+              <div>
+                <span>Impact</span>
+                <strong>Cancel known live orders</strong>
               </div>
             </div>
             <form className="dialog-form" onSubmit={onSubmit}>
@@ -1643,7 +1677,9 @@ function KillSwitchControl({ active }: { active: boolean }) {
                   type="checkbox"
                   onChange={(event) => setConfirmed(event.target.checked)}
                 />
-                <span>I understand this disables live trading.</span>
+                <span>
+                  I understand this disables live trading for {environment} and requests cancellation of known live orders.
+                </span>
               </label>
               <div className="dialog-actions">
                 <Dialog.Close asChild>

@@ -24,6 +24,7 @@ export function DashboardLoadingPanels({
             eyebrow={index === 0 ? "Current state" : "Panel"}
             key={index}
             title={index === 0 ? "Loading controls" : "Loading data"}
+            ariaLabel={index === 0 ? "Loading controls" : `Loading data panel ${index}`}
             metricCount={index === 0 ? 3 : 2}
             rowCount={index === 0 ? 3 : 2}
             wide={index === 0}
@@ -37,12 +38,14 @@ export function DashboardLoadingPanels({
 export function DashboardPanelLoading({
   eyebrow,
   title,
+  ariaLabel,
   metricCount = 3,
   rowCount = 3,
   wide = false,
 }: {
   eyebrow: string;
   title: string;
+  ariaLabel?: string;
   metricCount?: number;
   rowCount?: number;
   wide?: boolean;
@@ -50,7 +53,7 @@ export function DashboardPanelLoading({
   return (
     <section
       className={`operator-panel loading-panel ${wide ? "span-2 wide-panel" : ""}`.trim()}
-      aria-label={title}
+      aria-label={ariaLabel ?? title}
     >
       <div className="panel-heading">
         <div>
