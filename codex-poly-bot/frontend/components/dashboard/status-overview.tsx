@@ -10,7 +10,7 @@ export const DEFAULT_STATUS_ITEMS: StatusItem[] = [
   { label: "Venue", value: "Polymarket US disabled", state: "ok" },
   { label: "Wallet", value: "Public identifiers only", state: "ok" },
   { label: "Ingestion", value: "Awaiting worker heartbeat", state: "blocked" },
-  { label: "Trading loop", value: "Dry run", state: "ok" },
+  { label: "Trading loop", value: "Simulation", state: "ok" },
   { label: "Notification", value: "Not configured", state: "blocked" },
   { label: "Audit", value: "Ready", state: "ok" },
   { label: "Health", value: "API reachable", state: "ok" },

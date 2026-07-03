@@ -204,7 +204,7 @@ export function SystemReadinessView({
             />
             <RuntimeRow
               icon={<ShieldCheck aria-hidden="true" size={17} />}
-              label="Kill switch"
+              label="Emergency stop"
               value={killSwitchActive ? "active" : "clear"}
               detail={killSwitchActive ? "Trading actions are stopped." : "No emergency stop is active."}
             />
@@ -294,8 +294,8 @@ function buildSystemActions({
   const actions: SystemAction[] = [];
   if (killSwitchActive) {
     actions.push({
-      title: "Review the kill switch",
-      body: "The emergency stop is active. Open Operations before changing run or live-mode settings.",
+      title: "Review the emergency stop",
+      body: "The emergency stop is active. Open Run before changing run or live-mode settings.",
       href: "/dashboard/operations",
       label: "Open operations",
     });
@@ -394,7 +394,7 @@ function resolveSystemLabel({
   if (blockedCount > 0) {
     return "needs attention";
   }
-  return liveEnabled ? "live gate ready" : "dry-run ready";
+  return liveEnabled ? "live gate ready" : "simulation ready";
 }
 
 function formatWorkerAge(ageSeconds?: number | null): string {

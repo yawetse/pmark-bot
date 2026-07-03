@@ -183,7 +183,7 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
         </div>
         <div className={`mode-card ${mode.state}`}>
           <span>{mode.label}</span>
-          <strong>{liveEnabled ? "Live flag on" : "Dry run"}</strong>
+          <strong>{liveEnabled ? "Live mode on" : "Simulation"}</strong>
           <small>
             {activeVenueNames} active
           </small>
@@ -198,8 +198,8 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
         />
         <MetricCard
           label="Live mode"
-          value={liveEnabled ? "Enabled" : "Dry run"}
-          detail={summary.status.kill_switch_active ? "Kill switch active" : "Kill switch clear"}
+          value={liveEnabled ? "Enabled" : "Simulation"}
+          detail={summary.status.kill_switch_active ? "Emergency stop active" : "Emergency stop clear"}
         />
         <MetricCard
           label="Open orders"
@@ -302,7 +302,7 @@ export function OperatorCommandCenter({ summary }: { summary: DashboardSummaryVi
             <ControlLink
               href="/dashboard/operations"
               title="Manage operations"
-              body="Review order state, manual review state, degraded venues, and the kill switch."
+              body="Review order state, manual review state, degraded venues, and the emergency stop."
             />
             <ControlLink
               href="/dashboard/system"
@@ -347,14 +347,14 @@ function resolveMode({
   if (killSwitchActive) {
     return {
       title: "Live trading is stopped",
-      body: "The kill switch is active. New live orders should not be created while this state is active.",
+      body: "The emergency stop is active. New live orders should not be created while this state is active.",
       label: "Stopped",
       state: "blocked",
     };
   }
   if (!liveEnabled) {
     return {
-      title: "The bot is in dry-run mode",
+      title: "The app is in simulation mode",
       body: "No live orders will be submitted. Readiness checks and simulated activity can still be recorded.",
       label: "Monitor mode",
       state: "neutral",
@@ -363,14 +363,14 @@ function resolveMode({
   if (!activeVenuesReady || blockerCount > 0) {
     return {
       title: "Live trading is gated",
-      body: "The live flag is on, but one or more required gates still block order submission.",
+    body: "Live mode is on, but one or more required gates still block order submission.",
       label: "Action needed",
       state: "blocked",
     };
   }
   return {
     title: "Live trading can run",
-    body: "Live mode and active venues are enabled. Keep risk limits, orders, and the kill switch visible.",
+    body: "Live mode and active venues are enabled. Keep risk limits, orders, and the emergency stop visible.",
     label: "Live enabled",
     state: "ok",
   };
@@ -440,10 +440,10 @@ function buildNextActions({
 
   if (actions.length === 0 && !liveEnabled) {
     actions.push({
-      title: "Stay in dry run or prepare signoff",
-      body: "Dry run is the current safe mode. Use Config only when you are ready to change venue, risk, or live settings.",
+      title: "Stay in simulation or prepare signoff",
+      body: "Simulation is the current safe mode. Use Settings only when you are ready to change venue, risk, or live settings.",
       href: "/dashboard/config",
-      linkLabel: "Review config",
+      linkLabel: "Review settings",
     });
   }
 

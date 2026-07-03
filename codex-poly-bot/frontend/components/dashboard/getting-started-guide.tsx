@@ -82,8 +82,8 @@ export function GettingStartedGuide({
               <li>
                 <strong>Live trading gate</strong>
                 <span>
-                  Complete the live-trading checklist, including dry-run evidence,
-                  risk limits, kill-switch test, SES recipient approval, and operator
+                  Complete the live-trading checklist, including simulation evidence,
+                  risk limits, emergency-stop test, SES recipient approval, and operator
                   signoff.
                 </span>
                 <small>Checklist: codex-poly-bot/docs/live-trading-checklist.md</small>
@@ -113,17 +113,17 @@ export function GettingStartedGuide({
           <li>
             <strong>Use the control pages before enabling live trading.</strong>
             <span>
-              Review risk settings on Config, then use Operations to confirm the kill
-              switch and manual-review state before operator signoff.
+              Review risk settings in Settings, then use Run to confirm the emergency
+              stop and manual-review state before operator signoff.
             </span>
           </li>
         </ol>
         <div className="guide-actions" aria-label="Dashboard next step links">
           <Link className="button" href="/dashboard/config">
-            Review config
+            Review settings
           </Link>
           <Link className="button" href="/dashboard/operations">
-            Open operations
+            Open run
           </Link>
         </div>
       </div>
