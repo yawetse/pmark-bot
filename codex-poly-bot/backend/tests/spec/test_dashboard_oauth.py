@@ -25,6 +25,7 @@ from app.services import (
     build_dashboard_shell,
     build_dashboard_status,
     build_model_provider_summary,
+    default_config_payload,
     render_wallet_dashboard_status,
 )
 
@@ -394,6 +395,51 @@ def test_req_ui_007_03_user_config_saved_next_user_loop_does_not_replace_shared_
     assert user_reload.snapshot.payload["trading_loop_seconds"] == 120
     assert {row["username"] for row in rows} == {"__shared__", "yaw"}
     assert all(row["active"] for row in rows)
+
+def test_req_ui_007_04_first_user_config_save_preserves_runtime_defaults() -> None:
+    """TST-REQ-UI-007-04: Validates REQ-UI-007
+
+    Given: a user has no prior saved config row
+    When: the dashboard saves a settings patch
+    Then: the new user config starts from deployed runtime defaults instead of static safe defaults
+    """
+    registry = RepositoryRegistry()
+    runtime_defaults = default_config_payload()
+    runtime_defaults["live_enabled"] = True
+    runtime_defaults["venues"][Venue.POLYMARKET_US.value]["enabled"] = True
+    runtime_defaults["alpaca"]["account_mode"] = "live"
+    auth = AuthService(
+        allowed_usernames={"yaw"},
+        signing_secret="test-secret",
+        registry=registry,
+    )
+    service = ConfigService(registry, default_payload_factory=lambda: runtime_defaults)
+    access = auth.authorize_request(
+        auth.create_session_token(username="yaw"),
+        environment=Environment.PRODUCTION,
+    )
+
+    service.save_config_patches(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        access=access,
+        environment=Environment.PRODUCTION,
+        expected_version=None,
+        version="v1",
+        patches=[
+            ConfigPatchOperation(
+                "replace",
+                "reasoning.polymarket.min_confidence",
+                "0.69",
+            )
+        ],
+        username="yaw",
+    )
+    snapshot = service.config_for_next_loop(Environment.PRODUCTION, username="yaw").snapshot
+
+    assert snapshot.payload["live_enabled"] is True
+    assert snapshot.payload["venues"][Venue.POLYMARKET_US.value]["enabled"] is True
+    assert snapshot.payload["alpaca"]["account_mode"] == "live"
+    assert snapshot.payload["reasoning"]["polymarket"]["min_confidence"] == "0.69"
 
 def test_req_ui_007_02_config_reload_fails_on_next_loop_loop_starts() -> None:
     """TST-REQ-UI-007-02: Validates REQ-UI-007

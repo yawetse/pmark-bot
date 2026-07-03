@@ -8,10 +8,15 @@ REQ-OBS-003, REQ-OBS-004
 from __future__ import annotations
 
 from copy import deepcopy
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
+
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import sessionmaker
 
 from app.domain import (
     Environment,
@@ -22,7 +27,7 @@ from app.domain import (
     StrategySignal,
     TradeDecision,
 )
-from app.db.schema import MODEL_SCHEMAS, SHARED_SCHEMA, provider_schema
+from app.db.schema import MODEL_SCHEMAS, SHARED_SCHEMA, metadata, provider_schema
 
 
 class PersistenceUnavailableError(RuntimeError):
@@ -66,6 +71,109 @@ class DatabaseState:
         if table_name in self.fail_on_read_tables:
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
         return self.tables.setdefault(table_name, [])
+
+
+@dataclass(frozen=True)
+class _SqlAlchemyTransaction:
+    session: Any
+    token: Any
+
+
+class PersistentDatabaseState(DatabaseState):
+    """Repository state backed by the configured Postgres database."""
+
+    def __init__(self, session_factory: sessionmaker):
+        super().__init__(available=True)
+        self.session_factory = session_factory
+        self._active_session: ContextVar[Any | None] = ContextVar(
+            "codex_poly_bot_db_session",
+            default=None,
+        )
+
+    def begin_transaction(self) -> _SqlAlchemyTransaction:
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if self._active_session.get() is not None:
+            raise PersistenceUnavailableError("nested Postgres transactions are not supported")
+        session = self.session_factory()
+        token = self._active_session.set(session)
+        return _SqlAlchemyTransaction(session=session, token=token)
+
+    def commit_transaction(self, transaction: _SqlAlchemyTransaction) -> None:
+        try:
+            transaction.session.commit()
+        except SQLAlchemyError as exc:
+            transaction.session.rollback()
+            raise PersistenceUnavailableError("Postgres persistence commit failed") from exc
+        finally:
+            self._active_session.reset(transaction.token)
+            transaction.session.close()
+
+    def rollback_transaction(self, transaction: _SqlAlchemyTransaction) -> None:
+        try:
+            transaction.session.rollback()
+        finally:
+            self._active_session.reset(transaction.token)
+            transaction.session.close()
+
+    def insert(self, table_name: str, row: dict) -> dict:
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_tables:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
+        table = _table_for_name(table_name)
+        values = {
+            key: value
+            for key, value in row.items()
+            if key in table.c
+        }
+        session = self._active_session.get()
+        owns_session = session is None
+        if owns_session:
+            session = self.session_factory()
+        try:
+            result = session.execute(table.insert().values(**values).returning(*table.c))
+            persisted = dict(result.mappings().one())
+            if owns_session:
+                session.commit()
+            return persisted
+        except SQLAlchemyError as exc:
+            if owns_session:
+                session.rollback()
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}") from exc
+        finally:
+            if owns_session:
+                session.close()
+
+    def rows(self, table_name: str) -> list[dict]:
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_read_tables:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
+        table = _table_for_name(table_name)
+        statement = table.select()
+        if "created_at" in table.c:
+            statement = statement.order_by(table.c.created_at.asc())
+        elif "updated_at" in table.c:
+            statement = statement.order_by(table.c.updated_at.asc())
+        session = self._active_session.get()
+        owns_session = session is None
+        if owns_session:
+            session = self.session_factory()
+        try:
+            return [dict(row) for row in session.execute(statement).mappings().all()]
+        except SQLAlchemyError as exc:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}") from exc
+        finally:
+            if owns_session:
+                session.close()
+
+
+def _table_for_name(table_name: str):
+    table = metadata.tables.get(table_name)
+    if table is None:
+        raise SchemaViolationError(f"unknown repository table: {table_name}")
+    return table
 
 
 @dataclass(frozen=True)
@@ -131,23 +239,40 @@ class UnitOfWork:
         self.committed = False
         self.rolled_back = False
         self._snapshot: dict[str, list[dict]] | None = None
+        self._transaction: _SqlAlchemyTransaction | None = None
 
     def __enter__(self) -> UnitOfWork:
         if not self.state.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        begin_transaction = getattr(self.state, "begin_transaction", None)
+        if begin_transaction is not None:
+            self._transaction = begin_transaction()
+            return self
         self._snapshot = deepcopy(self.state.tables)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         if exc_type:
             self.rollback()
+        elif self._transaction is not None and not self.committed:
+            self.rollback()
 
     def commit(self) -> None:
         if not self.state.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if self._transaction is not None:
+            commit_transaction = getattr(self.state, "commit_transaction")
+            commit_transaction(self._transaction)
+            self._transaction = None
         self.committed = True
 
     def rollback(self) -> None:
+        if self._transaction is not None:
+            rollback_transaction = getattr(self.state, "rollback_transaction")
+            rollback_transaction(self._transaction)
+            self._transaction = None
+            self.rolled_back = True
+            return
         if self._snapshot is not None:
             self.state.tables = deepcopy(self._snapshot)
         self.rolled_back = True

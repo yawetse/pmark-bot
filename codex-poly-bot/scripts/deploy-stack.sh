@@ -74,6 +74,7 @@ project_name="${PROJECT_NAME:-codex-poly-bot}"
 desired_count="${DESIRED_COUNT:-1}"
 database_username="${DATABASE_USERNAME:-codexbot}"
 dashboard_allowed_users="${DASHBOARD_ALLOWED_USERS:-yawetse}"
+runtime_config_username="${RUNTIME_CONFIG_USERNAME:-}"
 ses_identity_email="${SES_IDENTITY_EMAIL:-yaw.etse@gmail.com}"
 if [[ -n "${NOTIFICATION_RECIPIENTS:-}" ]]; then
   notification_recipients="${NOTIFICATION_RECIPIENTS}"
@@ -161,6 +162,7 @@ parameter_overrides=(
   "CertificateArn=${certificate_arn}"
   "DatabaseUsername=${database_username}"
   "DashboardAllowedUsers=${dashboard_allowed_users}"
+  "RuntimeConfigUsername=${runtime_config_username}"
   "GithubClientId=${github_client_id}"
 )
 

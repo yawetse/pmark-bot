@@ -155,6 +155,10 @@ Parameters:
   DashboardAllowedUsers:
     Type: String
     Default: yawetse
+  RuntimeConfigUsername:
+    Type: String
+    Default: ""
+    Description: Optional dashboard username whose saved config drives scheduled runtime loops. Defaults to the only allowed user when one user is configured.
   BackendTokenSigningSecret:
     Type: String
     NoEcho: true
@@ -720,6 +724,8 @@ Resources:
               Value: !Ref WorkerHeartbeatIntervalSeconds
             - Name: DASHBOARD_ALLOWED_USERS
               Value: !Ref DashboardAllowedUsers
+            - Name: RUNTIME_CONFIG_USERNAME
+              Value: !Ref RuntimeConfigUsername
             - Name: BACKEND_TOKEN_SIGNING_SECRET
               Value: !Ref BackendTokenSigningSecret
             - Name: DASHBOARD_CSRF_TOKEN

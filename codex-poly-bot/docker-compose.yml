@@ -15,6 +15,8 @@ services:
       POLYMARKET_INTERNATIONAL_ENABLED: "false"
       ALPACA_ENABLED: "false"
       DATABASE_URL: postgresql://codex_poly_bot:change-me@postgres:5432/codex_poly_bot
+      DASHBOARD_ALLOWED_USERS: yaw
+      RUNTIME_CONFIG_USERNAME: yaw
       DASHBOARD_TRUSTED_ORIGINS: http://localhost:3100,http://127.0.0.1:3100
       HTTP_RESPONSE_LOGS_ENABLED: ${HTTP_RESPONSE_LOGS_ENABLED:-true}
       SIGNOZ_ENABLED: ${SIGNOZ_ENABLED:-false}
