@@ -265,6 +265,7 @@
 | TST-REQ-UI-004-02 | Edge | REQ-UI-004 | Given a status source is unavailable, When status pages load, Then the dashboard marks that source degraded rather than showing stale success. |
 | TST-REQ-UI-004-03 | Focus | REQ-UI-004 | Given an authenticated allowlisted user, When dashboard summary data is requested, Then dashboard sections are returned without secrets. |
 | TST-REQ-UI-004-04 | Focus | REQ-UI-004 | Given frontend dashboard controls exist, When dashboard control checks run, Then venue, wallet, ingestion, trading loop, notification, audit, and health sections are present. |
+| TST-REQ-UI-004-05 | Focus | REQ-UI-004 | Given multiple authorized dashboard users save display preferences, When preferences and dashboard summary are requested, Then each response loads the authenticated user's database preferences. |
 | TST-REQ-UI-005-01 | Happy | REQ-UI-005 | Given an authorized user changes supported config fields, When the dashboard saves them, Then venue flags, dry-run/live, loop, strategy, budget, risk, slippage, and notification settings persist. |
 | TST-REQ-UI-005-02 | Edge | REQ-UI-005 | Given invalid or unauthorized config changes, When the dashboard saves them, Then the changes are rejected and existing config remains. |
 | TST-REQ-UI-005-03 | Focus | REQ-UI-005 | Given frontend config controls exist, When dashboard control checks run, Then saves are limited to allowlisted config paths. |
@@ -275,6 +276,8 @@
 | TST-REQ-UI-007-01 | Happy | REQ-UI-007 | Given dashboard config is saved, When the next trading loop starts, Then the changed config is applied without restart. |
 | TST-REQ-UI-007-02 | Edge | REQ-UI-007 | Given config reload fails on the next loop, When the loop starts, Then prior valid config remains active and degraded status is surfaced. |
 | TST-REQ-UI-007-03 | Focus | REQ-UI-007 | Given a frontend config save conflict, When dashboard control checks run, Then the UI shows the current server version and requires reload before resubmission. |
+| TST-REQ-UI-007-04 | Focus | REQ-UI-007 | Given a user has no prior saved config row, When the dashboard saves a settings patch, Then the new user config starts from deployed runtime defaults. |
+| TST-REQ-UI-007-05 | Focus | REQ-UI-007 | Given multiple dashboard users are allowed and one user saved runtime config, When the scheduler resolves config, Then it loads the user-owned database config instead of shared defaults. |
 | TST-REQ-UI-008-01 | Happy | REQ-UI-008 | Given an authorized user activates the dashboard kill switch, When the request is processed, Then the global kill switch state is set. |
 | TST-REQ-UI-008-02 | Edge | REQ-UI-008 | Given an unauthorized user attempts kill switch activation, When the request is processed, Then the request is denied. |
 | TST-REQ-UI-008-03 | Focus | REQ-UI-008 | Given an authorized dashboard API caller activates the kill switch, When the kill switch endpoint is called, Then live trading is disabled and cancel progress is exposed. |
@@ -465,10 +468,10 @@
 | REQ-UI-001 | TST-REQ-UI-001-01, TST-REQ-UI-001-02, TST-REQ-UI-001-03, TST-REQ-UI-001-04 |
 | REQ-UI-002 | TST-REQ-UI-002-01, TST-REQ-UI-002-02, TST-REQ-UI-002-03 |
 | REQ-UI-003 | TST-REQ-UI-003-01, TST-REQ-UI-003-02, TST-REQ-UI-003-03, TST-REQ-UI-003-04 |
-| REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03, TST-REQ-UI-004-04 |
+| REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03, TST-REQ-UI-004-04, TST-REQ-UI-004-05 |
 | REQ-UI-005 | TST-REQ-UI-005-01, TST-REQ-UI-005-02, TST-REQ-UI-005-03 |
 | REQ-UI-006 | TST-REQ-UI-006-01, TST-REQ-UI-006-02, TST-REQ-UI-006-03, TST-REQ-UI-006-04 |
-| REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02, TST-REQ-UI-007-03 |
+| REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02, TST-REQ-UI-007-03, TST-REQ-UI-007-04, TST-REQ-UI-007-05 |
 | REQ-UI-008 | TST-REQ-UI-008-01, TST-REQ-UI-008-02, TST-REQ-UI-008-03 |
 | REQ-UI-009 | TST-REQ-UI-009-01, TST-REQ-UI-009-02 |
 | REQ-UI-010 | TST-REQ-UI-010-01, TST-REQ-UI-010-02 |

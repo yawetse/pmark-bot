@@ -288,6 +288,37 @@ class ConfigService:
         row = self._latest_config_row(environment, username=username)
         return row["version"] if row else None
 
+    def latest_config_owner(
+        self,
+        environment: Environment,
+        *,
+        allowed_usernames: tuple[str, ...] = (),
+    ) -> str | None:
+        """Return the newest active user config owner for scheduler reloads.
+
+        REQ: REQ-UI-007
+        """
+
+        allowed = {
+            owner
+            for owner in (normalize_config_username(username) for username in allowed_usernames)
+            if owner != SHARED_CONFIG_USERNAME
+        }
+        candidates: list[tuple[dict, str]] = []
+        for row in self.registry.state.rows("shared.config_versions"):
+            owner = normalize_config_username(row.get("username"))
+            if row["environment"] != environment.value:
+                continue
+            if not row["active"] or owner == SHARED_CONFIG_USERNAME:
+                continue
+            if allowed and owner not in allowed:
+                continue
+            candidates.append((row, owner))
+        if not candidates:
+            return None
+        _, owner = max(candidates, key=lambda candidate: candidate[0]["created_at"])
+        return owner
+
     def _latest_config_row(self, environment: Environment, username: str | None = None) -> dict | None:
         owner = normalize_config_username(username)
         rows = [

@@ -129,7 +129,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         config_snapshot = _current_config(context.environment, context.actor.username)
         settings_payload = config_snapshot["settings"]
         preferences = services.runtime_status.user_preferences(
-            username=context.access.username or context.actor.username,
+            username=context.actor.username,
             environment=context.environment,
         )
         market_data = services.runtime_status.market_data_pull(

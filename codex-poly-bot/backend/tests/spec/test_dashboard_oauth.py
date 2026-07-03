@@ -8,6 +8,7 @@ import pytest
 
 from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
 from app.domain import Environment, InstrumentType, ModelProvider, Venue
+from app.main import AppSettings, build_dashboard_api_services, _scheduler_config_username
 from app.services import (
     ActorContext,
     AuditService,
@@ -440,6 +441,53 @@ def test_req_ui_007_04_first_user_config_save_preserves_runtime_defaults() -> No
     assert snapshot.payload["venues"][Venue.POLYMARKET_US.value]["enabled"] is True
     assert snapshot.payload["alpaca"]["account_mode"] == "live"
     assert snapshot.payload["reasoning"]["polymarket"]["min_confidence"] == "0.69"
+
+def test_req_ui_007_05_multi_user_scheduler_uses_latest_database_config_owner() -> None:
+    """TST-REQ-UI-007-05: Validates REQ-UI-007
+
+    Given: multiple dashboard users are allowed and one user saved runtime config
+    When: the background scheduler resolves the next-loop config owner
+    Then: it loads the user-owned database config instead of shared defaults
+    """
+    registry = RepositoryRegistry()
+    settings = AppSettings(
+        allowed_usernames=("yaw", "operator"),
+        signing_secret="test-secret",
+        environment=Environment.PRODUCTION,
+        runtime_config_username=None,
+    )
+    services = build_dashboard_api_services(settings, registry)
+
+    services.config.save_config_change(
+        actor=ActorContext(username="system", ip_address="127.0.0.1"),
+        environment=Environment.PRODUCTION,
+        change=ConfigChange(
+            path="trading_loop_interval_seconds",
+            old_value=30,
+            new_value=60,
+        ),
+        version="shared-v1",
+        payload={"trading_loop_interval_seconds": 60},
+    )
+    services.config.save_config_change(
+        actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
+        environment=Environment.PRODUCTION,
+        change=ConfigChange(
+            path="trading_loop_interval_seconds",
+            old_value=60,
+            new_value=90,
+        ),
+        version="yaw-v1",
+        payload={"trading_loop_interval_seconds": 90},
+        username="yaw",
+    )
+
+    owner = _scheduler_config_username(settings, services, Environment.PRODUCTION)
+    reload_result = services.config.config_for_next_loop(Environment.PRODUCTION, username=owner)
+
+    assert owner == "yaw"
+    assert reload_result.snapshot.version == "yaw-v1"
+    assert reload_result.snapshot.payload["trading_loop_interval_seconds"] == 90
 
 def test_req_ui_007_02_config_reload_fails_on_next_loop_loop_starts() -> None:
     """TST-REQ-UI-007-02: Validates REQ-UI-007
