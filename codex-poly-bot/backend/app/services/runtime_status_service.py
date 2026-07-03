@@ -62,6 +62,7 @@ from app.services.lifecycle_service import (
     exit_run_payload,
 )
 from app.services.notification_service import NotificationDeliveryLedger
+from app.services.wallet_service import CredentialTarget, resolve_credential_ref
 from app.services.stock_universe import (
     DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
     DEFAULT_ALPACA_SYMBOL_PRESETS,
@@ -80,6 +81,7 @@ from app.venues import (
 
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
+TRADING_MODEL_PROVIDERS = (ModelProvider.OPENAI, ModelProvider.CLAUDE)
 CURRENT_WORKER_HEARTBEAT_STATUSES = {
     "ok",
     "accepted",
@@ -349,14 +351,26 @@ class RuntimeStatusService:
             environ=getattr(settings, "runtime_env", {}),
         )
         self.strategy_consensus = StrategyConsensusService(self.registry)
-        resolved_alpaca_submitter = alpaca_submitter or _alpaca_submitter_from_settings(settings)
-        resolved_polymarket_submitter = polymarket_submitter or _polymarket_submitter_from_settings(settings)
+        resolved_alpaca_submitters = (
+            {provider: alpaca_submitter for provider in TRADING_MODEL_PROVIDERS}
+            if alpaca_submitter is not None
+            else _alpaca_submitters_from_settings(settings)
+        )
+        resolved_polymarket_submitters = (
+            {provider: polymarket_submitter for provider in TRADING_MODEL_PROVIDERS}
+            if polymarket_submitter is not None
+            else _polymarket_submitters_from_settings(settings)
+        )
+        resolved_alpaca_submitter = _first_submitter(resolved_alpaca_submitters)
+        resolved_polymarket_submitter = _first_submitter(resolved_polymarket_submitters)
         self.notification_ledger = NotificationDeliveryLedger()
         self.lifecycle = PipelineLifecycleService(
             self.registry,
             alpaca_submitter=resolved_alpaca_submitter,
+            alpaca_submitters=resolved_alpaca_submitters,
             alpaca_exit_submitter=resolved_alpaca_submitter,
             polymarket_submitter=resolved_polymarket_submitter,
+            polymarket_submitters=resolved_polymarket_submitters,
             polymarket_position_closer=resolved_polymarket_submitter,
             notification_adapter=ses_adapter_from_env(
                 getattr(settings, "runtime_env", {}),
@@ -1206,27 +1220,55 @@ class RuntimeStatusService:
         """
 
         rows = [
-            self._credential_row(
-                credential_id="polymarket_us-openai-wallet",
-                label="Polymarket US wallet",
-                venue=Venue.POLYMARKET_US.value,
-                provider=ModelProvider.OPENAI.value,
-                reference=f"/codex-poly-bot/{environment.value}/polymarket",
-                required_names=("POLYMARKET_KEY_ID",),
-                alternative_required_names=("POLYMARKET_SECRET_KEY", "POLYMARKET_PRIVATE_KEY"),
-                public_identifier="pm-openai-" + environment.value,
-                enabled=self.settings.polymarket_us_enabled,
+            *(
+                self._credential_row(
+                    credential_id=f"{Venue.POLYMARKET_US.value}-{provider.value}-wallet",
+                    label=f"Polymarket US / {_provider_label(provider)}",
+                    venue=Venue.POLYMARKET_US.value,
+                    provider=provider.value,
+                    reference=resolve_credential_ref(
+                        CredentialTarget(
+                            environment,
+                            Venue.POLYMARKET_US,
+                            provider,
+                            "wallet",
+                        )
+                    ),
+                    required_names=(f"POLYMARKET_{provider.value.upper()}_KEY_ID",),
+                    alternative_required_names=(
+                        f"POLYMARKET_{provider.value.upper()}_SECRET_KEY",
+                        f"POLYMARKET_{provider.value.upper()}_PRIVATE_KEY",
+                    ),
+                    public_identifier=f"pm-{provider.value}-{environment.value}",
+                    enabled=self.settings.polymarket_us_enabled,
+                    purpose="live Polymarket US orders for model performance comparison",
+                )
+                for provider in TRADING_MODEL_PROVIDERS
             ),
-            self._credential_row(
-                credential_id="alpaca-claude-account",
-                label="Alpaca account",
-                venue=Venue.ALPACA.value,
-                provider=ModelProvider.CLAUDE.value,
-                reference=f"/codex-poly-bot/{environment.value}/alpaca",
-                required_names=("ALPACA_KEY_ID", "ALPACA_SECRET_KEY"),
-                public_identifier="alpaca-claude-" + self.settings.trading_account_mode,
-                enabled=self.settings.alpaca_enabled,
-                account_status=self.settings.alpaca_account_status,
+            *(
+                self._credential_row(
+                    credential_id=f"{Venue.ALPACA.value}-{provider.value}-account",
+                    label=f"Alpaca / {_provider_label(provider)}",
+                    venue=Venue.ALPACA.value,
+                    provider=provider.value,
+                    reference=resolve_credential_ref(
+                        CredentialTarget(
+                            environment,
+                            Venue.ALPACA,
+                            provider,
+                            "api-key",
+                        )
+                    ),
+                    required_names=(
+                        f"ALPACA_{provider.value.upper()}_KEY_ID",
+                        f"ALPACA_{provider.value.upper()}_SECRET_KEY",
+                    ),
+                    public_identifier=f"alpaca-{provider.value}-{self.settings.trading_account_mode}",
+                    enabled=self.settings.alpaca_enabled,
+                    account_status=self.settings.alpaca_account_status,
+                    purpose="live Alpaca account reads and order submission for model performance comparison",
+                )
+                for provider in TRADING_MODEL_PROVIDERS
             ),
             self._credential_row(
                 credential_id="openai-api",
@@ -2675,6 +2717,8 @@ class RuntimeStatusService:
                 if credential["venue"] == venue and credential["requiredForLive"]
             ]
             status[venue] = bool(required) and all(credential["present"] for credential in required)
+            for credential in required:
+                status[f"{venue}:{credential['provider']}"] = credential["present"]
         return status
 
     def _risk_value(self, risk_config: dict[str, Any], venue: str, field_name: str) -> str:
@@ -3832,6 +3876,7 @@ class RuntimeStatusService:
         enabled: bool,
         alternative_required_names: tuple[str, ...] = (),
         account_status: str = "active",
+        purpose: str | None = None,
     ) -> RuntimeCredentialView:
         required_present = all(_configured(self.settings.runtime_env.get(name, "")) for name in required_names)
         alternative_present = (
@@ -3853,7 +3898,12 @@ class RuntimeStatusService:
             message = "configured"
         else:
             status = "missing"
-            message = "required credential value missing"
+            missing = _missing_credential_message(
+                runtime_env=self.settings.runtime_env,
+                required_names=required_names,
+                alternative_required_names=alternative_required_names,
+            )
+            message = f"{missing} for {purpose}" if purpose else missing
         return RuntimeCredentialView(
             id=credential_id,
             label=label,
@@ -3891,38 +3941,116 @@ def _polymarket_historical_import_config(settings: Any) -> dict[str, Any]:
     }
 
 
-def _alpaca_submitter_from_settings(settings: Any) -> Any | None:
+def _alpaca_submitters_from_settings(settings: Any) -> dict[ModelProvider, Any]:
     runtime_env = getattr(settings, "runtime_env", {})
     if not bool(getattr(settings, "live_enabled", False)):
-        return None
+        return {}
     if not bool(getattr(settings, "alpaca_enabled", False)):
-        return None
+        return {}
     if str(getattr(settings, "alpaca_account_status", "active")).strip().lower() != "active":
-        return None
-    if not _configured(runtime_env.get("ALPACA_KEY_ID")):
-        return None
-    if not _configured(runtime_env.get("ALPACA_SECRET_KEY")):
-        return None
-    try:
-        return alpaca_live_order_adapter_from_env(runtime_env)
-    except ValueError:
-        return None
+        return {}
+    submitters: dict[ModelProvider, Any] = {}
+    for provider in TRADING_MODEL_PROVIDERS:
+        provider_env = _provider_runtime_env(runtime_env, venue=Venue.ALPACA, provider=provider)
+        if not _configured(provider_env.get("ALPACA_KEY_ID")):
+            continue
+        if not _configured(provider_env.get("ALPACA_SECRET_KEY")):
+            continue
+        try:
+            submitters[provider] = alpaca_live_order_adapter_from_env(provider_env)
+        except ValueError:
+            continue
+    return submitters
 
 
-def _polymarket_submitter_from_settings(settings: Any) -> Any | None:
+def _polymarket_submitters_from_settings(settings: Any) -> dict[ModelProvider, Any]:
     runtime_env = getattr(settings, "runtime_env", {})
     if not bool(getattr(settings, "live_enabled", False)):
-        return None
+        return {}
     if not bool(getattr(settings, "polymarket_us_enabled", False)):
-        return None
-    if not _configured(runtime_env.get("POLYMARKET_KEY_ID")):
-        return None
-    if not (
-        _configured(runtime_env.get("POLYMARKET_SECRET_KEY"))
-        or _configured(runtime_env.get("POLYMARKET_PRIVATE_KEY"))
+        return {}
+    submitters: dict[ModelProvider, Any] = {}
+    for provider in TRADING_MODEL_PROVIDERS:
+        provider_env = _provider_runtime_env(runtime_env, venue=Venue.POLYMARKET_US, provider=provider)
+        if not _configured(provider_env.get("POLYMARKET_KEY_ID")):
+            continue
+        if not (
+            _configured(provider_env.get("POLYMARKET_SECRET_KEY"))
+            or _configured(provider_env.get("POLYMARKET_PRIVATE_KEY"))
+        ):
+            continue
+        submitters[provider] = polymarket_us_live_adapter_from_env(provider_env)
+    return submitters
+
+
+def _provider_runtime_env(
+    runtime_env: dict[str, str],
+    *,
+    venue: Venue,
+    provider: ModelProvider,
+) -> dict[str, str]:
+    provider_key = provider.value.upper()
+    provider_env = dict(runtime_env)
+    if venue == Venue.ALPACA:
+        provider_env["ALPACA_KEY_ID"] = runtime_env.get(f"ALPACA_{provider_key}_KEY_ID", "").strip()
+        provider_env["ALPACA_SECRET_KEY"] = runtime_env.get(f"ALPACA_{provider_key}_SECRET_KEY", "").strip()
+        return provider_env
+    if venue == Venue.POLYMARKET_US:
+        provider_env["POLYMARKET_KEY_ID"] = runtime_env.get(f"POLYMARKET_{provider_key}_KEY_ID", "").strip()
+        provider_env["POLYMARKET_SECRET_KEY"] = runtime_env.get(
+            f"POLYMARKET_{provider_key}_SECRET_KEY",
+            "",
+        ).strip()
+        provider_env["POLYMARKET_PRIVATE_KEY"] = runtime_env.get(
+            f"POLYMARKET_{provider_key}_PRIVATE_KEY",
+            "",
+        ).strip()
+        provider_env["POLYMARKET_CREDENTIAL_REF"] = resolve_credential_ref(
+            CredentialTarget(
+                _environment_from_runtime_env(runtime_env),
+                Venue.POLYMARKET_US,
+                provider,
+                "wallet",
+            )
+        )
+    return provider_env
+
+
+def _first_submitter(submitters: dict[ModelProvider, Any]) -> Any | None:
+    for provider in TRADING_MODEL_PROVIDERS:
+        if provider in submitters:
+            return submitters[provider]
+    return None
+
+
+def _environment_from_runtime_env(runtime_env: dict[str, str]) -> Environment:
+    raw = runtime_env.get("APP_ENV", Environment.LOCAL.value)
+    try:
+        return Environment(raw)
+    except ValueError:
+        return Environment.LOCAL
+
+
+def _provider_label(provider: ModelProvider) -> str:
+    if provider == ModelProvider.OPENAI:
+        return "OpenAI"
+    return "Claude"
+
+
+def _missing_credential_message(
+    *,
+    runtime_env: dict[str, str],
+    required_names: tuple[str, ...],
+    alternative_required_names: tuple[str, ...],
+) -> str:
+    missing_required = [name for name in required_names if not _configured(runtime_env.get(name, ""))]
+    if alternative_required_names and not any(
+        _configured(runtime_env.get(name, "")) for name in alternative_required_names
     ):
-        return None
-    return polymarket_us_live_adapter_from_env(runtime_env)
+        missing_required.append(" or ".join(alternative_required_names))
+    if not missing_required:
+        return "required credential value missing"
+    return "missing " + ", ".join(missing_required)
 
 
 def _manual_run_mode(value: str | None) -> str:

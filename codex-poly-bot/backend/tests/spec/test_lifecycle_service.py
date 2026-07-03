@@ -169,6 +169,91 @@ def test_req_exe_016_06_live_execution_submits_when_submitters_are_configured() 
     assert len(alpaca.calls[0]["client_order_id"]) == 64
 
 
+def test_req_exe_016_07_live_execution_routes_submitters_by_model_provider() -> None:
+    """TST-REQ-EXE-016-07: Validates REQ-EXE-016 and REQ-WAL-001
+
+    Given: live execution has provider-specific venue submitters
+    When: OpenAI and Claude outputs are approved
+    Then: each output is submitted through the account for its venue and model provider
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    openai_alpaca = RecordingAlpacaSubmitter()
+    claude_alpaca = RecordingAlpacaSubmitter()
+    openai_polymarket = RecordingPolymarketSubmitter()
+    claude_polymarket = RecordingPolymarketSubmitter()
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_submitters={
+            ModelProvider.OPENAI: openai_alpaca,
+            ModelProvider.CLAUDE: claude_alpaca,
+        },
+        polymarket_submitters={
+            ModelProvider.OPENAI: openai_polymarket,
+            ModelProvider.CLAUDE: claude_polymarket,
+        },
+    ).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-model-routed-submit",
+        trigger="manual",
+        strategy_run=_strategy_run_with_outputs(registry, now),
+        market_data_pulls=_market_data_pulls(now),
+        config_payload=_config(live_enabled=True),
+        credential_status={
+            f"{Venue.POLYMARKET_US.value}:{ModelProvider.OPENAI.value}": True,
+            f"{Venue.ALPACA.value}:{ModelProvider.CLAUDE.value}": True,
+        },
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["status"] == "completed"
+    assert len(openai_polymarket.submit_calls) == 1
+    assert len(claude_polymarket.submit_calls) == 0
+    assert len(openai_alpaca.calls) == 0
+    assert len(claude_alpaca.calls) == 1
+
+
+def test_req_exe_016_08_live_execution_does_not_fallback_to_other_model_account() -> None:
+    """TST-REQ-EXE-016-08: Validates REQ-EXE-016 and REQ-WAL-001
+
+    Given: one model provider lacks a venue submitter
+    When: that provider has an approved live output
+    Then: the order is refused instead of using another provider's account
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    openai_alpaca = RecordingAlpacaSubmitter()
+    openai_polymarket = RecordingPolymarketSubmitter()
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_submitters={ModelProvider.OPENAI: openai_alpaca},
+        polymarket_submitters={ModelProvider.OPENAI: openai_polymarket},
+    ).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-no-cross-provider-fallback",
+        trigger="manual",
+        strategy_run=_strategy_run_with_outputs(registry, now),
+        market_data_pulls=_market_data_pulls(now),
+        config_payload=_config(live_enabled=True),
+        credential_status={
+            f"{Venue.POLYMARKET_US.value}:{ModelProvider.OPENAI.value}": True,
+            f"{Venue.ALPACA.value}:{ModelProvider.CLAUDE.value}": True,
+        },
+        started_at=now,
+        completed_at=now,
+    )
+
+    intents_by_venue = {intent["venue"]: intent for intent in result.payload["intents"]}
+
+    assert intents_by_venue[Venue.POLYMARKET_US.value]["status"] == "submitted"
+    assert intents_by_venue[Venue.ALPACA.value]["status"] == "refused"
+    assert intents_by_venue[Venue.ALPACA.value]["refusalReason"] == "LIVE_SUBMITTER_NOT_CONFIGURED"
+    assert len(openai_alpaca.calls) == 0
+
+
 def test_req_not_006_04_live_execution_trade_submission_sends_email_notification() -> None:
     """TST-REQ-NOT-006-04: Validates REQ-NOT-006 and REQ-EXE-016
 

@@ -359,10 +359,18 @@ def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injectio
     assert "PolymarketSecretKeySecretArn" in text
     assert "POLYMARKET_PRIVATE_KEY" in text
     assert "PolymarketPrivateKeySecretArn" in text
+    assert "POLYMARKET_OPENAI_KEY_ID" in text
+    assert "PolymarketOpenAiKeyIdSecretArn" in text
+    assert "POLYMARKET_CLAUDE_SECRET_KEY" in text
+    assert "PolymarketClaudeSecretKeySecretArn" in text
     assert "ALPACA_KEY_ID" in text
     assert "AlpacaKeyIdSecretArn" in text
     assert "ALPACA_SECRET_KEY" in text
     assert "AlpacaSecretKeySecretArn" in text
+    assert "ALPACA_OPENAI_KEY_ID" in text
+    assert "AlpacaOpenAiKeyIdSecretArn" in text
+    assert "ALPACA_CLAUDE_SECRET_KEY" in text
+    assert "AlpacaClaudeSecretKeySecretArn" in text
     assert "ALPACA_ACCOUNT_STATUS" in text
     assert "ALPACA_SYMBOL_PRESETS" in text
     assert "ALPACA_CUSTOM_SYMBOLS" in text
