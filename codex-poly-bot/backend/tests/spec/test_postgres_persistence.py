@@ -177,6 +177,18 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "openai.strategy_signals" in plan.table_names
     assert all("..." not in statement for statement in plan.sql)
     assert any("CREATE TABLE IF NOT EXISTS openai.trade_decisions" in statement for statement in plan.sql)
+    assert any(
+        "ALTER TABLE IF EXISTS shared.config_versions ADD COLUMN IF NOT EXISTS username" in statement
+        for statement in plan.sql
+    )
+    assert any(
+        "DROP CONSTRAINT IF EXISTS uq_config_environment_version" in statement
+        for statement in plan.sql
+    )
+    assert any(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_config_environment_username_version" in statement
+        for statement in plan.sql
+    )
     assert registry.for_model(ModelProvider.CLAUDE).schema_name == "claude"
     assert registry.for_model(ModelProvider.OPENAI).schema_name == "openai"
 

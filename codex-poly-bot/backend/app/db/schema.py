@@ -38,6 +38,14 @@ REQUIRED_SCHEMAS = (SHARED_SCHEMA, "claude", "openai")
 
 metadata = MetaData()
 _POSTGRES_DIALECT = postgresql.dialect()
+_EXPAND_MIGRATIONS = (
+    "ALTER TABLE IF EXISTS shared.config_versions "
+    "ADD COLUMN IF NOT EXISTS username VARCHAR NOT NULL DEFAULT '__shared__';",
+    "ALTER TABLE IF EXISTS shared.config_versions "
+    "DROP CONSTRAINT IF EXISTS uq_config_environment_version;",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_config_environment_username_version "
+    "ON shared.config_versions (environment, username, version);",
+)
 
 
 @dataclass(frozen=True)
@@ -1116,7 +1124,7 @@ def migration_plan() -> MigrationPlan:
     return MigrationPlan(
         schema_names=REQUIRED_SCHEMAS,
         table_names=tuple(f"{table.schema}.{table.name}" for table in _ALL_TABLES),
-        sql=schema_sql + table_sql + index_sql,
+        sql=schema_sql + table_sql + _EXPAND_MIGRATIONS + index_sql,
     )
 
 
