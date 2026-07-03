@@ -3054,6 +3054,78 @@ th {
   line-height: 1.35;
 }
 
+.consumer-cycle-guide {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-subtle);
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.cycle-guide-heading {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1fr);
+}
+
+.cycle-guide-heading h2 {
+  font-size: 22px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.cycle-guide-heading p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.cycle-guide-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.cycle-guide-card {
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  padding: 12px;
+}
+
+.cycle-guide-card > span {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: 999px;
+  color: var(--accent-strong);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 850;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.cycle-guide-card strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.cycle-guide-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 4px 0 0;
+}
+
 .consumer-grid {
   align-items: start;
   display: grid;
@@ -3134,6 +3206,12 @@ th {
   font-size: clamp(18px, 2vw, 24px);
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.consumer-metric small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .consumer-chart {
@@ -4126,8 +4204,14 @@ th {
 @media (max-width: 1100px) {
   .consumer-grid,
   .consumer-tick-strip,
+  .cycle-guide-list,
   .recommendation-options {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .cycle-guide-heading {
+    align-items: start;
+    grid-template-columns: 1fr;
   }
 
   .data-explorer-layout,
@@ -4179,6 +4263,7 @@ th {
 
   .consumer-grid,
   .consumer-tick-strip,
+  .cycle-guide-list,
   .recommendation-options,
   .consumer-metric-strip,
   .scenario-lever-grid,

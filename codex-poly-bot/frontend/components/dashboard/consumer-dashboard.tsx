@@ -103,6 +103,29 @@ type SafetySummary = {
   detail: string;
 };
 
+const CYCLE_GUIDE_STEPS = [
+  {
+    title: "Collect prices",
+    body: "The app pulls the latest market prices, spreads, and available liquidity.",
+  },
+  {
+    title: "Find candidates",
+    body: "Markets that fit your filter settings move forward. The rest stop before any model runs.",
+  },
+  {
+    title: "Score the trade",
+    body: "The app checks direction, confidence, and risk controls before an order plan is created.",
+  },
+  {
+    title: "Simulate or submit",
+    body: "Simulation records a practice order. Live mode can submit only when every gate is clear.",
+  },
+  {
+    title: "Monitor exits",
+    body: "Open positions are checked for stop, target, and closing rules.",
+  },
+] as const;
+
 const DAILY_WINDOW_MINUTES = 24 * 60;
 const FALLBACK_TICK_SCHEDULE: TickScheduleView = {
   environment: "local",
@@ -338,7 +361,7 @@ export function ConsumerDashboard() {
     if (!firstAttempt.result.ok && firstAttempt.result.status === 409) {
       const conflictSnapshot = await refreshConfigSnapshot();
       if (!conflictSnapshot) {
-        setSaveState({ status: "error", message: "Config changed, and the latest version could not be loaded." });
+        setSaveState({ status: "error", message: "Settings changed, and the latest version could not be loaded." });
         return false;
       }
       const retry = await submitConfigPatches(conflictSnapshot, patches);
@@ -381,7 +404,7 @@ export function ConsumerDashboard() {
         status: "error",
         message:
           retried && attempt.result.status === 409
-            ? "Config changed while saving. I refreshed it and retried, but it changed again. Try Apply once more."
+            ? "Settings changed while saving. I refreshed them and retried, but they changed again. Try Apply once more."
             : readableConfigError(attempt.result.message),
       });
       return false;
@@ -416,11 +439,11 @@ export function ConsumerDashboard() {
           <div className="guide-actions" aria-label="Primary dashboard controls">
             <Link className="button primary" href="/dashboard/operations">
               <RefreshCw aria-hidden="true" size={16} />
-              Operate
+              Run
             </Link>
             <Link className="button subtle" href="/dashboard/config">
               <Settings2 aria-hidden="true" size={16} />
-              Configure
+              Settings
             </Link>
             <Link className="button subtle" href="/dashboard/system">
               <CheckCircle2 aria-hidden="true" size={16} />
@@ -458,6 +481,30 @@ export function ConsumerDashboard() {
         />
       </div>
 
+      <section className="consumer-cycle-guide" aria-labelledby="cycle-guide-title">
+        <div className="cycle-guide-heading">
+          <div>
+            <p className="section-label">How it works</p>
+            <h2 id="cycle-guide-title">One trading cycle, five checks</h2>
+          </div>
+          <p>
+            A cycle is one full pass through market data, trade scoring, order handling,
+            and exit monitoring.
+          </p>
+        </div>
+        <div className="cycle-guide-list">
+          {CYCLE_GUIDE_STEPS.map((step, index) => (
+            <article className="cycle-guide-card" key={step.title}>
+              <span>{index + 1}</span>
+              <div>
+                <strong>{step.title}</strong>
+                <p>{step.body}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <div className="consumer-grid">
         <section className="consumer-panel" aria-labelledby="dashboard-safety-title">
           <div className="consumer-panel-heading">
@@ -468,9 +515,21 @@ export function ConsumerDashboard() {
             <span className={`status ${safetySummary.tone}`}>{safetySummary.label}</span>
           </div>
           <div className="consumer-metric-list">
-            <Metric label="Trading mode" value={liveEnabled ? "Live flag on" : "Dry run"} />
-            <Metric label="Kill switch" value={operations?.killSwitch ?? "loading"} />
-            <Metric label="Active venues" value={activeVenueSummary} />
+            <Metric
+              detail={liveEnabled ? "The setting allows live orders if every gate is clear." : "Orders are recorded as simulations only."}
+              label="Trading mode"
+              value={liveEnabled ? "Live setting on" : "Simulation only"}
+            />
+            <Metric
+              detail={operations?.killSwitch === "active" ? "Emergency stop is blocking new live orders." : "Emergency stop is not blocking the cycle."}
+              label="Emergency stop"
+              value={operations?.killSwitch ?? "loading"}
+            />
+            <Metric
+              detail={activeVenueSummary === "none" ? "No venue can receive orders." : "These venues can be checked for trades."}
+              label="Active venues"
+              value={activeVenueSummary}
+            />
           </div>
           <p className="panel-note">{safetySummary.detail}</p>
         </section>
@@ -504,25 +563,25 @@ export function ConsumerDashboard() {
           <div className="consumer-panel-heading">
             <div>
               <p className="section-label">Primary controls</p>
-              <h2 id="dashboard-controls-title">What I can do now</h2>
+              <h2 id="dashboard-controls-title">Common actions</h2>
             </div>
             <Settings2 aria-hidden="true" size={20} />
           </div>
           <div className="control-list">
             <DashboardControlLink
-              body="Run a dry-run workflow, review open orders, or inspect the kill switch."
+              body="Run a simulation cycle, review orders, and use the emergency stop."
               href="/dashboard/operations"
-              title="Operate"
+              title="Run or review"
             />
             <DashboardControlLink
-              body="Change venue, live mode, notification, scanner, and model settings."
+              body="Change venues, live mode, notifications, market filters, and model limits."
               href="/dashboard/config"
-              title="Configure"
+              title="Change settings"
             />
             <DashboardControlLink
-              body="Check credentials, scheduler, notifications, and account readiness."
+              body="Check credentials, scheduler heartbeat, notifications, and account readiness."
               href="/dashboard/system"
-              title="Verify system"
+              title="Check readiness"
             />
           </div>
         </section>
@@ -588,9 +647,9 @@ export function ConsumerDashboard() {
                 <p>{lastTick.detail}</p>
               </div>
               <div className="consumer-metric-list">
-                <Metric label="Accepted" value={String(operationsState.data.scanner?.acceptedCount ?? 0)} />
-                <Metric label="Submitted" value={String(operationsState.data.execution?.submittedCount ?? 0)} />
-                <Metric label="Simulated" value={String(operationsState.data.execution?.simulatedCount ?? 0)} />
+                <Metric label="Passed filters" value={String(operationsState.data.scanner?.acceptedCount ?? 0)} />
+                <Metric label="Real orders" value={String(operationsState.data.execution?.submittedCount ?? 0)} />
+                <Metric label="Practice orders" value={String(operationsState.data.execution?.simulatedCount ?? 0)} />
               </div>
             </>
           )}
@@ -599,8 +658,8 @@ export function ConsumerDashboard() {
         <section className="consumer-panel span-3" aria-labelledby="timeline-title">
           <div className="consumer-panel-heading">
             <div>
-              <p className="section-label">Tick process</p>
-              <h2 id="timeline-title">Five steps</h2>
+              <p className="section-label">Latest cycle</p>
+              <h2 id="timeline-title">What happened last time</h2>
             </div>
             <span className="status idle">{operations?.pipelineRuns[0]?.status ?? "loading"}</span>
           </div>
@@ -693,7 +752,7 @@ export function ConsumerDashboard() {
                     ? notificationsState.message
                     : notifications?.recipientCount
                       ? `${notifications.recipientCount} recipient configured.`
-                      : "Add a recipient in Config before emails can send."}
+                      : "Add a recipient in Settings before emails can send."}
               </p>
             </>
           )}
@@ -816,7 +875,7 @@ export function ConsumerDashboard() {
           {saveState.status === "error" ? (
             <p className="status-message blocked">{saveState.message}</p>
           ) : null}
-          {configVersion ? <p className="panel-note">Config version {configVersion}</p> : null}
+          {configVersion ? <p className="panel-note">Preference version {configVersion}</p> : null}
         </section>
       </div>
     </section>
@@ -851,10 +910,10 @@ function dashboardHeroSummary({
   activeVenueSummary: string;
   actionItems: DashboardAction[];
 }): string {
-  const mode = liveEnabled ? "live flag on" : "dry run";
-  const killSwitch = operations?.killSwitch ?? "loading";
+  const mode = liveEnabled ? "live setting on" : "simulation only";
+  const killSwitch = friendlyEmergencyStopStatus(operations?.killSwitch);
   const nextAction = actionItems[0]?.title.toLowerCase() ?? "monitor the next tick";
-  return `Current mode: ${mode}. Kill switch: ${killSwitch}. Active venues: ${activeVenueSummary}. Next step: ${nextAction}.`;
+  return `Current mode: ${mode}. Emergency stop: ${killSwitch}. Active venues: ${activeVenueSummary}. Next step: ${nextAction}.`;
 }
 
 function dashboardSafetySummary({
@@ -888,7 +947,7 @@ function dashboardSafetySummary({
     return {
       label: "stopped",
       tone: "blocked",
-      detail: "The kill switch is active. Review Operations before any run or live-mode change.",
+      detail: "The emergency stop is active. Open Run before any cycle or live-mode change.",
     };
   }
   if (liveEnabled && activeVenueLabels.length === 0) {
@@ -900,15 +959,15 @@ function dashboardSafetySummary({
   }
   if (liveEnabled) {
     return {
-      label: "live flag on",
+      label: "live setting on",
       tone: "waiting",
-      detail: "Live mode is on. Keep orders, risk gates, notifications, and the kill switch visible while monitoring.",
+      detail: "Live mode is on. Keep orders, risk controls, notifications, and the emergency stop visible while monitoring.",
     };
   }
   return {
-    label: "dry run",
+    label: "simulation only",
     tone: "ok",
-    detail: "Live order submission is off. Use this state for scanner, model, and configuration checks.",
+    detail: "Live order submission is off. Use this state for market filters, model checks, and settings changes.",
   };
 }
 
@@ -936,7 +995,7 @@ function dashboardActionItems({
       title: "Recover config status",
       body: configState.message,
       href: "/dashboard/system",
-      linkLabel: "Open system",
+      linkLabel: "Open health",
     });
   }
   if (operationsState.status === "error") {
@@ -944,31 +1003,31 @@ function dashboardActionItems({
       title: "Recover operations status",
       body: operationsState.message,
       href: "/dashboard/operations",
-      linkLabel: "Open operations",
+      linkLabel: "Open run page",
     });
   }
   if (operations?.killSwitch === "active") {
     actions.push({
-      title: "Review kill switch",
+      title: "Review emergency stop",
       body: "The emergency control is active. Clear or keep it intentionally before changing run settings.",
       href: "/dashboard/operations",
-      linkLabel: "Open operations",
+      linkLabel: "Open run page",
     });
   }
   if (activeVenueLabels.length === 0) {
     actions.push({
       title: "Choose an active venue",
-      body: "No venue is enabled for scanning or trading. Keep live mode off until the target account is ready.",
+      body: "No venue is enabled for market checks or trading. Keep live mode off until the target account is ready.",
       href: "/dashboard/config",
-      linkLabel: "Open config",
+      linkLabel: "Open settings",
     });
   }
   if (operations && operations.manualReviewState !== "clear") {
     actions.push({
-      title: "Check manual review",
-      body: `Manual review is ${operations.manualReviewState}. Confirm the queue before running the next workflow.`,
+      title: "Check approval queue",
+      body: `The approval queue is ${operations.manualReviewState}. Confirm it before running the next cycle.`,
       href: "/dashboard/operations",
-      linkLabel: "Open operations",
+      linkLabel: "Open run page",
     });
   }
   if ((operations?.openOrders ?? 0) > 0) {
@@ -987,15 +1046,15 @@ function dashboardActionItems({
           ? notificationsState.message
           : "Trade alerts need at least one recipient before live operation.",
       href: "/dashboard/config",
-      linkLabel: "Open config",
+      linkLabel: "Open settings",
     });
   }
   if (actions.length === 0 && !liveEnabled) {
     actions.push({
-      title: "Stay in dry run or prepare signoff",
-      body: "The current posture is safe for dry-run checks. Use Operations for the next run or Config for a planned change.",
+      title: "Stay in simulation or prepare signoff",
+      body: "The current mode is safe for simulation checks. Use Run for the next cycle or Settings for a planned change.",
       href: "/dashboard/operations",
-      linkLabel: "Open operations",
+      linkLabel: "Open run page",
     });
   }
   if (actions.length === 0) {
@@ -1003,7 +1062,7 @@ function dashboardActionItems({
       title: "Monitor the next tick",
       body: "No immediate blocker is visible. Watch the next scheduled loop and review orders after it completes.",
       href: "/dashboard/operations",
-      linkLabel: "Open operations",
+      linkLabel: "Open run page",
     });
   }
 
@@ -1046,11 +1105,12 @@ async function loadPanel<T>(
   setState(result.ok ? { status: "ready", data: result.data } : { status: "error", message: result.message });
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="consumer-metric">
       <span>{label}</span>
       <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
@@ -1131,7 +1191,7 @@ function tickTimelineSteps(
   return [
     {
       key: "data_fetch",
-      label: "Data load",
+      label: "Collect prices",
       status: stepByKey.get("data_fetch")?.status ?? marketData?.status ?? "loading",
       message: stepByKey.get("data_fetch")?.message ?? (
         marketData ? `${marketData.candidateCount ?? 0} candidates loaded` : "Loading market data."
@@ -1139,27 +1199,27 @@ function tickTimelineSteps(
     },
     {
       key: "scanner",
-      label: "Scan",
+      label: "Find candidates",
       status: stepByKey.get("scanner")?.status ?? operations?.scanner?.status ?? "loading",
       message:
         stepByKey.get("scanner")?.message ??
         (operations
           ? `${operations.scanner?.acceptedCount ?? 0} accepted, ${operations.scanner?.rejectedCount ?? 0} rejected`
-          : "Loading scanner results."),
+          : "Loading market filter results."),
     },
     {
       key: "brain",
-      label: "Reason",
+      label: "Score trade",
       status: stepByKey.get("brain")?.status ?? operations?.reasoning?.status ?? "loading",
       message:
         stepByKey.get("brain")?.message ??
         (operations
           ? `${operations.reasoning?.scoredCount ?? 0} scored, ${operations.reasoning?.failedCount ?? 0} failed`
-          : "Loading reasoning results."),
+          : "Loading model scoring results."),
     },
     {
       key: "execution",
-      label: "Execute",
+      label: "Handle order",
       status: stepByKey.get("execution")?.status ?? operations?.execution?.status ?? "loading",
       message:
         stepByKey.get("execution")?.message ??
@@ -1169,7 +1229,7 @@ function tickTimelineSteps(
     },
     {
       key: "exit",
-      label: "Exit",
+      label: "Monitor exit",
       status: stepByKey.get("exit")?.status ?? operations?.exit?.status ?? "loading",
       message:
         stepByKey.get("exit")?.message ??
@@ -1212,20 +1272,20 @@ function lastTickResult(
   }
   if ((execution?.simulatedCount ?? 0) > 0) {
     return {
-      title: "The bot is finding trades in dry run",
-      body: "The latest tick produced simulated orders. Live execution still depends on the live flag and venue gates.",
-      headline: "Dry-run order simulated",
+      title: "The app is finding trades in simulation",
+      body: "The latest tick produced simulated orders. Live execution still depends on the live setting and venue checks.",
+      headline: "Practice order simulated",
       detail: `${execution?.simulatedCount ?? 0} simulated order intent recorded.`,
       status: latestRun?.status ?? execution?.status ?? "simulated",
       tone: "waiting" as const,
-      label: "Dry run",
+      label: "Simulation",
     };
   }
   if ((scanner?.acceptedCount ?? 0) === 0 && (scanner?.candidateCount ?? 0) > 0) {
     return {
-      title: "No candidate passed the scan",
-      body: "The latest tick loaded candidates but the scanner rejected them before scoring.",
-      headline: "Scanner blocked the tick",
+      title: "No market passed the filters",
+      body: "The latest tick loaded markets, but the market filters rejected them before scoring.",
+      headline: "Market filters blocked the tick",
       detail: `${scanner?.rejectedCount ?? 0} rejected candidates and no accepted candidates.`,
       status: scanner?.status ?? "no_candidates",
       tone: "blocked" as const,
@@ -1234,9 +1294,9 @@ function lastTickResult(
   }
   if ((reasoning?.failedCount ?? 0) > 0 && (reasoning?.scoredCount ?? 0) === 0) {
     return {
-      title: "Reasoning did not produce usable scores",
-      body: "Candidates reached the reasoning step, but scoring did not produce approved outputs.",
-      headline: "Reasoning blocked the tick",
+      title: "Model scoring did not produce usable scores",
+      body: "Candidates reached model scoring, but the app did not receive approved outputs.",
+      headline: "Model scoring blocked the tick",
       detail: `${reasoning?.failedCount ?? 0} failed prompt attempts.`,
       status: reasoning?.status ?? "failed",
       tone: "blocked" as const,
@@ -1245,7 +1305,7 @@ function lastTickResult(
   }
   return {
     title: "No trade was placed",
-    body: "The bot stayed inside its current pass conditions and did not create a live order.",
+    body: "The app followed your current settings and did not create a live order.",
     headline: "No order submitted",
     detail: tickSummary.summaryMarkdown
       ? markdownLines(tickSummary.summaryMarkdown)[0]
@@ -1292,7 +1352,7 @@ function recommendationPlans(
       "conservative",
       "Conservative",
       "ok",
-      "Small scanner relaxation. Keeps confidence gates unchanged and focuses on markets near the current policy.",
+      "Small filter change. Keeps confidence settings unchanged and focuses on markets near the current policy.",
       "Small change",
       "Lowest chance of noisy candidates",
       1.1,
@@ -1302,7 +1362,7 @@ function recommendationPlans(
       "balanced",
       "Balanced",
       "waiting",
-      "Moderate scanner relaxation with a small confidence adjustment. This is the best first test if candidates are repeatedly rejected.",
+      "Moderate filter change with a small confidence adjustment. This is the best first test if candidates are repeatedly rejected.",
       "Moderate change",
       "More candidates to review",
       1.25,
@@ -1312,7 +1372,7 @@ function recommendationPlans(
       "aggressive",
       "Aggressive",
       "blocked",
-      "Wider scanner window and lower confidence thresholds. Use this when you want more candidates for dry-run review.",
+      "Wider filter window and lower confidence thresholds. Use this when you want more candidates for simulation review.",
       "Largest change",
       "Most false positives",
       1.5,
@@ -1334,15 +1394,28 @@ function recommendationContext(dailySummary: TickSummaryView, operations: Operat
       : "Expands the resolution window so more otherwise valid markets can pass scan.",
     spread: text.includes("spread")
       ? "Recent ticks mention spread gating, so this allows slightly wider Polymarket spreads."
-      : "Allows slightly wider Polymarket spreads before reasoning.",
+      : "Allows slightly wider Polymarket spreads before model scoring.",
     alpacaSpread: text.includes("alpaca") || text.includes("spread")
       ? "Recent ticks mention Alpaca or spread gating, so this allows more stock quotes through scan."
-      : "Allows more stock quotes through the scanner before reasoning.",
+      : "Allows more stock quotes through market filters before model scoring.",
     liquidity: text.includes("liquidity")
       ? "Recent ticks mention liquidity, so this lowers the quote liquidity requirement."
-      : "Lowers the quote liquidity gate for more dry-run candidates.",
+      : "Lowers the quote liquidity gate for more simulation candidates.",
     confidence: "Slightly lowers the scoring pass line without changing risk or live-trading gates.",
   };
+}
+
+function friendlyEmergencyStopStatus(value: string | null | undefined): string {
+  if (!value) {
+    return "loading";
+  }
+  if (value === "active") {
+    return "active";
+  }
+  if (value === "inactive") {
+    return "off";
+  }
+  return value;
 }
 
 function inferredRecommendationPlanId(settings: Record<string, unknown>): RecommendationPlan["id"] {

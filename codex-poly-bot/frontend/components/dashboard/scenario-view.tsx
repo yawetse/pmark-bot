@@ -227,7 +227,7 @@ const SCENARIO_GLOSSARY: Array<ScenarioGlossaryTerm & { matches: string[] }> = [
   },
   {
     term: "Reasoning",
-    definition: "The model-scoring stage that evaluates candidates that survive scanner filters.",
+    definition: "The model-scoring stage that evaluates candidates that survive market filters.",
     matches: ["reasoning", "model", "confidence", "edge"],
   },
   {
@@ -260,7 +260,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     kind: "range",
     path: "scanner.polymarket.market_data_limit",
     label: "Markets pulled",
-    description: "How many active Polymarket markets are pulled before scanner filters run.",
+    description: "How many active Polymarket markets are pulled before market filters run.",
     stage: "Market data",
     fallback: 100,
     min: 1,
@@ -273,7 +273,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     path: "scanner.polymarket.min_liquidity",
     label: "Minimum liquidity",
     description: "Lower this to preview whether thinner markets would reach later checks.",
-    stage: "Scanner",
+    stage: "Market filter",
     fallback: 500,
     min: 0,
     max: 5000,
@@ -285,7 +285,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     path: "scanner.polymarket.min_depth",
     label: "Minimum depth",
     description: "Lower this to preview whether smaller bid or ask books would pass.",
-    stage: "Scanner",
+    stage: "Market filter",
     fallback: 500,
     min: 0,
     max: 5000,
@@ -297,7 +297,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     path: "scanner.polymarket.max_spread",
     label: "Maximum spread",
     description: "Raise this to preview whether wider bid/ask gaps would still pass.",
-    stage: "Scanner",
+    stage: "Market filter",
     fallback: 0.05,
     min: 0.005,
     max: 0.2,
@@ -310,7 +310,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     path: "scanner.polymarket.max_hours_to_resolution",
     label: "Resolution window",
     description: "Raise this to include markets that settle farther in the future.",
-    stage: "Scanner",
+    stage: "Market filter",
     fallback: 168,
     min: 1,
     max: 720,
@@ -322,7 +322,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     path: "reasoning.polymarket.min_confidence",
     label: "Model confidence",
     description: "Lower this to preview candidates the model scored with less certainty.",
-    stage: "Reasoning",
+    stage: "Model scoring",
     fallback: 0.75,
     min: 0.3,
     max: 0.95,
@@ -335,7 +335,7 @@ const SCENARIO_LEVERS: ScenarioLever[] = [
     path: "reasoning.polymarket.min_edge",
     label: "Minimum edge",
     description: "Lower this to preview smaller model-versus-market probability gaps.",
-    stage: "Reasoning",
+    stage: "Model scoring",
     fallback: 0.07,
     min: 0.005,
     max: 0.25,
@@ -513,7 +513,7 @@ export function ScenarioView() {
 
   async function applyTestConfig() {
     const drafts = [...scenarioDraftsFromRows(changedLeverRows), ...configDrafts];
-    await saveConfigDrafts(drafts, "Scenario settings saved");
+    await saveConfigDrafts(drafts, "What-if settings saved");
   }
 
   async function saveConfigDrafts(
@@ -541,7 +541,7 @@ export function ScenarioView() {
     if (!firstAttempt.result.ok && firstAttempt.result.status === 409) {
       const refreshed = await dashboardApi<ConfigSnapshot>("config/current");
       if (!refreshed.ok) {
-        setSaveState({ status: "error", message: "Config changed and could not be refreshed." });
+        setSaveState({ status: "error", message: "Settings changed and could not be refreshed." });
         return false;
       }
       const retry = await submitConfigPatches(refreshed.data, parsed.patches);
@@ -588,7 +588,7 @@ export function ScenarioView() {
   if (state.status === "loading") {
     return (
       <section className="operator-panel">
-        <p className="section-label">Scenario</p>
+        <p className="section-label">What-if</p>
         <h1>Tick Walkthrough</h1>
         <p className="panel-note">Loading the latest tick.</p>
       </section>
@@ -598,7 +598,7 @@ export function ScenarioView() {
   if (state.status === "error") {
     return (
       <section className="operator-panel">
-        <p className="section-label">Scenario</p>
+        <p className="section-label">What-if</p>
         <h1>Tick Walkthrough</h1>
         <Message tone="blocked">{state.message}</Message>
       </section>
@@ -610,7 +610,7 @@ export function ScenarioView() {
       <section className="operator-panel scenario-hero-panel">
         <div className="panel-heading">
           <div>
-            <p className="section-label">Scenario</p>
+            <p className="section-label">What-if</p>
             <h1>Trade simulator</h1>
           </div>
           <span className="status idle">{state.data.model}</span>
@@ -728,7 +728,7 @@ export function ScenarioView() {
       ) : (
         <EmptyState
           title="No tick recorded"
-          body="Run a manual data import, scanner-only run, or full dry run to create a scenario walkthrough."
+          body="Run a manual data import, filter-only run, or full simulation to create a what-if walkthrough."
         />
       )}
 
@@ -1064,7 +1064,7 @@ function ScenarioBeforeAfter({
   const testByPath = new Map(configTests.map((test) => [test.path, test]));
 
   return (
-    <section className="scenario-before-after" aria-label="Scenario before and after">
+    <section className="scenario-before-after" aria-label="What-if before and after">
       <article>
         <div className="scenario-card-heading">
           <PlayCircle aria-hidden="true" size={18} />
@@ -1115,7 +1115,7 @@ function ScenarioBeforeAfter({
         <div className="scenario-card-heading">
           <ArrowRight aria-hidden="true" size={18} />
           <div>
-            <span>Scenario</span>
+            <span>What-if</span>
             <strong>{changedRows.length ? "Preview" : "No changes yet"}</strong>
           </div>
         </div>

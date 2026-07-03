@@ -51,7 +51,7 @@ export default async function ConfigPage() {
             </li>
             <li>
               <span>Live trading</span>
-              <span>Live mode only permits orders. Venue, credential, risk, and kill-switch gates still decide whether an order can go out.</span>
+              <span>Live mode only permits orders. Venue, credential, risk, and emergency-stop checks still decide whether an order can go out.</span>
             </li>
             <li>
               <span>Risk settings</span>

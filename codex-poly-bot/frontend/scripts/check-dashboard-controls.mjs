@@ -114,6 +114,18 @@ for (const token of [
 
 const dashboardNav = read("components/dashboard/dashboard-nav.tsx");
 assert.match(dashboardNav, /ThemePreferenceControl/);
+for (const token of [
+  "Overview",
+  "Run",
+  "Markets",
+  "What-if",
+  "Settings",
+  "AI models",
+  "Results",
+  "Health",
+]) {
+  assert.match(dashboardNav, new RegExp(token));
+}
 
 const themeControl = read("components/dashboard/theme-preference-control.tsx");
 for (const token of [
@@ -152,7 +164,10 @@ for (const token of [
   "notifications/settings",
   "operations/tick-summary",
   "P&L over time",
-  "Five steps",
+  "One trading cycle, five checks",
+  "Emergency stop",
+  "Simulation only",
+  "What happened last time",
   "Daily summary",
   "Run summary now",
   "Conservative",

@@ -35,8 +35,8 @@ const USER_ACTIONS = [
   "Review runtime status, blockers, pending orders, trade history, and performance.",
   "Change venue flags, live mode, loop interval, model budgets, symbols, notification settings, and risk limits.",
   "Inspect Claude and OpenAI views separately to compare decisions, orders, positions, budget, and P&L.",
-  "Use Operations to review open orders, terminal order history, degraded venue state, manual review state, and the kill switch.",
-  "Use System to check credentials, account status, worker heartbeat, notification readiness, audit, and API health.",
+  "Use Run to review open orders, order history, degraded venue state, manual review state, and the emergency stop.",
+  "Use Health to check credentials, account status, worker heartbeat, notification readiness, audit, and API health.",
 ] as const;
 
 const STORAGE = [
@@ -74,19 +74,19 @@ const ENVIRONMENTS = [
     name: "local",
     purpose: "Workstation and Docker testing",
     runtime: "Postgres, backend on 8000, dashboard on 3100",
-    trading: "Dry run, venues disabled, local auth bypass allowed outside production",
+    trading: "Simulation, venues disabled, local auth bypass allowed outside production",
   },
   {
     name: "development",
     purpose: "AWS development environment",
     runtime: "Development CloudFormation stack in us-east-1",
-    trading: "Alpaca paper profile, live flag off, Polymarket disabled",
+    trading: "Alpaca paper profile, live mode off, Polymarket disabled",
   },
   {
     name: "production",
     purpose: "AWS production environment",
     runtime: "Production CloudFormation stack in us-east-1",
-    trading: "Live profile only after account approval, secrets, dry-run evidence, risk review, and operator signoff",
+    trading: "Live profile only after account approval, secrets, simulation evidence, risk review, and operator signoff",
   },
 ] as const;
 
@@ -114,7 +114,7 @@ export function HelpAboutView() {
         <h1>How codex-poly-bot Works</h1>
         <p>
           The system is a live-capable trading bot with a Next.js dashboard and a
-          FastAPI backend. The safe default is dry run. Live trading requires venue
+          FastAPI backend. The safe default is simulation. Live trading requires venue
           enablement, credentials, fresh market data, model scoring, risk approval,
           and operator signoff.
         </p>
@@ -176,11 +176,11 @@ export function HelpAboutView() {
           </li>
           <li>
             <strong>Signals and risk checks decide whether an order is allowed.</strong>
-            <span>Risk gates check live mode, venue flags, credentials, data freshness, position limits, daily loss, slippage, account mode, and the kill switch.</span>
+            <span>Risk gates check live mode, venue flags, credentials, data freshness, position limits, daily loss, slippage, account mode, and the emergency stop.</span>
           </li>
           <li>
             <strong>Execution records the outcome.</strong>
-            <span>Dry run records simulated orders. Live mode can submit only after every gate passes.</span>
+            <span>Simulation records practice orders. Live mode can submit only after every gate passes.</span>
           </li>
           <li>
             <strong>The dashboard reads the result.</strong>

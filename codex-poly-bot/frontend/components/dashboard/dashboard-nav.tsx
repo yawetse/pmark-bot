@@ -19,17 +19,17 @@ import {
 import { ThemePreferenceControl } from "@/components/dashboard/theme-preference-control";
 
 const PRIMARY_NAV_ITEMS = [
-  { href: "/dashboard", label: "Status", icon: Activity },
-  { href: "/dashboard/operations", label: "Operations", icon: GitBranch },
-  { href: "/dashboard/data", label: "Data", icon: Database },
-  { href: "/dashboard/scenario", label: "Scenario", icon: Workflow },
+  { href: "/dashboard", label: "Overview", icon: Activity },
+  { href: "/dashboard/operations", label: "Run", icon: GitBranch },
+  { href: "/dashboard/data", label: "Markets", icon: Database },
+  { href: "/dashboard/scenario", label: "What-if", icon: Workflow },
 ];
 
 const SECONDARY_NAV_ITEMS = [
-  { href: "/dashboard/config", label: "Config", icon: SlidersHorizontal },
-  { href: "/dashboard/models", label: "Models", icon: Bot },
-  { href: "/dashboard/comparison", label: "Performance", icon: BarChart3 },
-  { href: "/dashboard/system", label: "System", icon: ServerCog },
+  { href: "/dashboard/config", label: "Settings", icon: SlidersHorizontal },
+  { href: "/dashboard/models", label: "AI models", icon: Bot },
+  { href: "/dashboard/comparison", label: "Results", icon: BarChart3 },
+  { href: "/dashboard/system", label: "Health", icon: ServerCog },
   { href: "/dashboard/help", label: "Help", icon: CircleHelp },
 ];
 
