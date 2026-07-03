@@ -123,6 +123,7 @@
 | TST-REQ-DB-006-01 | Focus | REQ-DB-006 | Given no later archive policy is configured, When retention settings are validated, Then audit, trade, and position history have no automatic deletion. |
 | TST-REQ-DB-007-01 | Happy | REQ-DB-007 | Given Postgres is available, When live order checks require persistence, Then persistence health passes. |
 | TST-REQ-DB-007-02 | Edge | REQ-DB-007 | Given Postgres is unavailable, When live order placement is requested, Then the order is blocked and logs plus dashboard status surface the failure. |
+| TST-REQ-DB-007-03 | Edge | REQ-DB-007 | Given a deployed bare Postgres DSN, When the SQLAlchemy session factory initializes, Then the installed psycopg driver is selected instead of psycopg2. |
 
 ### Wallet and Secrets Management
 
@@ -332,7 +333,7 @@
 | TST-REQ-DEP-001-04 | Focus | REQ-DEP-001 | Given the local Docker Compose contract, When the app stack services are inspected, Then backend and frontend services run the real app processes. |
 | TST-REQ-DEP-002-01 | Happy | REQ-DEP-002 | Given CloudFormation parameters for us-east-1, When infrastructure templates are validated, Then ECS Fargate, RDS, S3, Secrets Manager, CloudWatch, SES, IAM, and ECR resources are defined. |
 | TST-REQ-DEP-002-02 | Edge | REQ-DEP-002 | Given a non-us-east-1 deployment target, When deployment validation runs, Then deployment is blocked or requires explicit override. |
-| TST-REQ-DEP-002-03 | Focus | REQ-DEP-002 | Given CloudFormation infrastructure, When public application resources are inspected, Then ALB, frontend service, backend service, and runtime env settings are defined. |
+| TST-REQ-DEP-002-03 | Focus | REQ-DEP-002 | Given CloudFormation infrastructure, When public application resources are inspected, Then ALB, frontend service, backend service, runtime env settings, and the Postgres psycopg driver DSN are defined. |
 | TST-REQ-DEP-002-04 | Focus | REQ-DEP-002 | Given ALB listener rules, When frontend auth and backend API routes are inspected, Then /api/auth/* is routed to the frontend before backend /api/* routing. |
 | TST-REQ-DEP-003-01 | Happy | REQ-DEP-003 | Given code is merged to `develop`, When GitHub Actions runs, Then the development deployment workflow is selected. |
 | TST-REQ-DEP-003-02 | Edge | REQ-DEP-003 | Given a branch other than `develop` or `main`, When GitHub Actions runs, Then automatic environment deployment is not triggered. |
@@ -418,7 +419,7 @@
 | REQ-DB-004 | TST-REQ-DB-004-01, TST-REQ-DB-004-02 |
 | REQ-DB-005 | TST-REQ-DB-005-01, TST-REQ-DB-005-02 |
 | REQ-DB-006 | TST-REQ-DB-006-01 |
-| REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02 |
+| REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02, TST-REQ-DB-007-03 |
 | REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02 |
 | REQ-WAL-002 | TST-REQ-WAL-002-01, TST-REQ-WAL-002-02 |
 | REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03, TST-REQ-WAL-003-04 |

@@ -557,7 +557,7 @@ Fees are included when captured from the venue or broker. If fees are unavailabl
 | Live trading with incorrect config | High | Medium | Default dry-run, venue disabled by default, refusal checks, audit logs | Phase 1 implementation and tests |
 | Private key leakage | High | Medium | Secrets Manager in AWS, gitignored `.env`, no dashboard private key display, Codex without prod secrets | Foundation and deployment |
 | Polymarket or Alpaca API/SDK changes | High | Medium | Adapter boundary, contract tests, official docs references | Venue adapter design and tests |
-| Postgres outage during trading | High | Low | Block live orders when persistence is unavailable | Risk engine implementation |
+| Postgres outage or driver mismatch during trading | High | Low | Use the packaged `psycopg` SQLAlchemy driver and block live orders when persistence is unavailable | Risk engine implementation and deployment checks |
 | Dashboard auth bypass | High | Low | GitHub OAuth, username allowlist, API-side authorization checks, Playwright auth tests | Dashboard implementation |
 | Background loops slow API requests | Medium | Medium | Async worker scheduling, non-blocking request path, future ECS split plan | Worker implementation and monitoring |
 | LLM cost overrun | Medium | Medium | Per-provider budgets, deterministic pre-filters, budget exhaustion behavior | Scoring service |

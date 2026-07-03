@@ -87,7 +87,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-DB-004 | P0 | When the system records a trade decision, the system shall persist the model provider, venue, environment, instrument identifier, instrument type, signal inputs, decision, order type, size, and timestamp. |
 | REQ-DB-005 | P0 | When a position changes state, the system shall persist the prior state, new state, realized P&L, unrealized P&L, and reason for change. |
 | REQ-DB-006 | P1 | The system shall retain Postgres audit, trade, and position history indefinitely unless a later archive policy is configured. |
-| REQ-DB-007 | P0 | If Postgres is unavailable, then the system shall block live order placement and surface the persistence failure in logs and dashboard status. |
+| REQ-DB-007 | P0 | If Postgres is configured, then the system shall initialize SQLAlchemy with the packaged Postgres driver; if Postgres is unavailable, then the system shall block live order placement and surface the persistence failure in logs and dashboard status. |
 
 ### Wallet and Secrets Management
 
