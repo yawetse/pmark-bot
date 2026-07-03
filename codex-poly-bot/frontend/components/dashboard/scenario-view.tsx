@@ -555,25 +555,23 @@ export function ScenarioView() {
     patches: Array<{ path: AllowedConfigPath; value: ConfigValue }>,
   ): Promise<{
     result: ApiClientResult<ConfigUpdateResponse>;
-    requestedVersion: string;
+    requestedVersion: string | null;
   }> {
-    const requestedVersion = nextConfigVersion(snapshot.version);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "POST",
       body: JSON.stringify({
         environment: snapshot.environment,
-        version: requestedVersion,
         expected_version: expectedVersionFromSnapshot(snapshot) || null,
         patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
       }),
     });
-    return { result, requestedVersion };
+    return { result, requestedVersion: null };
   }
 
   function finalizeConfigSave(
     attempt: {
       result: ApiClientResult<ConfigUpdateResponse>;
-      requestedVersion: string;
+      requestedVersion: string | null;
     },
     savedLabel: string,
   ): boolean {
@@ -1427,14 +1425,6 @@ function formatDraftValue(value: unknown): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function nextConfigVersion(currentVersion: string): string {
-  const match = /^v(\d+)$/.exec(currentVersion);
-  if (match) {
-    return `v${Number(match[1]) + 1}`;
-  }
-  return `ui-${Date.now()}`;
 }
 
 function expectedVersionFromSnapshot(snapshot: ConfigSnapshot): string {

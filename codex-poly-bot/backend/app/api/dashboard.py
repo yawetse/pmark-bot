@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 
-from app.db import normalize_config_username
+from app.db import PersistenceUnavailableError, normalize_config_username
 from app.domain import Environment, ModelProvider
 from app.services import (
     ActorContext,
@@ -288,6 +288,12 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         except ConfigAuthorizationError as exc:
             response.status_code = status.HTTP_403_FORBIDDEN
             return {"error_code": "config_authorization_error", "message": str(exc)}
+        except PersistenceUnavailableError:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {
+                "error_code": "config_persistence_unavailable",
+                "message": "Config persistence is unavailable, so settings were not saved.",
+            }
 
         return {
             "environment": environment.value,
@@ -851,7 +857,16 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             if row["environment"] == environment.value
             and normalize_config_username(row.get("username")) == owner
         ]
-        return f"v{len(rows) + 1}"
+        versions = {str(row["version"]) for row in rows}
+        numeric_versions = [
+            int(version[1:])
+            for version in versions
+            if version.startswith("v") and version[1:].isdigit()
+        ]
+        next_number = max(numeric_versions, default=len(rows)) + 1
+        while f"v{next_number}" in versions:
+            next_number += 1
+        return f"v{next_number}"
 
     def _audit_events() -> list[dict[str, Any]]:
         rows = services.registry.state.rows("shared.audit_events")[-20:]
