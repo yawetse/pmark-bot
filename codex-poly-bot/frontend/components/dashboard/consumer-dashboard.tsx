@@ -85,6 +85,8 @@ type RecommendationPlan = {
   title: string;
   tone: "ok" | "waiting" | "blocked";
   summary: string;
+  effect: string;
+  risk: string;
   patches: RecommendationPatch[];
 };
 
@@ -137,7 +139,7 @@ export function ConsumerDashboard() {
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [configVersion, setConfigVersion] = useState("");
   const [tradeEmailEnabled, setTradeEmailEnabled] = useState(true);
-  const [activePlanId, setActivePlanId] = useState<RecommendationPlan["id"] | null>("balanced");
+  const [activePlanId, setActivePlanId] = useState<RecommendationPlan["id"] | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [summaryState, setSummaryState] = useState<SummaryState>({ status: "loading" });
   const [currentDailySummary, setCurrentDailySummary] = useState<TickSummaryView>(FALLBACK_TICK_SUMMARY);
@@ -257,7 +259,8 @@ export function ConsumerDashboard() {
     () => recommendationPlans(settings, currentDailySummary, operations),
     [settings, currentDailySummary, operations],
   );
-  const activePlan = plans.find((plan) => plan.id === activePlanId) ?? plans[1];
+  const inferredPlanId = useMemo(() => inferredRecommendationPlanId(settings), [settings]);
+  const activePlan = plans.find((plan) => plan.id === (activePlanId ?? inferredPlanId)) ?? plans[1];
   const generatedAt = formatDateTime(currentDailySummary.generatedAt);
   const canEditConfig = configState.status === "ready" && saveState.status !== "submitting";
 
@@ -711,39 +714,75 @@ export function ConsumerDashboard() {
           ) : (
             <>
               <div className="recommendation-options">
-                {plans.map((plan) => (
-                  <article
-                    aria-current={plan.id === activePlan.id ? "true" : undefined}
-                    className={`recommendation-option ${plan.id}`}
-                    data-active={plan.id === activePlan.id ? "true" : undefined}
-                    key={plan.id}
-                  >
-                    <div>
-                      <span className={`status ${plan.tone}`}>{plan.id}</span>
-                      <h3>{plan.title}</h3>
-                      <p>{plan.summary}</p>
-                    </div>
-                    <div className="recommendation-actions">
-                      <button className="button subtle" type="button" onClick={() => setActivePlanId(plan.id)}>
-                        <ChevronDown aria-hidden="true" size={16} />
-                        View detail
-                      </button>
-                      <button
-                        className="button primary recommendation-apply-button"
-                        disabled={!canEditConfig}
-                        type="button"
-                        onClick={() => void applyPlan(plan)}
-                      >
-                        {saveState.status === "submitting" && activePlan.id === plan.id ? "Applying" : "Apply"}
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                {plans.map((plan) => {
+                  const selected = plan.id === activePlan.id;
+                  return (
+                    <article
+                      aria-current={selected ? "true" : undefined}
+                      className={`recommendation-option ${plan.id}`}
+                      data-active={selected ? "true" : undefined}
+                      key={plan.id}
+                    >
+                      <div>
+                        <div className="recommendation-option-header">
+                          <span className={`status ${plan.tone}`}>{plan.id}</span>
+                          {selected ? (
+                            <span className="selected-plan-badge">
+                              <CheckCircle2 aria-hidden="true" size={14} />
+                              Selected
+                            </span>
+                          ) : null}
+                        </div>
+                        <h3>{plan.title}</h3>
+                        <p>{plan.summary}</p>
+                        <dl className="recommendation-impact">
+                          <div>
+                            <dt>Effect</dt>
+                            <dd>{plan.effect}</dd>
+                          </div>
+                          <div>
+                            <dt>Tradeoff</dt>
+                            <dd>{plan.risk}</dd>
+                          </div>
+                        </dl>
+                      </div>
+                      <div className="recommendation-actions">
+                        <button
+                          aria-pressed={selected}
+                          className="button subtle recommendation-view-button"
+                          type="button"
+                          onClick={() => setActivePlanId(plan.id)}
+                        >
+                          {selected ? (
+                            <CheckCircle2 aria-hidden="true" size={16} />
+                          ) : (
+                            <ChevronDown aria-hidden="true" size={16} />
+                          )}
+                          {selected ? "Viewing" : "View detail"}
+                        </button>
+                        <button
+                          aria-label={`Apply ${plan.title} settings`}
+                          className="button primary recommendation-apply-button"
+                          disabled={!canEditConfig}
+                          type="button"
+                          onClick={() => void applyPlan(plan)}
+                        >
+                          {saveState.status === "submitting" && activePlan.id === plan.id ? "Applying" : "Apply"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
 
               <div className="recommendation-detail">
                 <div className="recommendation-detail-heading">
-                  <strong>{activePlan.title}</strong>
+                  <div>
+                    <strong>{activePlan.title} preview</strong>
+                    <p>
+                      These settings save to your user preferences and apply on the next loop.
+                    </p>
+                  </div>
                   <button className="button subtle" disabled={!canEditConfig} type="button" onClick={() => void resetDefaults()}>
                     <RotateCcw aria-hidden="true" size={16} />
                     Reset defaults
@@ -1223,11 +1262,22 @@ function recommendationPlans(
   operations: OperationsSummaryView | null,
 ): RecommendationPlan[] {
   const context = recommendationContext(dailySummary, operations);
-  const profile = (id: RecommendationPlan["id"], title: string, tone: RecommendationPlan["tone"], summaryText: string, scale: number, confidenceDrop: number): RecommendationPlan => ({
+  const profile = (
+    id: RecommendationPlan["id"],
+    title: string,
+    tone: RecommendationPlan["tone"],
+    summaryText: string,
+    effect: string,
+    risk: string,
+    scale: number,
+    confidenceDrop: number,
+  ): RecommendationPlan => ({
     id,
     title,
     tone,
     summary: summaryText,
+    effect,
+    risk,
     patches: [
       patchFor(settings, "scanner.polymarket.max_hours_to_resolution", profileValue(settings, "scanner.polymarket.max_hours_to_resolution", 168, scale, 336, 12), context.resolution),
       patchFor(settings, "scanner.polymarket.max_spread", profileValue(settings, "scanner.polymarket.max_spread", 0.05, scale, 0.10, 0.005), context.spread),
@@ -1243,6 +1293,8 @@ function recommendationPlans(
       "Conservative",
       "ok",
       "Small scanner relaxation. Keeps confidence gates unchanged and focuses on markets near the current policy.",
+      "Small change",
+      "Lowest chance of noisy candidates",
       1.1,
       0,
     ),
@@ -1251,6 +1303,8 @@ function recommendationPlans(
       "Balanced",
       "waiting",
       "Moderate scanner relaxation with a small confidence adjustment. This is the best first test if candidates are repeatedly rejected.",
+      "Moderate change",
+      "More candidates to review",
       1.25,
       0.03,
     ),
@@ -1259,6 +1313,8 @@ function recommendationPlans(
       "Aggressive",
       "blocked",
       "Wider scanner window and lower confidence thresholds. Use this when you want more candidates for dry-run review.",
+      "Largest change",
+      "Most false positives",
       1.5,
       0.06,
     ),
@@ -1287,6 +1343,50 @@ function recommendationContext(dailySummary: TickSummaryView, operations: Operat
       : "Lowers the quote liquidity gate for more dry-run candidates.",
     confidence: "Slightly lowers the scoring pass line without changing risk or live-trading gates.",
   };
+}
+
+function inferredRecommendationPlanId(settings: Record<string, unknown>): RecommendationPlan["id"] {
+  const maxResolutionHours = numberValue(
+    valueAtPath(settings, "scanner.polymarket.max_hours_to_resolution"),
+    168,
+  );
+  const maxPolymarketSpread = numberValue(valueAtPath(settings, "scanner.polymarket.max_spread"), 0.05);
+  const maxAlpacaSpread = numberValue(valueAtPath(settings, "scanner.alpaca.max_spread"), 0.5);
+  const minQuoteLiquidity = numberValue(valueAtPath(settings, "scanner.alpaca.min_quote_liquidity"), 1);
+  const polymarketConfidence = numberValue(valueAtPath(settings, "reasoning.polymarket.min_confidence"), 0.75);
+  const alpacaConfidence = numberValue(valueAtPath(settings, "reasoning.alpaca.min_confidence"), 0.6);
+
+  if (
+    maxResolutionHours >= 240 ||
+    maxPolymarketSpread >= 0.07 ||
+    maxAlpacaSpread >= 0.75 ||
+    minQuoteLiquidity <= 0.67 ||
+    polymarketConfidence <= 0.7 ||
+    alpacaConfidence <= 0.55
+  ) {
+    return "aggressive";
+  }
+  if (
+    maxResolutionHours >= 200 ||
+    maxPolymarketSpread >= 0.058 ||
+    maxAlpacaSpread >= 0.6 ||
+    minQuoteLiquidity <= 0.8 ||
+    polymarketConfidence <= 0.73 ||
+    alpacaConfidence <= 0.58
+  ) {
+    return "balanced";
+  }
+  if (
+    maxResolutionHours > 168 ||
+    maxPolymarketSpread > 0.05 ||
+    maxAlpacaSpread > 0.5 ||
+    minQuoteLiquidity < 1 ||
+    polymarketConfidence < 0.75 ||
+    alpacaConfidence < 0.6
+  ) {
+    return "conservative";
+  }
+  return "balanced";
 }
 
 function patchFor(

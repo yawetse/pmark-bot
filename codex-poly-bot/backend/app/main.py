@@ -17,7 +17,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import build_dashboard_router
-from app.db import RepositoryRegistry
+from app.db import (
+    DatabaseState,
+    PersistenceConfigurationError,
+    PersistentDatabaseState,
+    RepositoryRegistry,
+    create_session_factory,
+    run_migrations,
+)
 from app.domain import Environment, Venue
 from app.observability import configure_observability
 from app.services import AuthService, ConfigService, KillSwitchService
@@ -46,6 +53,8 @@ class AppSettings:
     csrf_token: str = "local-dev-csrf-token"
     environment: Environment = Environment.LOCAL
     runtime_env: dict[str, str] = field(default_factory=dict)
+    database_url: str = ""
+    runtime_config_username: str | None = None
     live_enabled: bool = False
     trading_account_mode: str = "local"
     default_selected_venue: Venue = Venue.POLYMARKET_US
@@ -76,13 +85,16 @@ class AppSettings:
         """
 
         runtime_env = {key: value for key, value in os.environ.items()}
+        allowed_usernames = _csv_env("DASHBOARD_ALLOWED_USERS", ("yaw",))
         return cls(
-            allowed_usernames=_csv_env("DASHBOARD_ALLOWED_USERS", ("yaw",)),
+            allowed_usernames=allowed_usernames,
             signing_secret=os.environ.get("BACKEND_TOKEN_SIGNING_SECRET", "local-dev-session-secret"),
             trusted_origins=_trusted_origins_from_env(),
             csrf_token=os.environ.get("DASHBOARD_CSRF_TOKEN", "local-dev-csrf-token"),
             environment=_environment_from_env(),
             runtime_env=runtime_env,
+            database_url=os.environ.get("DATABASE_URL", "").strip(),
+            runtime_config_username=_runtime_config_username_from_env(allowed_usernames),
             live_enabled=_bool_env("LIVE_ENABLED", False),
             trading_account_mode=os.environ.get("TRADING_ACCOUNT_MODE", "local"),
             default_selected_venue=_venue_from_env(),
@@ -136,19 +148,23 @@ def build_dashboard_api_services(
     REQ: REQ-UI-001, REQ-OBS-004
     """
 
-    shared_registry = registry or RepositoryRegistry()
+    shared_registry = registry or _repository_registry_from_settings(settings)
     auth = AuthService(
         allowed_usernames=set(settings.allowed_usernames),
         signing_secret=settings.signing_secret,
         trusted_origins=set(settings.trusted_origins),
         registry=shared_registry,
     )
+    runtime_status = RuntimeStatusService(settings=settings, registry=shared_registry)
     return DashboardApiServices(
         registry=shared_registry,
         auth=auth,
-        config=ConfigService(shared_registry),
+        config=ConfigService(
+            shared_registry,
+            default_payload_factory=runtime_status.runtime_config_payload,
+        ),
         kill_switch=KillSwitchService(shared_registry),
-        runtime_status=RuntimeStatusService(settings=settings, registry=shared_registry),
+        runtime_status=runtime_status,
     )
 
 
@@ -179,6 +195,7 @@ def create_app(
                     services=resolved_services,
                     environment=resolved_settings.environment,
                     interval_seconds=resolved_settings.worker_heartbeat_interval_seconds,
+                    username=resolved_settings.runtime_config_username,
                 )
             )
 
@@ -205,6 +222,32 @@ def create_app(
 def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     values = tuple(item.strip() for item in os.environ.get(name, "").split(",") if item.strip())
     return values or default
+
+
+def _runtime_config_username_from_env(allowed_usernames: tuple[str, ...]) -> str | None:
+    explicit = os.environ.get("RUNTIME_CONFIG_USERNAME", "").strip()
+    if explicit:
+        return explicit
+    if len(allowed_usernames) == 1:
+        return allowed_usernames[0]
+    return None
+
+
+def _repository_registry_from_settings(settings: AppSettings) -> RepositoryRegistry:
+    if not settings.database_url:
+        return RepositoryRegistry()
+    try:
+        session_factory = create_session_factory(settings.database_url)
+        engine = session_factory.kw.get("bind")
+        if engine is not None:
+            with engine.begin() as connection:
+                run_migrations(connection)
+        return RepositoryRegistry(PersistentDatabaseState(session_factory))
+    except PersistenceConfigurationError:
+        LOGGER.exception("Postgres persistence is misconfigured")
+    except Exception:
+        LOGGER.exception("Postgres persistence is unavailable")
+    return RepositoryRegistry(DatabaseState(available=False))
 
 
 def _trusted_origins_from_env() -> tuple[str, ...]:
@@ -294,6 +337,7 @@ async def _worker_heartbeat_loop(
     services: DashboardApiServices,
     environment: Environment,
     interval_seconds: int,
+    username: str | None = None,
 ) -> None:
     while True:
         try:
@@ -301,7 +345,7 @@ async def _worker_heartbeat_loop(
                 status="running",
                 message="scheduler tick started",
             )
-            reload_result = services.config.config_for_next_loop(environment)
+            reload_result = services.config.config_for_next_loop(environment, username=username)
             config_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
             await asyncio.to_thread(
                 services.runtime_status.trigger_scheduled_run,
