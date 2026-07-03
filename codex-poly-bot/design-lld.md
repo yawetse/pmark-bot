@@ -414,12 +414,12 @@
 
 #### `class ConfigService`
 
-- **Purpose:** Own active runtime config lifecycle.
+- **Purpose:** Own active runtime config lifecycle by environment and config owner.
 - **Traces:** REQ-UI-005, REQ-UI-007
 - **Methods:**
-  - `get_active(environment: str) -> ConfigSnapshot`
-  - `get_version(environment: str, version: int) -> ConfigSnapshot`
-  - `update_config(request: ConfigUpdateRequest, actor: ActorContext) -> ConfigSnapshot`
+  - `config_for_next_loop(environment: str, username: str | None = None) -> ConfigReloadResult`
+  - `latest_config_owner(environment: str, allowed_usernames: tuple[str, ...]) -> str | None`
+  - `save_config_patches(request: ConfigUpdateRequest, actor: ActorContext, username: str | None = None) -> ConfigSaveResult`
   - `seed_defaults(environment: str) -> ConfigSnapshot`
   - `activate_kill_switch(actor: ActorContext) -> KillSwitchState`
 - **Raises/Errors:** Raises `ConfigValidationError`, `AuthorizationError`, or `PersistenceUnavailableError`.
@@ -438,15 +438,26 @@
 
 #### Versioned Updates
 
-- **What it does:** Applies dashboard patches to a config snapshot and persists a new immutable version.
+- **What it does:** Applies dashboard patches to a config snapshot and persists a new immutable owner-scoped version.
 - **Why this approach:** Workers use one stable snapshot per loop, and changes apply next loop.
 - **Complexity:** O(n) in config document size.
 - **Key steps:**
-  1. Load active version by environment.
+  1. Load active version by environment and normalized owner, falling back to the shared row when no user row exists.
   2. Validate `base_version` to avoid overwriting a newer dashboard change.
   3. Apply patch.
   4. Validate full config.
-  5. Persist new version and audit old/new values.
+  5. Persist new owner-scoped version and audit old/new values.
+
+#### Scheduler Owner Resolution
+
+- **What it does:** Chooses the database config owner used by the background scheduler when no explicit `RUNTIME_CONFIG_USERNAME` is set.
+- **Why this approach:** Multi-user dashboard saves are stored by authenticated user, so the worker must resolve the same owner before loading the next-loop snapshot.
+- **Complexity:** O(active config versions for the environment).
+- **Key steps:**
+  1. Use `RUNTIME_CONFIG_USERNAME` when configured.
+  2. Use the only allowlisted username in single-user deployments.
+  3. In multi-user deployments, read active config versions and select the latest allowlisted user-owned row for the environment.
+  4. Fall back to shared config only when no user-owned config exists or persistence is unavailable.
 
 #### Kill Switch Override
 
@@ -465,6 +476,7 @@
 |-----------|------|-------------|------------|
 | `ConfigSnapshot` | Pydantic model | Full runtime config | Immutable once persisted |
 | `ConfigPatch` | JSON patch subset | Dashboard edit | Only approved paths allowed |
+| `ConfigOwner` | String | Normalized username or `__shared__` for shared fallback | User-owned rows never overwrite shared rows |
 | `ActorContext` | Pydantic model | Authenticated user and request metadata | Contains username, environment, IP |
 
 #### Seeded Defaults
@@ -501,6 +513,7 @@
 | 4 | User disables a venue with open orders | Save config but execution still reconciles/cancels known open orders when needed | REQ-EXE-015 |
 | 5 | Notification recipient has no email | Save allowlist but mark notification setup incomplete | REQ-NOT-006 |
 | 6 | Seed defaults run twice | Return existing active defaults without duplicating active config | REQ-DEP-010 |
+| 7 | Multi-user scheduler has no explicit runtime owner | Select the latest active allowlisted user config from the database, falling back to shared config only when none exists | REQ-UI-007 |
 
 ### 3.5 Error Handling
 
@@ -2340,7 +2353,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 - **Key steps:**
   1. Acquire Postgres advisory lock.
   2. Create `job_runs` row.
-  3. Read active config snapshot.
+  3. Resolve the scheduler config owner and read one active database config snapshot.
   4. Run job with heartbeat.
   5. Mark success, failure, skipped, or abandoned.
 
@@ -2351,7 +2364,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 - **Complexity:** O(v * m * c) where v is enabled venues, m is model providers, and c is filtered candidates.
 - **Key steps:**
   1. Acquire the `trading` job lock and create a `job_runs` row.
-  2. Read one active config snapshot; normal dashboard changes apply on the next loop.
+  2. Resolve the scheduler config owner and read one active database config snapshot; normal dashboard changes apply on the next loop.
   3. Read current `KillSwitchState`; if active, skip new live decisions and call execution kill-switch cancellation.
   4. For each enabled venue, load the latest snapshots and run deterministic filters before any LLM call.
   5. Pass eligible candidates to the scoring service for Claude and OpenAI with provider-specific budgets and loop deadline.
@@ -2393,6 +2406,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | 4 | Trading loop exceeds interval | Record overrun and defer remaining candidates | REQ-STR-001 |
 | 5 | LLM budget or deadline prevents scoring | Record deferred outcome and continue other provider/candidates | REQ-LLM-004, REQ-LLM-005 |
 | 6 | Retry row is due | Dispatch retry if attempts remain; mark exhausted otherwise | REQ-DAT-008, REQ-NOT-007 |
+| 7 | Multi-user app has saved user config and no explicit scheduler owner | Scheduler selects the latest active allowlisted user-owned config row from the database before shared fallback | REQ-UI-007 |
 
 ### 20.5 Error Handling
 
@@ -2454,6 +2468,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | `health.py` | `GET /health`, `GET /api/health` | Liveness/readiness and degraded component status | REQ-OBS-005, REQ-OBS-006 |
 | `dashboard.py` | `GET /api/dashboard/summary` | Combined overview for venues, models, loops, notifications | REQ-UI-004 |
 | `config.py` | `GET /api/config/current`, `PUT /api/config` | Versioned config read/update | REQ-UI-005, REQ-UI-006, REQ-UI-007 |
+| `dashboard.py` | `GET /api/preferences`, `PUT /api/preferences` | Per-user dashboard display preferences | REQ-UI-004, REQ-OBS-004 |
 | `live_control.py` | `POST /api/live-mode`, `POST /api/kill-switch` | Dry-run/live toggle and immediate kill switch | REQ-EXE-003, REQ-EXE-014, REQ-UI-008 |
 | `models.py` | `GET /api/models/{provider}/summary` | Claude/OpenAI positions, decisions, budgets, P&L | REQ-UI-010 |
 | `orders.py` | `GET /api/orders`, `GET /api/orders/{id}` | Order events, refusals, fills, cancels, failures | REQ-EXE-016 |
@@ -2469,6 +2484,8 @@ All `/api/*` endpoints require a valid FastAPI authorization dependency. Mutatio
 | Method | Endpoint | Request Schema | Response Schema | Status Codes | REQ Trace |
 |--------|----------|----------------|-----------------|--------------|-----------|
 | `GET` | `/api/dashboard/summary` | `DashboardSummaryQuery` | `DashboardSummaryResponse` | 200 with `degraded_sections`, 401, 403, 503 | REQ-UI-004 |
+| `GET` | `/api/preferences` | `DashboardPreferencesQuery` | `DashboardPreferencesResponse` | 200, 401, 403, 503 | REQ-UI-004 |
+| `PUT` | `/api/preferences` | `DashboardPreferencesRequest` | `DashboardPreferencesResponse` | 200, 401, 403, 422, 503 | REQ-UI-004, REQ-OBS-004 |
 | `GET` | `/api/config/current` | `ConfigReadQuery` | `ConfigSnapshotResponse` | 200, 401, 403, 503 | REQ-UI-005 |
 | `PUT` | `/api/config` | `ConfigUpdateRequest` | `ConfigUpdateResponse` | 200, 401, 403, 409, 422, 503 | REQ-UI-005, REQ-UI-006, REQ-UI-007 |
 | `POST` | `/api/live-mode` | `LiveModeRequest` | `LiveModeResponse` | 200, 401, 403, 409, 422, 503 | REQ-EXE-003, REQ-UI-006 |
@@ -2520,9 +2537,11 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 | `ErrorEnvelope` | `error_code`, `message`, `correlation_id` | `field_errors`, `retry_after_seconds`, `current_version` | Used for 4xx/5xx expected errors |
 | `DegradedSection` | `section`, `status`, `error_code`, `message`, `last_success_at` | `retry_after_seconds` | `status` is `degraded`, `down`, or `unknown` |
 | `DashboardSummaryQuery` | `environment` | `window`, `include_sections` | `window` defaults to current trading day |
-| `DashboardSummaryResponse` | `environment`, `generated_at`, `health`, `kill_switch`, `venues`, `models`, `notifications`, `degraded_sections` | `comparison_snapshot` | Secret fields forbidden |
+| `DashboardSummaryResponse` | `environment`, `generated_at`, `health`, `kill_switch`, `venues`, `models`, `notifications`, `preferences`, `degraded_sections` | `comparison_snapshot` | Secret fields forbidden; preferences are loaded by authenticated username and environment |
+| `DashboardPreferencesRequest` | `settings` | none | Settings include theme, IANA time zone, and AWS monthly infrastructure cost fallback |
+| `DashboardPreferencesResponse` | `environment`, `username`, `settings`, `updatedAt` | `auditEventId` | Row is scoped to authenticated username and environment |
 | `ConfigReadQuery` | `environment` | none | Environment must be local/dev/prod |
-| `ConfigSnapshotResponse` | `environment`, `version`, `effective_at`, `settings`, `updated_by`, `updated_at` | `validation_warnings` | Settings contain only allowlisted config paths |
+| `ConfigSnapshotResponse` | `environment`, `version`, `effective_at`, `settings`, `updated_by`, `updated_at`, `username`, `config_owner` | `validation_warnings` | Settings contain only allowlisted config paths |
 | `ConfigPatchOperation` | `op`, `path`, `value` | none | `op` is `replace`, `add`, or `remove`; `path` must be allowlisted |
 | `ConfigUpdateRequest` | `environment`, `expected_version`, `patches`, `reason` | none | Empty patch list rejected |
 | `ConfigUpdateResponse` | `environment`, `previous_version`, `new_version`, `audit_event_id`, `applies_on_next_loop` | `warnings` | `applies_on_next_loop` is true except kill switch |
@@ -2558,7 +2577,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
   1. Validate signed session token through `AuthService`.
   2. Validate username allowlist and CSRF/origin headers.
   3. Validate request with Pydantic schema.
-  4. Use config service or live-control service to perform the mutation.
+  4. Use config service, preference service, or live-control service to perform the mutation.
   5. Persist audit event with actor, old value, new value, IP address, environment, and correlation ID.
   6. Return the new config version or live-control state.
 
@@ -2567,13 +2586,14 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 - **What it does:** Aggregates bounded status views without blocking worker loops.
 - **Why this approach:** API response times should stay predictable while workers run in process.
 - **Complexity:** O(page size) with indexed repository reads.
-- **Key steps:** Resolve auth, read repositories, map to response schemas, include degraded/unavailable markers instead of failing whole summary when one section is unavailable.
+- **Key steps:** Resolve auth, read user-scoped config and preferences by actor/environment, read repositories, map to response schemas, include degraded/unavailable markers instead of failing whole summary when one section is unavailable.
 
 ### 21.3 Data Structures
 
 | Structure | Type | Description | Invariants |
 |-----------|------|-------------|------------|
 | `DashboardSummaryResponse` | API schema | Overview status, model summaries, health, kill switch | Never contains secrets |
+| `DashboardPreferencesResponse` | API schema | User display settings and cost fallback | Scoped to authenticated username and environment |
 | `ConfigUpdateRequest` | API schema | Expected version and patch operations | Requires expected active version |
 | `LiveModeRequest` | API schema | Global dry-run/live target state | Actor must be authorized |
 | `KillSwitchRequest` | API schema | Environment and reason | Reason required |
@@ -2594,6 +2614,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 | 5 | One dashboard summary section fails | Return degraded section with error code, not a blank dashboard | REQ-OBS-006 |
 | 6 | Unauthenticated or unallowlisted user calls API | Return 401 or 403 before service call | REQ-UI-002, REQ-UI-003 |
 | 7 | Kill switch cancel attempts are still pending | Return 202 with cancel progress and unresolved orders | REQ-EXE-015, REQ-UI-008 |
+| 8 | Two authenticated users save different dashboard preferences | Each preferences, summary, and economics response uses the actor's own database row | REQ-UI-004 |
 
 ### 21.5 Error Handling
 
