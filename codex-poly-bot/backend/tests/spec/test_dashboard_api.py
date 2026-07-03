@@ -408,17 +408,26 @@ def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypa
 def test_req_ui_004_05_dashboard_preferences_persist_theme_timezone_and_costs() -> None:
     """TST-REQ-UI-004-05: Validates REQ-UI-004 and REQ-OBS-004
 
-    Given: an authorized dashboard user saves display preferences
+    Given: multiple authorized dashboard users save display preferences
     When: preferences are saved and reloaded
-    Then: theme, time zone, and AWS monthly cost assumptions persist per user
+    Then: theme, time zone, and AWS cost assumptions load from the database per user
     """
 
-    client, token = _client()
+    settings = AppSettings(
+        allowed_usernames=("yaw", "alex"),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+    )
+    app = create_app(settings)
+    client = TestClient(app)
+    yaw_token = app.state.services.auth.create_session_token(username="yaw")
+    alex_token = app.state.services.auth.create_session_token(username="alex")
 
-    saved = client.put(
+    yaw_saved = client.put(
         "/api/preferences",
         headers={
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {yaw_token}",
             "Origin": "http://localhost:3100",
             "X-CSRF-Token": "csrf-token",
         },
@@ -426,24 +435,67 @@ def test_req_ui_004_05_dashboard_preferences_persist_theme_timezone_and_costs() 
             "settings": {
                 "theme": "dark",
                 "timeZone": "America/New_York",
-                "awsMonthlyInfraCostUsd": "74.25",
+                "awsMonthlyInfraCostUsd": "60.00",
             }
         },
     )
-    loaded = client.get(
+    alex_saved = client.put(
         "/api/preferences",
-        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+        headers={
+            "Authorization": f"Bearer {alex_token}",
+            "Origin": "http://localhost:3100",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "settings": {
+                "theme": "light",
+                "timeZone": "America/Chicago",
+                "awsMonthlyInfraCostUsd": "15.00",
+            }
+        },
+    )
+    yaw_loaded = client.get(
+        "/api/preferences",
+        headers={"Authorization": f"Bearer {yaw_token}", "X-Environment": "development"},
+    )
+    alex_loaded = client.get(
+        "/api/preferences",
+        headers={"Authorization": f"Bearer {alex_token}", "X-Environment": "development"},
+    )
+    yaw_summary = client.get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {yaw_token}", "X-Environment": "development"},
+    )
+    alex_summary = client.get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {alex_token}", "X-Environment": "development"},
     )
     audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
 
-    assert saved.status_code == 200
-    assert loaded.status_code == 200
-    assert loaded.json()["settings"] == {
+    assert yaw_saved.status_code == 200
+    assert alex_saved.status_code == 200
+    assert yaw_loaded.status_code == 200
+    assert alex_loaded.status_code == 200
+    assert yaw_summary.status_code == 200
+    assert alex_summary.status_code == 200
+    assert yaw_loaded.json()["settings"] == {
         "theme": "dark",
         "timeZone": "America/New_York",
-        "awsMonthlyInfraCostUsd": "74.25",
+        "awsMonthlyInfraCostUsd": "60.00",
     }
-    assert audit_rows[-1]["event_type"] == "dashboard_preferences_change"
+    assert alex_loaded.json()["settings"] == {
+        "theme": "light",
+        "timeZone": "America/Chicago",
+        "awsMonthlyInfraCostUsd": "15.00",
+    }
+    assert yaw_summary.json()["preferences"]["username"] == "yaw"
+    assert yaw_summary.json()["preferences"]["settings"]["awsMonthlyInfraCostUsd"] == "60.00"
+    assert yaw_summary.json()["economics"]["aws"]["dailyInfraCostEstimateUsd"] == "2.00"
+    assert alex_summary.json()["preferences"]["username"] == "alex"
+    assert alex_summary.json()["preferences"]["settings"]["awsMonthlyInfraCostUsd"] == "15.00"
+    assert alex_summary.json()["economics"]["aws"]["dailyInfraCostEstimateUsd"] == "0.50"
+    assert {row["actor"] for row in audit_rows[-2:]} == {"yaw", "alex"}
+    assert all(row["event_type"] == "dashboard_preferences_change" for row in audit_rows[-2:])
 
 
 def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> None:

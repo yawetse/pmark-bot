@@ -20,6 +20,7 @@ from app.api import build_dashboard_router
 from app.db import (
     DatabaseState,
     PersistenceConfigurationError,
+    PersistenceUnavailableError,
     PersistentDatabaseState,
     RepositoryRegistry,
     create_session_factory,
@@ -193,9 +194,9 @@ def create_app(
             app.state.worker_heartbeat_task = asyncio.create_task(
                 _worker_heartbeat_loop(
                     services=resolved_services,
+                    settings=resolved_settings,
                     environment=resolved_settings.environment,
                     interval_seconds=resolved_settings.worker_heartbeat_interval_seconds,
-                    username=resolved_settings.runtime_config_username,
                 )
             )
 
@@ -248,6 +249,30 @@ def _repository_registry_from_settings(settings: AppSettings) -> RepositoryRegis
     except Exception:
         LOGGER.exception("Postgres persistence is unavailable")
     return RepositoryRegistry(DatabaseState(available=False))
+
+
+def _scheduler_config_username(
+    settings: AppSettings,
+    services: DashboardApiServices,
+    environment: Environment,
+) -> str | None:
+    """Resolve the runtime config owner used by the background scheduler.
+
+    REQ: REQ-UI-007
+    """
+
+    if settings.runtime_config_username:
+        return settings.runtime_config_username
+    if len(settings.allowed_usernames) == 1:
+        return settings.allowed_usernames[0]
+    try:
+        return services.config.latest_config_owner(
+            environment,
+            allowed_usernames=settings.allowed_usernames,
+        )
+    except PersistenceUnavailableError:
+        LOGGER.exception("scheduler config owner lookup failed")
+        return None
 
 
 def _trusted_origins_from_env() -> tuple[str, ...]:
@@ -335,9 +360,9 @@ def _positive_int_env(name: str, default: int) -> int:
 async def _worker_heartbeat_loop(
     *,
     services: DashboardApiServices,
+    settings: AppSettings,
     environment: Environment,
     interval_seconds: int,
-    username: str | None = None,
 ) -> None:
     while True:
         try:
@@ -345,6 +370,7 @@ async def _worker_heartbeat_loop(
                 status="running",
                 message="scheduler tick started",
             )
+            username = _scheduler_config_username(settings, services, environment)
             reload_result = services.config.config_for_next_loop(environment, username=username)
             config_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
             await asyncio.to_thread(

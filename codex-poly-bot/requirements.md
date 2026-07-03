@@ -167,10 +167,10 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-UI-001 | P0 | The system shall provide a custom Next.js React dashboard backed by FastAPI services. |
 | REQ-UI-002 | P0 | The dashboard shall require GitHub OAuth login. |
 | REQ-UI-003 | P0 | If the authenticated GitHub username is not on the allowlist, then the dashboard shall deny access. |
-| REQ-UI-004 | P0 | The dashboard shall allow authorized users to view venue, model, wallet, ingestion, trading loop, position, order, and notification status. |
+| REQ-UI-004 | P0 | The dashboard shall allow authorized users to view venue, model, wallet, ingestion, trading loop, position, order, and notification status, and shall load each user's display preferences from the database by authenticated username and environment. |
 | REQ-UI-005 | P0 | The dashboard shall allow authorized users to change venue flags, dry-run/live mode, loop interval, strategy settings, model budgets, risk limits, slippage threshold, and notification settings. |
 | REQ-UI-006 | P0 | When an authorized user changes configuration in the dashboard, the system shall audit the user, old value, new value, timestamp, environment, and IP address. |
-| REQ-UI-007 | P0 | When dashboard configuration is saved, the system shall apply the change on the next trading loop without restart. |
+| REQ-UI-007 | P0 | When dashboard configuration is saved, the system shall apply the database-backed owner-specific change on the next trading loop without restart. |
 | REQ-UI-008 | P0 | The dashboard shall expose a manual kill switch for all models and venues. |
 | REQ-UI-009 | P1 | The dashboard shall show wallet public identifiers and health status without showing private keys. |
 | REQ-UI-010 | P1 | The dashboard shall present separate views for Claude and OpenAI positions, decisions, budgets, and P&L. |

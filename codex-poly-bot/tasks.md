@@ -211,6 +211,7 @@
 | AC-005-04 | When a loop starts, the system shall use one config snapshot until that loop finishes. |
 | AC-005-05 | When default risk configuration is seeded, the system shall set Polymarket max position `25.00`, max daily loss `50.00`, max open positions `5`, market-order slippage threshold `0.02`, and trading loop interval `60` seconds. |
 | AC-005-06 | When default Alpaca configuration is seeded, the system shall set max position `100.00`, max daily loss `100.00`, max open positions `5`, max symbol allocation `0.10`, and market-order slippage threshold `0.005`. |
+| AC-005-07 | When multiple dashboard users are allowed, the system shall keep user-owned config versions separate from shared config versions. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests
@@ -811,6 +812,7 @@
 | AC-020-02 | If a prior job heartbeat is current, then the scheduler shall skip the overlapping run and record skipped status. |
 | AC-020-03 | When the kill switch is active, the scheduler shall stop new live decisions and trigger cancel flow. |
 | AC-020-04 | When notification delivery is not fully configured, the notification skeleton shall record no-op job status without blocking the trading loop. |
+| AC-020-05 | When no explicit runtime config owner is configured in a multi-user deployment, the scheduler shall resolve the latest active allowlisted user-owned config from the database before falling back to shared config. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests
@@ -860,6 +862,7 @@
 | AC-021-02 | When an authorized user changes configuration, the system shall audit actor, old value, new value, timestamp, environment, and IP address. |
 | AC-021-03 | If an API request is unauthenticated or unallowlisted, then the system shall return 401 or 403 before calling protected services. |
 | AC-021-04 | When the kill switch endpoint is called, the system shall persist live disabled and expose cancel progress in the response. |
+| AC-021-05 | When an authenticated user reads or saves display preferences, the API shall use the database row scoped to that username and environment. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests
@@ -931,6 +934,7 @@
 | AC-023-02 | When an authorized user saves config, the dashboard shall submit only allowlisted config paths and show the new config version. |
 | AC-023-03 | When wallet status is shown, the dashboard shall display public identifiers and health without displaying private keys or API secrets. |
 | AC-023-04 | If a config save conflicts with a newer version, the dashboard shall show the current server version and require reload before resubmission. |
+| AC-023-05 | When multiple users use the dashboard, summary and economics views shall load each actor's saved database preferences. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests
