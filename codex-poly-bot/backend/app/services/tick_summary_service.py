@@ -168,9 +168,8 @@ class TickSummaryService:
 
         failures: list[tuple[str, Exception]] = []
         latest_run_id = _latest_run_id(request.runs)
-        for attempt_number, candidate_model in enumerate(
-            _summary_model_candidates(self.environ), start=1
-        ):
+        model_candidates = _summary_model_candidates(self.environ)
+        for attempt_number, candidate_model in enumerate(model_candidates, start=1):
             with start_observability_span(
                 "tick_summary.model_attempt",
                 attributes={
@@ -238,6 +237,7 @@ class TickSummaryService:
                         message="AI summary generated from recent tick history.",
                     )
                 except Exception as exc:
+                    is_final_attempt = attempt_number == len(model_candidates)
                     failure_payload = {
                         "model": candidate_model,
                         "attempt_number": attempt_number,
@@ -249,12 +249,21 @@ class TickSummaryService:
                         "latest_run_id": latest_run_id or "",
                         "window_minutes": request.window_minutes,
                     }
-                    record_span_failure(
-                        span,
-                        exc,
-                        event_name="tick_summary_model_failed",
-                        attributes=failure_payload,
-                    )
+                    if is_final_attempt:
+                        record_span_failure(
+                            span,
+                            exc,
+                            event_name="tick_summary_model_failed",
+                            attributes=failure_payload,
+                        )
+                    else:
+                        set_span_attributes(
+                            span,
+                            {
+                                **failure_payload,
+                                "status": "retrying",
+                            },
+                        )
                     LOGGER.warning(
                         "tick_summary_model_failed %s",
                         json.dumps(
