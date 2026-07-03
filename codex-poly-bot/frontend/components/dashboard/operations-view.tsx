@@ -41,7 +41,7 @@ import { useDashboardRealtime } from "@/lib/use-dashboard-realtime";
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
 
 const ORDER_STATES = ["refused", "submitted", "filled", "canceled", "failed", "unknown"] as const;
-const PIPELINE_STEP_LABELS = ["Data Fetch", "Scanner", "Reasoning / Brain", "Execution", "Exit"] as const;
+const PIPELINE_STEP_LABELS = ["Collect prices", "Find candidates", "Score trade", "Handle order", "Monitor exits"] as const;
 const DAILY_TICK_SUMMARY_WINDOW_MINUTES = 24 * 60;
 
 type OrderState = (typeof ORDER_STATES)[number];
@@ -405,7 +405,7 @@ const FALLBACK_BROKER_HISTORY: BrokerHistoryView = {
 
 const FALLBACK_SCANNER: ScannerSummaryView = {
   status: "idle",
-  message: "No scanner run has been recorded yet.",
+  message: "No market filter run has been recorded yet.",
   latestRun: null,
   candidateCount: 0,
   acceptedCount: 0,
@@ -415,7 +415,7 @@ const FALLBACK_SCANNER: ScannerSummaryView = {
 
 const FALLBACK_REASONING: ReasoningSummaryView = {
   status: "idle",
-  message: "No reasoning run has been recorded yet.",
+  message: "No model scoring run has been recorded yet.",
   latestRun: null,
   promptCount: 0,
   scoredCount: 0,
@@ -533,20 +533,20 @@ export function OperationsView({
       <section className="panel wide-panel">
         <div className="panel-heading">
           <div>
-            <p className="section-label">Operations</p>
-            <h1>Trading Activity</h1>
+            <p className="section-label">Run</p>
+            <h1>Trading activity</h1>
           </div>
           {loadError ? (
             <StatusChip tone="blocked">api unavailable</StatusChip>
           ) : (
             <StatusChip tone={currentSummary.killSwitch === "active" ? "blocked" : "ok"}>
-              kill switch {currentSummary.killSwitch}
+              emergency stop {currentSummary.killSwitch}
             </StatusChip>
           )}
         </div>
         <p className="panel-note">
           Review the current operating gates first, then move through the run workflow from
-          candidate intake to execution, exits, imports, and emergency controls.
+          market intake to order handling, exits, imports, and emergency controls.
         </p>
         {loadError ? <Message>{loadError}</Message> : null}
         <MetricGrid>
@@ -580,19 +580,19 @@ export function OperationsView({
       <Panel
         className="wide-panel"
         eyebrow="Workflow map"
-        status="dry-run safe"
+        status="simulation safe"
         title="Operate in sequence"
       >
         <div className="operation-workflow-grid">
-          <WorkflowLink href="#pipeline-title" label="Run pipeline" value={String(pipelineRuns.length)} detail="Recorded runs" />
-          <WorkflowLink href="#scanner-title" label="Scanner" value={String(scanner.candidateCount)} detail="Candidates" />
-          <WorkflowLink href="#reasoning-title" label="Reasoning / Brain" value={String(reasoning.scoredCount)} detail="Scored" />
+          <WorkflowLink href="#pipeline-title" label="Trading cycle" value={String(pipelineRuns.length)} detail="Recorded runs" />
+          <WorkflowLink href="#scanner-title" label="Find candidates" value={String(scanner.candidateCount)} detail="Markets checked" />
+          <WorkflowLink href="#reasoning-title" label="Score trade" value={String(reasoning.scoredCount)} detail="Scored" />
           <WorkflowLink href="#strategy-consensus-title" label="Strategy" value={String(strategyConsensus.approvedCount)} detail="Approved" />
-          <WorkflowLink href="#execution-title" label="Execution" value={String(execution.intentCount)} detail="Intents" />
-          <WorkflowLink href="#exit-title" label="Exit" value={String(exit.triggeredCount)} detail="Triggered" />
+          <WorkflowLink href="#execution-title" label="Orders" value={String(execution.intentCount)} detail="Plans" />
+          <WorkflowLink href="#exit-title" label="Exit checks" value={String(exit.triggeredCount)} detail="Triggered" />
           <WorkflowLink href="#historical-import-title" label="Imports" value={String(currentSummary.historicalImport?.counts.checkpoints ?? 0)} detail="Checkpoints" />
           <WorkflowLink href="#pending-orders-title" label="Orders" value={String(currentSummary.openOrders)} detail="Open orders" />
-          <WorkflowLink href="#kill-switch-title" label="Kill Switch" value={currentSummary.killSwitch} detail="Emergency control" />
+          <WorkflowLink href="#kill-switch-title" label="Emergency stop" value={currentSummary.killSwitch} detail="Live order control" />
         </div>
       </Panel>
 
@@ -667,7 +667,7 @@ export function OperationsView({
       const scannerRun = result.scannerRun as ScannerRunView;
       setScanner({
         status: scannerRun.status ?? "idle",
-        message: `Latest scanner run accepted ${scannerRun.acceptedCount ?? 0} and rejected ${scannerRun.rejectedCount ?? 0} candidates.`,
+        message: `Latest filter run accepted ${scannerRun.acceptedCount ?? 0} and rejected ${scannerRun.rejectedCount ?? 0} candidates.`,
         latestRun: scannerRun,
         candidateCount: scannerRun.candidateCount ?? 0,
         acceptedCount: scannerRun.acceptedCount ?? 0,
@@ -679,7 +679,7 @@ export function OperationsView({
       const reasoningRun = result.reasoningRun as ReasoningRunView;
       setReasoning({
         status: reasoningRun.status ?? "idle",
-        message: `Latest reasoning run scored ${reasoningRun.scoredCount ?? 0}, skipped ${reasoningRun.skippedCount ?? 0}, and failed ${reasoningRun.failedCount ?? 0} prompts.`,
+        message: `Latest model scoring run scored ${reasoningRun.scoredCount ?? 0}, skipped ${reasoningRun.skippedCount ?? 0}, and failed ${reasoningRun.failedCount ?? 0} prompts.`,
         latestRun: reasoningRun,
         promptCount: reasoningRun.promptCount ?? 0,
         scoredCount: reasoningRun.scoredCount ?? 0,
@@ -914,7 +914,7 @@ function PipelineRunsPanel({
     <section className="operator-panel span-2" aria-labelledby="pipeline-title">
       <div className="panel-heading">
         <div>
-          <p className="section-label">Run pipeline</p>
+          <p className="section-label">Trading cycle</p>
           <h2 id="pipeline-title">Latest run steps</h2>
         </div>
         <span className={`status ${latestRun ? statusClass(latestRun.status) : "idle"}`}>
@@ -1009,7 +1009,7 @@ function HistoricalImportPanel({
       <p className="panel-note">{historicalImport.message}</p>
       <p className="panel-note">
         Imported history comes from clean-room Gamma metadata and Polygon OrderFilled
-        backfills. Scanner, reasoning, execution, and exit records below are created by
+        backfills. Market filter, model scoring, order, and exit records below are created by
         the trading loop.
       </p>
       <div className="metric-grid">
@@ -1087,14 +1087,14 @@ function ScannerPanel({
     <section className="operator-panel span-2" aria-labelledby="scanner-title">
       <div className="panel-heading">
         <div>
-          <p className="section-label">Scanner</p>
-          <h2 id="scanner-title">Candidate filters</h2>
+          <p className="section-label">Find candidates</p>
+          <h2 id="scanner-title">Market filters</h2>
         </div>
         <span className={`status ${statusClass(scanner.status)}`}>{scanner.status}</span>
       </div>
       <p className="panel-note">{scanner.message}</p>
       <p className="panel-note">
-        Scanner results come from current provider market data and persisted historical context.
+        Market filter results come from current provider market data and persisted historical context.
       </p>
       <div className="metric-grid">
         <Metric label="Candidates" value={String(scanner.candidateCount)} />
@@ -1108,17 +1108,17 @@ function ScannerPanel({
       <Disclosure
         title={
           scanner.candidates.length === 1
-            ? "View 1 scanner candidate"
-            : `View ${scanner.candidates.length} scanner candidates`
+            ? "View 1 filtered candidate"
+            : `View ${scanner.candidates.length} filtered candidates`
         }
       >
         <DashboardDataGrid
           rows={scanner.candidates}
           columns={columns}
-          emptyTitle="No scanner candidates"
-          emptyBody="Scanner output will appear after a manual or scheduled run evaluates provider candidates."
+          emptyTitle="No filtered candidates"
+          emptyBody="Market filter output will appear after a manual or scheduled run evaluates provider candidates."
           getRowId={(candidate) => candidate.id}
-          searchPlaceholder="Filter scanner candidates"
+          searchPlaceholder="Filter candidates"
         />
       </Disclosure>
     </section>
@@ -1164,8 +1164,8 @@ function ReasoningPanel({
     <section className="operator-panel span-2" aria-labelledby="reasoning-title">
       <div className="panel-heading">
         <div>
-          <p className="section-label">Reasoning / Brain</p>
-          <h2 id="reasoning-title">LLM scoring output</h2>
+          <p className="section-label">Score trade</p>
+          <h2 id="reasoning-title">Model scoring output</h2>
         </div>
         <span className={`status ${statusClass(reasoning.status)}`}>{reasoning.status}</span>
       </div>
@@ -1179,17 +1179,17 @@ function ReasoningPanel({
       <Disclosure
         title={
           reasoning.outputs.length === 1
-            ? "View 1 reasoning output"
-            : `View ${reasoning.outputs.length} reasoning outputs`
+            ? "View 1 model score"
+            : `View ${reasoning.outputs.length} model scores`
         }
       >
         <DashboardDataGrid
           rows={reasoning.outputs}
           columns={columns}
-          emptyTitle="No reasoning output"
-          emptyBody="Reasoning rows will appear after accepted scanner candidates are sent to configured model providers."
+          emptyTitle="No model scores"
+          emptyBody="Model scores will appear after accepted candidates are sent to configured model providers."
           getRowId={(output) => output.id}
-          searchPlaceholder="Filter reasoning output"
+          searchPlaceholder="Filter model scores"
         />
       </Disclosure>
     </section>
@@ -1274,7 +1274,7 @@ function StrategyConsensusPanel({
           rows={strategyConsensus.votes}
           columns={voteColumns}
           emptyTitle="No strategy votes"
-          emptyBody="Strategy votes will appear after scored reasoning output is evaluated by the consensus step."
+          emptyBody="Strategy votes will appear after model scores are evaluated by the consensus step."
           getRowId={(vote) => vote.id}
           searchPlaceholder="Filter strategy votes"
         />
@@ -1608,8 +1608,8 @@ function KillSwitchControl({ active }: { active: boolean }) {
     setState({
       status: "done",
       message: result.data.live_disabled
-        ? "Kill switch active. Live trading is disabled."
-        : "Kill switch request accepted.",
+        ? "Emergency stop active. Live trading is disabled."
+        : "Emergency stop request accepted.",
     });
     setConfirmed(false);
     setOpen(false);
@@ -1619,10 +1619,10 @@ function KillSwitchControl({ active }: { active: boolean }) {
     <div className="danger-zone">
       <div>
         <p className="section-label">Emergency control</p>
-        <h2 id="kill-switch-title">Kill Switch</h2>
+        <h2 id="kill-switch-title">Emergency stop</h2>
         <p>
           Stops new live orders and asks the backend to cancel known open live orders.
-          Dry-run records can still be reviewed.
+          Simulation records can still be reviewed.
         </p>
       </div>
       <Dialog.Root
@@ -1636,7 +1636,7 @@ function KillSwitchControl({ active }: { active: boolean }) {
       >
         <Dialog.Trigger asChild>
           <button className="button danger" disabled={active || state.status === "submitting"} type="button">
-            {active ? "Kill switch active" : "Review kill switch"}
+            {active ? "Emergency stop active" : "Review emergency stop"}
           </button>
         </Dialog.Trigger>
         <Dialog.Portal>
@@ -1645,7 +1645,7 @@ function KillSwitchControl({ active }: { active: boolean }) {
             <div className="dialog-heading">
               <AlertTriangle aria-hidden="true" size={22} strokeWidth={2.4} />
               <div>
-                <Dialog.Title>Activate kill switch</Dialog.Title>
+                <Dialog.Title>Activate emergency stop</Dialog.Title>
                 <Dialog.Description id="kill-switch-dialog-body">
                   This disables live trading for {environment} and asks the backend to cancel known live orders.
                 </Dialog.Description>
@@ -1692,7 +1692,7 @@ function KillSwitchControl({ active }: { active: boolean }) {
                   disabled={!confirmed || active || state.status === "submitting"}
                   type="submit"
                 >
-                  {state.status === "submitting" ? "Activating" : "Activate kill switch"}
+                  {state.status === "submitting" ? "Activating" : "Activate emergency stop"}
                 </button>
               </div>
             </form>

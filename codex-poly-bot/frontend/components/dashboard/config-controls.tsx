@@ -165,12 +165,12 @@ const CONFIG_GLOSSARY: Array<GlossaryTerm & { matches: string[] }> = [
   },
   {
     term: "Scanner",
-    definition: "The filtering stage that narrows raw market data down to candidates worth scoring. It runs before model reasoning.",
+    definition: "The filtering stage that narrows raw market data down to candidates worth scoring. It runs before model scoring.",
     matches: ["scanner", "scan", "candidate", "candidates"],
   },
   {
     term: "Trading loop",
-    definition: "One scheduled pass through market data, scanner filters, model reasoning, strategy checks, risk gates, and alerts.",
+    definition: "One scheduled pass through market data, market filters, model scoring, strategy checks, risk gates, and alerts.",
     matches: ["trading loop", "loop", "run schedule"],
   },
   {
@@ -200,7 +200,7 @@ const CONFIG_GLOSSARY: Array<GlossaryTerm & { matches: string[] }> = [
   },
   {
     term: "Live trading",
-    definition: "Allows real orders only after other gates pass. Turning it on does not bypass venue, credential, risk, or kill-switch checks.",
+    definition: "Allows real orders only after other gates pass. Turning it on does not bypass venue, credential, risk, or emergency-stop checks.",
     matches: ["live trading", "live mode", "live_enabled", "live account"],
   },
   {
@@ -245,7 +245,7 @@ const CONFIG_GLOSSARY: Array<GlossaryTerm & { matches: string[] }> = [
   },
   {
     term: "Reasoning",
-    definition: "The model-scoring stage. The app asks configured AI providers to evaluate candidates that survive scanner filters.",
+    definition: "The model-scoring stage. The app asks configured AI providers to evaluate candidates that survive market filters.",
     matches: ["reasoning", "model", "prompt"],
   },
   {
@@ -371,7 +371,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         step: 1,
         unit: "count",
         stage: "Market data",
-        note: "This is the control that changes how many Polymarket candidates are considered before scanner filters run.",
+        note: "This is the control that changes how many Polymarket candidates are considered before market filters run.",
       },
       {
         path: "scanner.polymarket.min_depth",
@@ -380,7 +380,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         min: 0,
         step: 50,
         unit: "count",
-        stage: "Scanner filter",
+        stage: "Market filter",
       },
       {
         path: "scanner.polymarket.min_liquidity",
@@ -389,7 +389,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         min: 0,
         step: 50,
         unit: "count",
-        stage: "Scanner filter",
+        stage: "Market filter",
       },
       {
         path: "scanner.polymarket.max_spread",
@@ -400,7 +400,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         step: 0.1,
         unit: "percent",
         displayMultiplier: 100,
-        stage: "Scanner filter",
+        stage: "Market filter",
       },
       {
         path: "scanner.polymarket.min_volume",
@@ -409,7 +409,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         min: 0,
         step: 100,
         unit: "count",
-        stage: "Scanner filter",
+        stage: "Market filter",
       },
       {
         path: "scanner.polymarket.min_hours_to_resolution",
@@ -419,7 +419,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         max: 168,
         step: 1,
         unit: "hours",
-        stage: "Scanner filter",
+        stage: "Market filter",
       },
       {
         path: "scanner.polymarket.max_hours_to_resolution",
@@ -429,7 +429,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         max: 720,
         step: 1,
         unit: "hours",
-        stage: "Scanner filter",
+        stage: "Market filter",
       },
       {
         path: "scanner.alpaca.min_quote_liquidity",
@@ -438,7 +438,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         min: 0,
         step: 1,
         unit: "count",
-        stage: "Stock scanner",
+        stage: "Stock filter",
       },
       {
         path: "scanner.alpaca.max_spread",
@@ -448,7 +448,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         max: 5,
         step: 0.01,
         unit: "usd",
-        stage: "Stock scanner",
+        stage: "Stock filter",
       },
       {
         path: "scanner.alpaca.min_history_bars",
@@ -458,7 +458,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         max: 30,
         step: 1,
         unit: "count",
-        stage: "Stock scanner",
+        stage: "Stock filter",
       },
     ],
   },
@@ -497,7 +497,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         step: 1,
         unit: "percent",
         displayMultiplier: 100,
-        stage: "Reasoning gate",
+        stage: "Model scoring",
       },
       {
         path: "reasoning.polymarket.min_edge",
@@ -519,7 +519,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         step: 1,
         unit: "percent",
         displayMultiplier: 100,
-        stage: "Reasoning gate",
+        stage: "Model scoring",
       },
       {
         path: "reasoning.alpaca.min_edge",
@@ -897,7 +897,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         </div>
         <div>
           <span>2</span>
-          <strong>Scanner and model</strong>
+          <strong>Market filters and model</strong>
           <small>Which candidates survive scoring.</small>
         </div>
         <div>
@@ -1160,7 +1160,7 @@ function LiveModeConfirmationDialog({
               <h3>Before saving</h3>
               <p>
                 Confirm account readiness, venue flags, risk limits, notifications, open orders,
-                and kill switch state before changing this gate.
+                and emergency-stop state before changing this gate.
               </p>
             </section>
           </div>

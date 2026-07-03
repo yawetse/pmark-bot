@@ -228,7 +228,7 @@ export function DataExplorerView() {
               <textarea
                 value={aiPrompt}
                 onChange={(event) => setAiPrompt(event.target.value)}
-                placeholder="Show rejected scanner candidates and refusal reasons"
+                placeholder="Show rejected trade candidates and refusal reasons"
                 rows={5}
               />
             </label>
