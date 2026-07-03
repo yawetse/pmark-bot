@@ -9,7 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Callable
 
 from app.db import (
     PersistenceUnavailableError,
@@ -140,8 +140,13 @@ class ConfigService:
     SAFE_MINIMUM_LOOP_INTERVAL_SECONDS = 5
     KNOWN_STRATEGIES = {"arbitrage", "convergence", "whale_copy"}
 
-    def __init__(self, registry: RepositoryRegistry | None = None):
+    def __init__(
+        self,
+        registry: RepositoryRegistry | None = None,
+        default_payload_factory: Callable[[], dict[str, Any]] | None = None,
+    ):
         self.registry = registry or RepositoryRegistry()
+        self._default_payload_factory = default_payload_factory or default_config_payload
         self.audit_service = AuditService(self.registry)
         self._last_good_snapshots: dict[tuple[Environment, str], RuntimeConfigSnapshot] = {}
 
@@ -264,7 +269,7 @@ class ConfigService:
             fallback = RuntimeConfigSnapshot(
                 environment=environment,
                 version="bootstrap",
-                payload={},
+                payload=self._default_payload(environment),
             )
             self._last_good_snapshots[(environment, owner)] = fallback
             return ConfigReloadResult(snapshot=fallback)
@@ -321,7 +326,13 @@ class ConfigService:
         row = self._latest_config_row(environment, username=username)
         if row is not None:
             return self._with_stock_universe_snapshots(environment, deepcopy(row["payload"]))
-        return self._with_stock_universe_snapshots(environment, default_config_payload())
+        return self._default_payload(environment)
+
+    def _default_payload(self, environment: Environment) -> dict[str, Any]:
+        return self._with_stock_universe_snapshots(
+            environment,
+            deepcopy(self._default_payload_factory()),
+        )
 
     def _with_stock_universe_snapshots(
         self,
@@ -666,7 +677,7 @@ class ConfigService:
             prior = RuntimeConfigSnapshot(
                 environment=environment,
                 version="bootstrap",
-                payload={},
+                payload=self._default_payload(environment),
             )
             self._last_good_snapshots[(environment, owner)] = prior
 
