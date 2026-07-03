@@ -1723,7 +1723,6 @@ def test_req_str_003_06_config_api_posts_recommendation_thresholds_for_productio
         },
         json={
             "environment": "production",
-            "version": "ui-recommendation-test",
             "expected_version": None,
             "patches": [
                 {"op": "replace", "path": "scanner.polymarket.max_hours_to_resolution", "value": "210"},
@@ -1739,13 +1738,47 @@ def test_req_str_003_06_config_api_posts_recommendation_thresholds_for_productio
     settings_payload = current.json()["settings"]
 
     assert response.status_code == 200
-    assert current.json()["version"] == "ui-recommendation-test"
+    assert response.json()["new_version"] == "v1"
+    assert current.json()["version"] == "v1"
     assert settings_payload["scanner"]["polymarket"]["max_hours_to_resolution"] == "210"
     assert settings_payload["scanner"]["polymarket"]["max_spread"] == "0.0625"
     assert settings_payload["scanner"]["alpaca"]["max_spread"] == "0.625"
     assert settings_payload["scanner"]["alpaca"]["min_quote_liquidity"] == "0.8"
     assert settings_payload["reasoning"]["polymarket"]["min_confidence"] == "0.72"
     assert settings_payload["reasoning"]["alpaca"]["min_confidence"] == "0.57"
+
+
+def test_req_str_003_07_config_api_returns_json_when_config_persistence_fails() -> None:
+    """TST-REQ-STR-003-07: Validates REQ-STR-003 and REQ-UI-005
+
+    Given: config version persistence is unavailable
+    When: an operator applies a recommendation setting through the config API
+    Then: the API returns a structured 503 response instead of an internal server error
+    """
+
+    client, token = _client()
+    client.app.state.services.registry.state.fail_on_tables.add("shared.config_versions")
+
+    response = client.post(
+        "/api/config",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3100",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={
+            "environment": "development",
+            "patches": [
+                {"op": "replace", "path": "scanner.polymarket.max_spread", "value": "0.075"},
+            ],
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error_code": "config_persistence_unavailable",
+        "message": "Config persistence is unavailable, so settings were not saved.",
+    }
 
 
 def test_req_ui_008_03_kill_switch_api_disables_live_and_returns_progress() -> None:

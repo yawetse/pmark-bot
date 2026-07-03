@@ -375,25 +375,23 @@ export function ConsumerDashboard() {
     patches: Array<{ path: AllowedConfigPath; value: ConfigValue }>,
   ): Promise<{
     result: ApiClientResult<ConfigUpdateResponse>;
-    requestedVersion: string;
+    requestedVersion: string | null;
   }> {
-    const requestedVersion = nextConfigVersion(snapshot.version);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "POST",
       body: JSON.stringify({
         environment: snapshot.environment,
-        version: requestedVersion,
         expected_version: expectedVersionFromSnapshot(snapshot) || null,
         patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
       }),
     });
-    return { result, requestedVersion };
+    return { result, requestedVersion: null };
   }
 
   async function finalizeConfigSave(
     attempt: {
       result: ApiClientResult<ConfigUpdateResponse>;
-      requestedVersion: string;
+      requestedVersion: string | null;
     },
     patches: Array<{ path: AllowedConfigPath; value: ConfigValue }>,
     savedLabel: string,
@@ -420,7 +418,7 @@ export function ConsumerDashboard() {
           current,
         ),
       );
-      setConfigVersion(attempt.result.data.new_version ?? attempt.requestedVersion);
+      setConfigVersion(attempt.result.data.new_version ?? attempt.requestedVersion ?? configVersion);
     }
     setSaveState({ status: "saved", label: savedLabel });
     return true;
@@ -839,7 +837,7 @@ export function ConsumerDashboard() {
                   <div>
                     <strong>{activePlan.title} preview</strong>
                     <p>
-                      These settings save to your user preferences and apply on the next loop.
+                      These settings save to runtime config and apply on the next loop.
                     </p>
                   </div>
                   <button className="button subtle" disabled={!canEditConfig} type="button" onClick={() => void resetDefaults()}>
@@ -875,7 +873,7 @@ export function ConsumerDashboard() {
           {saveState.status === "error" ? (
             <p className="status-message blocked">{saveState.message}</p>
           ) : null}
-          {configVersion ? <p className="panel-note">Preference version {configVersion}</p> : null}
+          {configVersion ? <p className="panel-note">Config version {configVersion}</p> : null}
         </section>
       </div>
     </section>
@@ -1650,14 +1648,6 @@ function tickSourceLabel(schedule: TickScheduleView | null): string {
     return "No tick recorded yet. Showing heartbeat time.";
   }
   return schedule.source ?? "Pipeline run recorded.";
-}
-
-function nextConfigVersion(currentVersion: string): string {
-  const match = /^v(\d+)$/.exec(currentVersion);
-  if (match) {
-    return `v${Number(match[1]) + 1}`;
-  }
-  return `ui-${Date.now()}`;
 }
 
 function expectedVersionFromSnapshot(snapshot: ConfigSnapshot): string {

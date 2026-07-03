@@ -725,12 +725,10 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   }
 
   async function saveConfigPatches(patches: ConfigPatchDraft[]): Promise<boolean> {
-    const nextVersion = nextConfigVersion(currentVersion);
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "POST",
       body: JSON.stringify({
         environment: initialSnapshot?.environment ?? process.env.NEXT_PUBLIC_APP_ENV ?? "local",
-        version: nextVersion,
         expected_version: expectedVersion || null,
         patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
       }),
@@ -746,7 +744,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       return false;
     }
 
-    const savedVersion = result.data.new_version ?? nextVersion;
+    const savedVersion = result.data.new_version ?? currentVersion;
     const refreshed = await dashboardApi<ConfigSnapshot>("config/current");
     if (refreshed.ok) {
       setSettings(refreshed.data.settings);
@@ -1760,14 +1758,6 @@ function expectedVersionFromSnapshot(snapshot?: ConfigSnapshot): string {
     return "";
   }
   return snapshot.version;
-}
-
-function nextConfigVersion(currentVersion: string): string {
-  const match = /^v(\d+)$/.exec(currentVersion);
-  if (match) {
-    return `v${Number(match[1]) + 1}`;
-  }
-  return `ui-${Date.now()}`;
 }
 
 function valueAtPath(settings: Record<string, unknown> | undefined, path: string): unknown {
