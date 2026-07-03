@@ -82,6 +82,24 @@ def test_req_dep_002_01_cloudformation_parameters_us_east_1_infrastructure_templ
         "ses",
     )
 
+
+def test_req_dep_002_06_cloudformation_passes_database_components_for_safe_url_building() -> None:
+    """TST-REQ-DEP-002-06: Validates REQ-DEP-002
+
+    Given: production database credentials may contain URL-reserved characters
+    When: CloudFormation defines backend task environment variables
+    Then: the backend receives DB components so it can encode the Postgres URL safely
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+
+    assert "- Name: DATABASE_HOST" in text
+    assert "Value: !GetAtt Database.Endpoint.Address" in text
+    assert "- Name: DATABASE_PORT" in text
+    assert "- Name: DATABASE_NAME" in text
+    assert "- Name: DATABASE_USERNAME" in text
+    assert "- Name: DATABASE_PASSWORD" in text
+
+
 def test_req_dep_002_02_non_us_east_1_deployment_target_deployment_validation() -> None:
     """TST-REQ-DEP-002-02: Validates REQ-DEP-002
 

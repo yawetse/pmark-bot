@@ -196,6 +196,27 @@ def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> No
     }
 
 
+def test_req_ui_001_06_database_components_build_encoded_postgres_url(monkeypatch) -> None:
+    """TST-REQ-UI-001-06: Validates REQ-UI-001
+
+    Given: deployed database connection components contain URL-reserved characters
+    When: the FastAPI app loads default settings
+    Then: the Postgres URL is percent-encoded before SQLAlchemy parses it
+    """
+    monkeypatch.setenv("DATABASE_URL", "postgresql://raw:bad@db.example:5432/codexbot")
+    monkeypatch.setenv("DATABASE_HOST", "db.example")
+    monkeypatch.setenv("DATABASE_PORT", "5432")
+    monkeypatch.setenv("DATABASE_NAME", "codexbot")
+    monkeypatch.setenv("DATABASE_USERNAME", "codex:bot")
+    monkeypatch.setenv("DATABASE_PASSWORD", "pa:ss@word/with#chars")
+
+    settings = AppSettings.from_env()
+
+    assert settings.database_url == (
+        "postgresql://codex%3Abot:pa%3Ass%40word%2Fwith%23chars@db.example:5432/codexbot"
+    )
+
+
 def test_req_ui_001_05_live_runtime_wires_venue_submitters_when_credentials_present() -> None:
     """TST-REQ-UI-001-05: Validates REQ-UI-001 and REQ-EXE-017
 

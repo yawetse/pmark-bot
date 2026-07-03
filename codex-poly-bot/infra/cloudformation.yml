@@ -672,6 +672,16 @@ Resources:
               Value: "false"
             - Name: DATABASE_URL
               Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}:5432/codexbot"
+            - Name: DATABASE_HOST
+              Value: !GetAtt Database.Endpoint.Address
+            - Name: DATABASE_PORT
+              Value: "5432"
+            - Name: DATABASE_NAME
+              Value: codexbot
+            - Name: DATABASE_USERNAME
+              Value: !Ref DatabaseUsername
+            - Name: DATABASE_PASSWORD
+              Value: !Ref DatabasePassword
             - Name: LIVE_ENABLED
               Value: !Ref LiveEnabled
             - Name: TRADING_ACCOUNT_MODE

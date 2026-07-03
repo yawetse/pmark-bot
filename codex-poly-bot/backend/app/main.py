@@ -12,6 +12,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 import logging
 import os
+from urllib.parse import quote
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,7 +94,7 @@ class AppSettings:
             csrf_token=os.environ.get("DASHBOARD_CSRF_TOKEN", "local-dev-csrf-token"),
             environment=_environment_from_env(),
             runtime_env=runtime_env,
-            database_url=os.environ.get("DATABASE_URL", "").strip(),
+            database_url=_database_url_from_env(runtime_env),
             runtime_config_username=_runtime_config_username_from_env(allowed_usernames),
             live_enabled=_bool_env("LIVE_ENABLED", False),
             trading_account_mode=os.environ.get("TRADING_ACCOUNT_MODE", "local"),
@@ -231,6 +232,22 @@ def _runtime_config_username_from_env(allowed_usernames: tuple[str, ...]) -> str
     if len(allowed_usernames) == 1:
         return allowed_usernames[0]
     return None
+
+
+def _database_url_from_env(environ: dict[str, str]) -> str:
+    host = environ.get("DATABASE_HOST", "").strip()
+    username = environ.get("DATABASE_USERNAME", "").strip()
+    password = environ.get("DATABASE_PASSWORD", "")
+    name = environ.get("DATABASE_NAME", "").strip()
+    if host and username and name:
+        port = environ.get("DATABASE_PORT", "5432").strip() or "5432"
+        encoded_username = quote(username, safe="")
+        encoded_password = quote(password, safe="")
+        credentials = encoded_username
+        if password:
+            credentials = f"{encoded_username}:{encoded_password}"
+        return f"postgresql://{credentials}@{host}:{port}/{quote(name, safe='')}"
+    return environ.get("DATABASE_URL", "").strip()
 
 
 def _repository_registry_from_settings(settings: AppSettings) -> RepositoryRegistry:
