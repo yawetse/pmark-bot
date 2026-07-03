@@ -1106,6 +1106,17 @@ def test_req_db_007_01_postgres_available_live_order_checks_require_persistence_
     assert gate.system_health["status"] == "healthy"
     assert session_factory.kw["expire_on_commit"] is False
 
+def test_req_db_007_03_bare_postgres_dsn_uses_packaged_psycopg_driver() -> None:
+    """TST-REQ-DB-007-03: Validates REQ-DB-007
+
+    Given: a deployed bare Postgres DSN
+    When: the SQLAlchemy session factory initializes
+    Then: the installed psycopg driver is selected instead of psycopg2
+    """
+    session_factory = create_session_factory("postgresql://user:pass@localhost:5432/codex_poly_bot")
+
+    assert session_factory.kw["bind"].url.drivername == "postgresql+psycopg"
+
 def test_req_db_007_02_postgres_unavailable_live_order_placement_requested_order_blocked() -> None:
     """TST-REQ-DB-007-02: Validates REQ-DB-007
 

@@ -329,6 +329,7 @@ def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -
     assert "FrontendTargetGroup" in text
     assert "DASHBOARD_ALLOWED_USERS" in text
     assert "BACKEND_TOKEN_SIGNING_SECRET" in text
+    assert "postgresql+psycopg://${DatabaseUsername}" in text
     assert "SIGNOZ_ENABLED" in text
     assert "SIGNOZ_FRONTEND_ENABLED" in text
     assert "SignozCloudWatchReadPolicyEnabled" in text

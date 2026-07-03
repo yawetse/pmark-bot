@@ -1161,6 +1161,7 @@
 | AC-029-02 | When development and production stacks are created, the deployment shall maintain separate resources, secrets, wallets, and configuration. |
 | AC-029-03 | When S3 buckets are created, the infrastructure shall retain raw snapshots for 365 days and normalized snapshots for 730 days. |
 | AC-029-04 | If a task attempts to read another environment's secret path, IAM shall deny access. |
+| AC-029-05 | When ECS starts the backend with `DATABASE_URL`, the runtime shall use the packaged `psycopg` driver for SQLAlchemy Postgres sessions. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests

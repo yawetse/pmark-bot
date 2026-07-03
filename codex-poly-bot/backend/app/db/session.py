@@ -27,6 +27,8 @@ def create_session_factory(database_url: str) -> sessionmaker:
         raise PersistenceConfigurationError("database_url must be a valid Postgres DSN") from exc
     if url.get_backend_name() != "postgresql":
         raise PersistenceConfigurationError("database_url must use the postgresql backend")
+    if url.drivername == "postgresql":
+        url = url.set(drivername="postgresql+psycopg")
     try:
         engine = create_engine(url, pool_pre_ping=True)
     except (ImportError, SQLAlchemyError) as exc:
