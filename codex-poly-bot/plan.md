@@ -120,7 +120,7 @@ Core services + API + Frontend
 | Live trading with incorrect config | High | Seed dry-run and disabled venues, resolve runtime config from the database by explicit or allowlisted owner, implement refusal matrix and audit before any live adapter submit | Phase 1 and Phase 3 |
 | Private key leakage | High | Secrets Manager in AWS, gitignored local `.env`, server-only auth token minting, no dashboard secret fields | Phase 1, Phase 2, Phase 4 |
 | Polymarket or Alpaca API/SDK changes | High | Adapter ports, contract tests, source references, official SDK/API wrappers | Phase 2 and Phase 5 |
-| Postgres outage during trading | High | Block live orders without persistence and surface degraded health | Phase 1 and Phase 3 |
+| Postgres outage or deployment driver mismatch during trading | High | Use the packaged `psycopg` SQLAlchemy driver, block live orders without persistence, and surface degraded health | Phase 1 and Phase 3 |
 | Dashboard auth bypass | High | GitHub OAuth, username allowlist, FastAPI token validation, CSRF/origin checks, Playwright auth tests | Phase 1 and Phase 4 |
 | Background loops slow API requests | Medium | Worker scheduler boundaries, job locks, bounded queues, dashboard read models, future ECS split path | Phase 3 and Phase 4 |
 | LLM cost overrun | Medium | Deterministic filters, provider budgets, budget reservations, deferred states | Phase 3 and Phase 5 |

@@ -309,9 +309,9 @@
 
 - **Purpose:** Build SQLAlchemy session factory.
 - **Traces:** REQ-DB-001, REQ-DB-007
-- **Parameters:** `database_url` must be a valid Postgres DSN.
+- **Parameters:** `database_url` must be a valid Postgres DSN. Bare `postgresql://` URLs are normalized to the packaged `postgresql+psycopg://` driver.
 - **Returns:** SQLAlchemy session factory.
-- **Raises/Errors:** Raises `PersistenceConfigurationError` for malformed DSN.
+- **Raises/Errors:** Raises `PersistenceConfigurationError` for malformed DSN or missing driver support.
 - **Side Effects:** Initializes DB engine.
 
 #### `run_migrations(target: str = "head") -> None`

@@ -671,7 +671,7 @@ Resources:
             - Name: OTEL_SDK_DISABLED
               Value: "false"
             - Name: DATABASE_URL
-              Value: !Sub "postgresql://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}:5432/codexbot"
+              Value: !Sub "postgresql+psycopg://${DatabaseUsername}:${DatabasePassword}@${Database.Endpoint.Address}:5432/codexbot"
             - Name: LIVE_ENABLED
               Value: !Ref LiveEnabled
             - Name: TRADING_ACCOUNT_MODE
