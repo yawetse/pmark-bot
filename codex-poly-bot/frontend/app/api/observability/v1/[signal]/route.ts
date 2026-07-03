@@ -35,21 +35,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "telemetry endpoint missing" }, { status: 503 });
   }
 
-  const upstreamResponse = await fetch(upstreamUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": request.headers.get("content-type") ?? "application/x-protobuf",
-      ...signozHeaders(),
-    },
-    body: await request.arrayBuffer(),
-    cache: "no-store",
-  });
+  try {
+    const upstreamResponse = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": request.headers.get("content-type") ?? "application/x-protobuf",
+        ...signozHeaders(),
+      },
+      body: await request.arrayBuffer(),
+      cache: "no-store",
+    });
 
-  const responseBody = await upstreamResponse.arrayBuffer();
-  return new Response(responseBody, {
-    status: upstreamResponse.status,
-    headers: responseHeaders(upstreamResponse.headers),
-  });
+    if (!upstreamResponse.ok) {
+      return acceptedTelemetryResponse();
+    }
+
+    const responseBody = await upstreamResponse.arrayBuffer();
+    return new Response(responseBody, {
+      status: upstreamResponse.status,
+      headers: responseHeaders(upstreamResponse.headers),
+    });
+  } catch {
+    return acceptedTelemetryResponse();
+  }
 }
 
 function isSignozSignal(value: string): value is SignozSignal {
@@ -63,4 +71,8 @@ function responseHeaders(source: Headers): Headers {
     headers.set("Content-Type", contentType);
   }
   return headers;
+}
+
+function acceptedTelemetryResponse(): Response {
+  return new Response(null, { status: 202 });
 }

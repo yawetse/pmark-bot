@@ -50,3 +50,10 @@ const startRoute = read("app/api/auth/github/start/route.ts");
 assert.match(startRoute, /ALLOW_LOCAL_AUTH_BYPASS/);
 assert.match(startRoute, /setDashboardSession/);
 assert.match(startRoute, /process\.env\.NODE_ENV !== "production"/);
+
+const observabilityProxy = read("app/api/observability/v1/[signal]/route.ts");
+assert.match(observabilityProxy, /try\s*\{/);
+assert.match(observabilityProxy, /catch\s*\{/);
+assert.match(observabilityProxy, /acceptedTelemetryResponse/);
+assert.match(observabilityProxy, /status:\s*202/);
+assert.match(observabilityProxy, /if\s*\(!upstreamResponse\.ok\)\s*\{\s*return acceptedTelemetryResponse\(\);/s);
