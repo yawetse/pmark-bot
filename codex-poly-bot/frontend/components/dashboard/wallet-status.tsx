@@ -15,16 +15,40 @@ export type WalletCredentialView = {
 
 export const DEFAULT_WALLET_CREDENTIALS: WalletCredentialView[] = [
   {
+    id: "polymarket_us-openai-wallet",
+    label: "Polymarket US / OpenAI",
     venue: "polymarket_us",
     provider: "openai",
     publicIdentifier: "not generated",
     present: false,
+    reference: "/codex-poly-bot/local/polymarket_us/openai/wallet",
   },
   {
+    id: "polymarket_us-claude-wallet",
+    label: "Polymarket US / Claude",
+    venue: "polymarket_us",
+    provider: "claude",
+    publicIdentifier: "not generated",
+    present: false,
+    reference: "/codex-poly-bot/local/polymarket_us/claude/wallet",
+  },
+  {
+    id: "alpaca-claude-account",
+    label: "Alpaca / Claude",
     venue: "alpaca",
     provider: "claude",
     publicIdentifier: "not connected",
     present: false,
+    reference: "/codex-poly-bot/local/alpaca/claude/api-key",
+  },
+  {
+    id: "alpaca-openai-account",
+    label: "Alpaca / OpenAI",
+    venue: "alpaca",
+    provider: "openai",
+    publicIdentifier: "not connected",
+    present: false,
+    reference: "/codex-poly-bot/local/alpaca/openai/api-key",
   },
 ];
 

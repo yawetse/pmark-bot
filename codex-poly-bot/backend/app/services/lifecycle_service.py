@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
-from typing import Any
+from typing import Any, Mapping
 
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.domain import (
@@ -110,7 +110,9 @@ class PipelineLifecycleService:
         registry: RepositoryRegistry,
         *,
         alpaca_submitter: AlpacaVenueSubmitter | None = None,
+        alpaca_submitters: Mapping[ModelProvider, AlpacaVenueSubmitter] | None = None,
         polymarket_submitter: PolymarketVenueSubmitter | None = None,
+        polymarket_submitters: Mapping[ModelProvider, PolymarketVenueSubmitter] | None = None,
         alpaca_exit_submitter: AlpacaVenueSubmitter | None = None,
         polymarket_position_closer: PolymarketPositionCloser | None = None,
         notification_adapter: Any | None = None,
@@ -121,6 +123,16 @@ class PipelineLifecycleService:
         self.polymarket_submitter = polymarket_submitter
         self.alpaca_exit_submitter = alpaca_exit_submitter or alpaca_submitter
         self.polymarket_position_closer = polymarket_position_closer
+        self._alpaca_submitter_map_configured = alpaca_submitters is not None
+        self._polymarket_submitter_map_configured = polymarket_submitters is not None
+        self.alpaca_submitters = dict(alpaca_submitters or {})
+        self.polymarket_submitters = dict(polymarket_submitters or {})
+        if alpaca_submitter is not None and not self._alpaca_submitter_map_configured:
+            for provider in ModelProvider:
+                self.alpaca_submitters.setdefault(provider, alpaca_submitter)
+        if polymarket_submitter is not None and not self._polymarket_submitter_map_configured:
+            for provider in ModelProvider:
+                self.polymarket_submitters.setdefault(provider, polymarket_submitter)
         self.notification_adapter = notification_adapter
         self.notification_ledger = notification_ledger or NotificationDeliveryLedger()
 
@@ -377,6 +389,7 @@ class PipelineLifecycleService:
         if risk_result.approved:
             execution_result = self._execute_entry_order(
                 venue=venue,
+                model_provider=model_provider,
                 side=side,
                 order_type=order_type,
                 instrument_id=instrument_id,
@@ -498,13 +511,18 @@ class PipelineLifecycleService:
             reasons.append("SLIPPAGE_LIMIT")
         execution_mode = _execution_mode(config_payload)
         if execution_mode == "live":
+            credentials_present = _credentials_present(
+                credentials,
+                venue=venue,
+                model_provider=_model_provider(output),
+            )
             live_gates = evaluate_live_order_gates(
                 LiveOrderGateInput(
                     live_enabled=bool(config_payload.get("live_enabled", False)),
                     venue_enabled=bool(
                         config_payload.get("venues", {}).get(venue, {}).get("enabled", False)
                     ),
-                    credentials_present=credentials.get(venue, True),
+                    credentials_present=credentials_present,
                     venue_config_supported=True,
                     market_data_fresh="STALE_MARKET_DATA" not in reasons,
                     scoring_succeeded=True,
@@ -533,6 +551,7 @@ class PipelineLifecycleService:
         self,
         *,
         venue: str,
+        model_provider: ModelProvider,
         side: str,
         order_type: str,
         instrument_id: str,
@@ -544,7 +563,8 @@ class PipelineLifecycleService:
     ) -> dict[str, Any]:
         execution_mode = _execution_mode(config_payload)
         if venue == Venue.ALPACA.value:
-            if execution_mode == "live" and self.alpaca_submitter is None:
+            alpaca_submitter = self._alpaca_submitter_for(model_provider)
+            if execution_mode == "live" and alpaca_submitter is None:
                 return {
                     "status": "refused",
                     "refusal_reason": "LIVE_SUBMITTER_NOT_CONFIGURED",
@@ -558,14 +578,15 @@ class PipelineLifecycleService:
                     notional=notional,
                     client_order_id=idempotency_key,
                 ),
-                submitter=self.alpaca_submitter or _NoopAlpacaSubmitter(),
+                submitter=alpaca_submitter or _NoopAlpacaSubmitter(),
             )
             return {
                 "status": result.status,
                 "refusal_reason": result.refusal_reason,
                 "venue_order_id": result.payload.get("venue_order_id"),
             }
-        if execution_mode == "live" and self.polymarket_submitter is None:
+        polymarket_submitter = self._polymarket_submitter_for(model_provider)
+        if execution_mode == "live" and polymarket_submitter is None:
             return {
                 "status": "refused",
                 "refusal_reason": "LIVE_SUBMITTER_NOT_CONFIGURED",
@@ -584,7 +605,7 @@ class PipelineLifecycleService:
                 risk_approved=True,
                 order=request,
             ),
-            submitter=self.polymarket_submitter or _NoopPolymarketSubmitter(),
+            submitter=polymarket_submitter or _NoopPolymarketSubmitter(),
         )
         return {
             "status": result.status,
@@ -597,6 +618,16 @@ class PipelineLifecycleService:
         positions.extend(self._open_polymarket_positions(environment))
         positions.extend(self._open_alpaca_positions(environment))
         return positions
+
+    def _alpaca_submitter_for(self, provider: ModelProvider) -> AlpacaVenueSubmitter | None:
+        if self._alpaca_submitter_map_configured:
+            return self.alpaca_submitters.get(provider)
+        return self.alpaca_submitters.get(provider) or self.alpaca_submitter
+
+    def _polymarket_submitter_for(self, provider: ModelProvider) -> PolymarketVenueSubmitter | None:
+        if self._polymarket_submitter_map_configured:
+            return self.polymarket_submitters.get(provider)
+        return self.polymarket_submitters.get(provider) or self.polymarket_submitter
 
     def _open_polymarket_positions(self, environment: Environment) -> list[dict[str, Any]]:
         try:
@@ -1343,6 +1374,15 @@ def _account_mode_valid(venue: str, config_payload: dict[str, Any]) -> bool:
     if venue != Venue.ALPACA.value:
         return True
     return str(config_payload.get("alpaca", {}).get("account_mode", "")).lower() in {"paper", "live"}
+
+
+def _credentials_present(
+    credentials: dict[str, bool],
+    *,
+    venue: str,
+    model_provider: ModelProvider,
+) -> bool:
+    return credentials.get(f"{venue}:{model_provider.value}", credentials.get(venue, True))
 
 
 def _model_provider(row: dict[str, Any]) -> ModelProvider:

@@ -311,7 +311,9 @@ function buildSystemActions({
   for (const credential of credentials.slice(0, 2)) {
     actions.push({
       title: `Connect ${credential.label ?? formatLabel(credential.venue)}`,
-      body: `${formatLabel(credential.provider)} credential is missing for ${formatLabel(credential.venue)}.`,
+      body:
+        credential.message ??
+        `${formatLabel(credential.provider)} credential is missing for ${formatLabel(credential.venue)}.`,
       href: "/dashboard/config",
       label: "Open config",
     });

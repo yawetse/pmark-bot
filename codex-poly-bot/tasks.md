@@ -691,6 +691,7 @@
 | AC-017-02 | When a live order is approved, the system shall persist the order intent and audit event before submitting to the venue. |
 | AC-017-03 | If venue submit state is ambiguous, then the system shall persist unknown state and reconcile before any retry. |
 | AC-017-04 | When the kill switch is activated, the system shall disable live trading and attempt to cancel open orders for enabled live venues. |
+| AC-017-05 | When a live entry order is approved, the system shall submit through the venue account mapped to the order's model provider. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests
