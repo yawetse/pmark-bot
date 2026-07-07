@@ -64,6 +64,8 @@ Production blocker 2026-07-07: Heavy dashboard endpoints are not ready for live-
 
 Local fix evidence 2026-07-07: Codex changed the dashboard operations summary so high-volume Polymarket historical import and Alpaca broker history scans are deferred by default and only loaded with `include_history=true`. Dashboard summary and realtime snapshot now use the bounded operations payload, reuse already-fetched market data inside loop observability, and cap dashboard market-data candidate details. Validation passed with `codex-poly-bot/backend/.venv/bin/python -m pytest codex-poly-bot/backend/tests/spec/test_dashboard_api.py -q`, `npm --prefix codex-poly-bot/frontend run test:dashboard-operations`, and `npm --prefix codex-poly-bot/frontend run typecheck`. This item remains open until the fix is deployed and the production endpoints return without OOM.
 
+Production validation evidence 2026-07-07: The first production deployment still OOM-killed the backend when `/api/operations/summary` was requested; ECS stopped task `77cf09caeb3d407a9a8869c5bad58ba0` with exit code `137` and reason `OutOfMemoryError: container killed due to memory usage`. Codex tightened the default operations payload again so scanner, reasoning, strategy consensus, execution, exit, order events, and pipeline runs are also deferred from the default summary unless `include_details=true` is explicitly requested.
+
 ## Phase 5: Ask Codex To Verify
 
 After the credentials are stored, ask Codex:
