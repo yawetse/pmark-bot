@@ -11,6 +11,7 @@ from app.adapters.aws import AwsBillingCost, InMemorySesEmailAdapter
 from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
+from app.services.runtime_status_service import _config_for_manual_mode
 from app.services.stock_universe_refresh_service import (
     StaticStockUniverseSource,
     StockUniverseRefreshService,
@@ -963,6 +964,38 @@ def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> No
     assert scanner_payload["strategyRun"]["status"] == "skipped"
     assert scanner_payload["executionRun"]["status"] == "skipped"
     assert scanner_payload["pipelineRun"]["metadata"]["requestedMode"] == "scanner_only"
+
+
+def test_req_ui_008_08_non_live_manual_runs_cap_provider_scope() -> None:
+    """TST-REQ-UI-008-08: Validates REQ-UI-008 and REQ-DAT-008
+
+    Given: production config has a large provider universe
+    When: a non-live manual run mode prepares the next config
+    Then: provider fetch scope is bounded without changing full-live-gated mode
+    """
+
+    config = {
+        "live_enabled": True,
+        "scanner": {"polymarket": {"market_data_limit": 500}},
+        "alpaca": {
+            "symbol_presets": [],
+            "custom_symbols": [f"TST{i}" for i in range(40)],
+            "symbol_universe": [f"TST{i}" for i in range(40)],
+        },
+    }
+
+    bounded = _config_for_manual_mode(config, "full_dry_run")
+    live_gated = _config_for_manual_mode(config, "full_live_gated")
+
+    assert bounded["live_enabled"] is False
+    assert bounded["scanner"]["polymarket"]["market_data_limit"] == 10
+    assert bounded["alpaca"]["symbol_presets"] == []
+    assert len(bounded["alpaca"]["custom_symbols"]) == 20
+    assert bounded["alpaca"]["custom_symbols"][0] == "TST0"
+    assert bounded["alpaca"]["custom_symbols"][-1] == "TST19"
+    assert live_gated["live_enabled"] is True
+    assert live_gated["scanner"]["polymarket"]["market_data_limit"] == 500
+    assert len(live_gated["alpaca"]["custom_symbols"]) == 40
 
 
 def test_req_ui_004_12_daily_tick_summary_endpoint_supports_cached_and_forced_runs() -> None:
