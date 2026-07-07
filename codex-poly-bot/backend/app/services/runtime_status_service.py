@@ -75,6 +75,7 @@ from app.services.wallet_service import CredentialTarget, resolve_credential_ref
 from app.services.stock_universe import (
     DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
     DEFAULT_ALPACA_SYMBOL_PRESETS,
+    normalize_symbol_list,
     resolve_alpaca_symbol_universe,
     seed_alpaca_preset_snapshots,
     stock_universe_metadata,
@@ -91,6 +92,8 @@ from app.venues import (
 
 PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
 TRADING_MODEL_PROVIDERS = (ModelProvider.OPENAI, ModelProvider.CLAUDE)
+MANUAL_NON_LIVE_POLYMARKET_MARKET_DATA_LIMIT = 10
+MANUAL_NON_LIVE_ALPACA_SYMBOL_LIMIT = 20
 CURRENT_WORKER_HEARTBEAT_STATUSES = {
     "ok",
     "accepted",
@@ -4301,6 +4304,28 @@ def _config_for_manual_mode(config_payload: dict[str, Any], run_mode: str) -> di
     payload = deepcopy(config_payload)
     if run_mode != "full_live_gated":
         payload["live_enabled"] = False
+        scanner = dict(payload.get("scanner") if isinstance(payload.get("scanner"), dict) else {})
+        polymarket_scanner = dict(
+            scanner.get("polymarket") if isinstance(scanner.get("polymarket"), dict) else {}
+        )
+        configured_market_limit = _positive_int(
+            polymarket_scanner.get("market_data_limit"),
+            default=MANUAL_NON_LIVE_POLYMARKET_MARKET_DATA_LIMIT,
+        )
+        polymarket_scanner["market_data_limit"] = min(
+            configured_market_limit,
+            MANUAL_NON_LIVE_POLYMARKET_MARKET_DATA_LIMIT,
+        )
+        scanner["polymarket"] = polymarket_scanner
+        payload["scanner"] = scanner
+
+        alpaca = dict(payload.get("alpaca") if isinstance(payload.get("alpaca"), dict) else {})
+        resolved_symbols = resolve_alpaca_symbol_universe(payload) or list(DEFAULT_ALPACA_SYMBOL_UNIVERSE)
+        limited_symbols = normalize_symbol_list(resolved_symbols[:MANUAL_NON_LIVE_ALPACA_SYMBOL_LIMIT])
+        alpaca["symbol_presets"] = []
+        alpaca["custom_symbols"] = limited_symbols
+        alpaca["symbol_universe"] = limited_symbols
+        payload["alpaca"] = alpaca
     return payload
 
 
