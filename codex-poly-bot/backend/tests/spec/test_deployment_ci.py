@@ -336,6 +336,20 @@ def test_req_dep_002_03_cloudformation_exposes_frontend_and_backend_services() -
     assert "SignozCloudWatchReadPolicy" in text
     assert "ApplicationUrl" in text
 
+def test_req_dep_002_06_backend_task_has_oom_headroom() -> None:
+    """TST-REQ-DEP-002-06: Validates REQ-DEP-002
+
+    Given: production backend traffic can load dashboard and runtime datasets
+    When: CloudFormation task sizing is inspected
+    Then: the backend Fargate task has at least 2 GiB of memory headroom
+    """
+    text = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+    backend_block = text[
+        text.index("  BackendTaskDefinition:") : text.index("  FrontendTaskDefinition:")
+    ]
+
+    assert 'Memory: "2048"' in backend_block
+
 def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injection() -> None:
     """TST-REQ-DEP-002-05: Validates REQ-DEP-002 and REQ-WAL-003
 
