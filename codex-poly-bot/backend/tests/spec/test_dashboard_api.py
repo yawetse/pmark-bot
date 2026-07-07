@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from app.adapters.aws import AwsBillingCost
+from app.adapters.aws import AwsBillingCost, InMemorySesEmailAdapter
 from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
@@ -1611,6 +1611,92 @@ def test_req_not_006_01_notification_status_requires_email_recipient(monkeypatch
     assert response.status_code == 200
     assert payload["status"] == "not_configured"
     assert payload["recipientCount"] == 0
+
+
+def test_req_not_006_02_notification_test_sends_configured_email() -> None:
+    """TST-REQ-NOT-006-02: Validates REQ-NOT-006 and REQ-OBS-004
+
+    Given: an authenticated operator and configured notification recipients
+    When: the operator requests a test notification
+    Then: the API sends through the configured adapter and records the attempt
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+        ses_identity_email="alerts@example.com",
+        notification_recipients={"operator": "alerts@example.com"},
+    )
+    app = create_app(settings)
+    adapter = InMemorySesEmailAdapter()
+    app.state.services.runtime_status.lifecycle.notification_adapter = adapter
+    client = TestClient(app)
+    token = app.state.services.auth.create_session_token(username="yaw")
+
+    response = client.post(
+        "/api/notifications/test",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3100",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={"environment": "development", "message": "readiness check"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 202
+    assert payload["sent"] is True
+    assert payload["attemptRecorded"] is True
+    assert payload["recipientCount"] == 1
+    assert payload["messageId"] == "ses-message-1"
+    assert adapter.sent_count == 1
+    assert adapter.attempts[-1].recipients == ("alerts@example.com",)
+    assert "readiness check" in adapter.attempts[-1].body
+    records = app.state.services.runtime_status.notification_ledger.records
+    assert records[-1].notification_type == "test_notification"
+    assert records[-1].sent is True
+
+
+def test_req_not_006_03_notification_test_reports_missing_adapter() -> None:
+    """TST-REQ-NOT-006-03: Validates REQ-NOT-006 and REQ-OBS-004
+
+    Given: notification recipients are configured but SES is unavailable
+    When: the operator requests a test notification
+    Then: the API returns a secret-safe delivery failure without claiming success
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+        notification_recipients={"operator": "alerts@example.com"},
+    )
+    app = create_app(settings)
+    app.state.services.runtime_status.lifecycle.notification_adapter = None
+    client = TestClient(app)
+    token = app.state.services.auth.create_session_token(username="yaw")
+
+    response = client.post(
+        "/api/notifications/test",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Origin": "http://localhost:3100",
+            "X-CSRF-Token": "csrf-token",
+        },
+        json={"environment": "development"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 503
+    assert payload["sent"] is False
+    assert payload["attemptRecorded"] is False
+    assert payload["skippedReason"] == "notification adapter not configured"
+    records = app.state.services.runtime_status.notification_ledger.records
+    assert records[-1].notification_type == "test_notification"
+    assert records[-1].sent is False
 
 
 def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:

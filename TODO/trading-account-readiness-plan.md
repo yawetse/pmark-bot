@@ -54,7 +54,7 @@ Secret hygiene and account validation 2026-07-07: Codex scrubbed local Alpaca va
 - [ ] Notification delivery works.
 - [ ] Kill switch works from the dashboard or API.
 - [x] Risk limits are set for max position size, max daily loss, max open positions, and slippage.
-- [ ] Fix production dashboard operations/readiness payload OOM before live-readiness closure.
+- [x] Fix production dashboard operations/readiness payload OOM before live-readiness closure.
 
 Evidence 2026-07-02: Operator confirmed live trading should be enabled. AWS production backend task definition `codex-poly-bot-production-backend:15` has `LIVE_ENABLED=true`, `TRADING_ACCOUNT_MODE=live`, `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true`, and `ALPACA_ACCOUNT_STATUS=active`.
 
@@ -65,6 +65,8 @@ Production blocker 2026-07-07: Heavy dashboard endpoints are not ready for live-
 Local fix evidence 2026-07-07: Codex changed the dashboard operations summary so high-volume Polymarket historical import and Alpaca broker history scans are deferred by default and only loaded with `include_history=true`. Dashboard summary and realtime snapshot now use the bounded operations payload, reuse already-fetched market data inside loop observability, and cap dashboard market-data candidate details. Validation passed with `codex-poly-bot/backend/.venv/bin/python -m pytest codex-poly-bot/backend/tests/spec/test_dashboard_api.py -q`, `npm --prefix codex-poly-bot/frontend run test:dashboard-operations`, and `npm --prefix codex-poly-bot/frontend run typecheck`. This item remains open until the fix is deployed and the production endpoints return without OOM.
 
 Production validation evidence 2026-07-07: The first production deployment still OOM-killed the backend when `/api/operations/summary` was requested; ECS stopped task `77cf09caeb3d407a9a8869c5bad58ba0` with exit code `137` and reason `OutOfMemoryError: container killed due to memory usage`. Codex tightened the default operations payload again so scanner, reasoning, strategy consensus, execution, exit, order events, and pipeline runs are also deferred from the default summary unless `include_details=true` is explicitly requested.
+
+Production closure evidence 2026-07-07: The compact operations payload fix was pushed to `develop` at `fed22e7`, deployed to development, then promoted to `main` at `591e67a` and deployed to production. ECR published production backend image tag `591e67a9d261f4263b61e2c3a596dc8f65bc7cc4`; ECS production backend deployment `ecs-svc/5515280985956515027` completed with desired `1`, running `1`, pending `0`, failed `0`; production `/health` returned `{"status":"ok"}` after authenticated dashboard checks. Authenticated production checks returned 200 for `/api/operations/summary` in `0.126s` with scanner, reasoning, strategy consensus, execution, exit, historical import, and broker history deferred; `/api/dashboard/realtime-snapshot` in `18.078s`; `/api/dashboard/summary` in `15.486s`; and `/api/market-data/latest` in `14.257s` with `candidateCount=617` and returned candidate details capped at `50`.
 
 ## Phase 5: Ask Codex To Verify
 
