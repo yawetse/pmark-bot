@@ -1595,13 +1595,14 @@ class RuntimeStatusService:
         environment: Environment,
         *,
         include_history: bool = False,
+        include_details: bool = False,
     ) -> dict[str, Any]:
         """Return operational status and latest order rows.
 
         REQ: REQ-EXE-014, REQ-EXE-016, REQ-OBS-005
         """
 
-        order_items = self.order_events()
+        order_items = self.order_events() if include_details else []
         open_orders = [
             item
             for item in order_items
@@ -1616,12 +1617,32 @@ class RuntimeStatusService:
             "degradedVenueStatus": "none",
             "manualReviewState": "clear",
             "orderEvents": order_items,
-            "pipelineRuns": self.pipeline_runs(environment),
-            "scanner": self.scanner_summary(environment),
-            "reasoning": self.reasoning_summary(environment),
-            "strategyConsensus": self.strategy_consensus_summary(environment),
-            "execution": self.execution_summary(environment),
-            "exit": self.exit_summary(environment),
+            "pipelineRuns": self.pipeline_runs(environment) if include_details else [],
+            "scanner": (
+                self.scanner_summary(environment)
+                if include_details
+                else self._deferred_scanner_summary()
+            ),
+            "reasoning": (
+                self.reasoning_summary(environment)
+                if include_details
+                else self._deferred_reasoning_summary()
+            ),
+            "strategyConsensus": (
+                self.strategy_consensus_summary(environment)
+                if include_details
+                else self._deferred_strategy_consensus_summary()
+            ),
+            "execution": (
+                self.execution_summary(environment)
+                if include_details
+                else self._deferred_execution_summary()
+            ),
+            "exit": (
+                self.exit_summary(environment)
+                if include_details
+                else self._deferred_exit_summary()
+            ),
             "historicalImport": (
                 self.historical_import_summary(environment)
                 if include_history
@@ -1632,6 +1653,66 @@ class RuntimeStatusService:
                 if include_history
                 else self._deferred_broker_history_summary()
             ),
+        }
+
+    def _deferred_scanner_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": "Scanner details are deferred from the default operations summary.",
+            "latestRun": None,
+            "candidateCount": 0,
+            "acceptedCount": 0,
+            "rejectedCount": 0,
+            "candidates": [],
+        }
+
+    def _deferred_reasoning_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": "Reasoning details are deferred from the default operations summary.",
+            "latestRun": None,
+            "promptCount": 0,
+            "scoredCount": 0,
+            "skippedCount": 0,
+            "failedCount": 0,
+            "outputs": [],
+        }
+
+    def _deferred_strategy_consensus_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": "Strategy consensus details are deferred from the default operations summary.",
+            "latestRun": None,
+            "voteCount": 0,
+            "approvedCount": 0,
+            "refusedCount": 0,
+            "votes": [],
+            "outputs": [],
+        }
+
+    def _deferred_execution_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": "Execution details are deferred from the default operations summary.",
+            "latestRun": None,
+            "intentCount": 0,
+            "submittedCount": 0,
+            "simulatedCount": 0,
+            "refusedCount": 0,
+            "intents": [],
+        }
+
+    def _deferred_exit_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": "Exit details are deferred from the default operations summary.",
+            "latestRun": None,
+            "openPositionCount": 0,
+            "triggeredCount": 0,
+            "simulatedCount": 0,
+            "submittedCount": 0,
+            "refusedCount": 0,
+            "intents": [],
         }
 
     def _deferred_historical_import_summary(self) -> dict[str, Any]:
