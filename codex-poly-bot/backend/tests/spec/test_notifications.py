@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.adapters.aws import EmailMessage, InMemorySesEmailAdapter
+from app.adapters.aws import BotoSesEmailAdapter, EmailMessage, InMemorySesEmailAdapter
 from app.domain import Environment
 from app.services import (
     ActorContext,
@@ -438,6 +438,38 @@ def test_req_not_007_01_ses_delivery_fails_retry_policy_runs_failure_recorded() 
     assert result.retryable
     assert result.attempt_recorded
     assert result.error_summary == "SES delivery failed"
+
+
+def test_req_not_007_03_domain_identity_uses_sender_address_for_ses() -> None:
+    """TST-REQ-NOT-007-03: Validates REQ-NOT-007
+
+    Given: SES is configured with a verified domain identity
+    When: the adapter sends an email
+    Then: the SES Source is a valid sender address at that domain
+    """
+
+    class FakeSesClient:
+        def __init__(self) -> None:
+            self.requests: list[dict] = []
+
+        def send_email(self, **kwargs):
+            self.requests.append(kwargs)
+            return {"MessageId": "ses-test-message"}
+
+    client = FakeSesClient()
+    adapter = BotoSesEmailAdapter(source="asyncdoc.net", client=client)
+
+    result = adapter.send_email(
+        EmailMessage(
+            recipients=("yaw@example.com",),
+            subject="Delivery test",
+            body="Notification delivery test.",
+        )
+    )
+
+    assert result.sent is True
+    assert result.message_id == "ses-test-message"
+    assert client.requests[0]["Source"] == "notifications@asyncdoc.net"
 
 
 def test_req_not_007_02_ses_failure_recorded_with_retry_timing() -> None:

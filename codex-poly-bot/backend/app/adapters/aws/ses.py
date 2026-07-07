@@ -101,7 +101,7 @@ class BotoSesEmailAdapter:
         region_name: str | None = None,
         client: object | None = None,
     ) -> None:
-        self.source = source
+        self.source = _source_email_address(source)
         self.region_name = region_name
         if client is not None:
             self.client = client
@@ -169,3 +169,11 @@ def ses_adapter_from_env(
         return BotoSesEmailAdapter(source=ses_source, region_name=region)
     except ImportError:
         return None
+
+
+def _source_email_address(source: str) -> str:
+    configured = source.strip()
+    if "@" in configured:
+        return configured
+    domain = configured.removeprefix("@").strip()
+    return f"notifications@{domain}"
