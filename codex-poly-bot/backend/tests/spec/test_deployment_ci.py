@@ -348,7 +348,7 @@ def test_req_dep_002_06_backend_task_has_oom_headroom() -> None:
         text.index("  BackendTaskDefinition:") : text.index("  FrontendTaskDefinition:")
     ]
 
-    assert 'Memory: "2048"' in backend_block
+    assert 'Memory: "4096"' in backend_block
 
 def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injection() -> None:
     """TST-REQ-DEP-002-05: Validates REQ-DEP-002 and REQ-WAL-003
