@@ -9,7 +9,9 @@ const files = {
   proxy: "app/dashboard-api/[...path]/route.ts",
   apiClient: "lib/api.ts",
   dashboard: "app/dashboard/page.tsx",
+  settings: "app/dashboard/config/page.tsx",
   login: "app/login/page.tsx",
+  logout: "app/api/auth/logout/route.ts",
 };
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -25,6 +27,9 @@ assert.match(serverSession, /DASHBOARD_ALLOWED_USERS/);
 assert.match(serverSession, /httpOnly: true/);
 assert.match(serverSession, /secureCookiesEnabled/);
 assert.match(serverSession, /NEXTAUTH_URL/);
+assert.match(serverSession, /clearDashboardSession/);
+assert.match(serverSession, /SESSION_COOKIE_NAME/);
+assert.match(serverSession, /OAUTH_STATE_COOKIE_NAME/);
 
 const proxy = read(files.proxy);
 assert.match(proxy, /mintBackendToken/);
@@ -43,8 +48,17 @@ const dashboard = read(files.dashboard);
 assert.match(dashboard, /redirect\("\/login"\)/);
 assert.match(dashboard, /redirect\("\/access-denied"\)/);
 
+const settings = read(files.settings);
+assert.match(settings, /LogoutControl/);
+assert.match(settings, /sessionCheck\.session\.username/);
+
 const login = read(files.login);
 assert.match(login, /\/api\/auth\/github\/start/);
+
+const logout = read(files.logout);
+assert.match(logout, /clearDashboardSession/);
+assert.match(logout, /\/login\?status=signed_out/);
+assert.match(logout, /NextResponse\.redirect/);
 
 const startRoute = read("app/api/auth/github/start/route.ts");
 assert.match(startRoute, /ALLOW_LOCAL_AUTH_BYPASS/);
