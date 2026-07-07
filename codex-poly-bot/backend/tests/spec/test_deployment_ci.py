@@ -436,6 +436,9 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "alpaca_symbol_universe=\"${ALPACA_SYMBOL_UNIVERSE:-}\"" in text
     assert "NOTIFICATION_RECIPIENT_EMAIL:-yaw.etse@gmail.com" in text
     assert "NotificationRecipients=${notification_recipients}" in text
+    assert 'enable_background_worker_default="true"' in text
+    assert 'enable_background_worker_default="false"' in text
+    assert 'enable_background_worker="${ENABLE_BACKGROUND_WORKER:-${enable_background_worker_default}}"' in text
     assert "EnableBackgroundWorker=${enable_background_worker}" in text
     assert "SignozEnabled=${signoz_enabled}" in text
     assert "SignozFrontendEnabled=${signoz_frontend_enabled}" in text

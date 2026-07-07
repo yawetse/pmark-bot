@@ -27,12 +27,13 @@ The planned hostnames are:
 
 The deployed profiles are explicit and separate:
 
-| Environment | Account mode | Live flag | Venue flags |
-| --- | --- | --- | --- |
-| `development` | `paper` | `LIVE_ENABLED=false` | `ALPACA_ENABLED=true`, Polymarket disabled |
-| `production` | `live` | `LIVE_ENABLED=true` | `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true` |
+| Environment | Account mode | Live flag | Venue flags | Worker default |
+| --- | --- | --- | --- | --- |
+| `development` | `paper` | `LIVE_ENABLED=false` | `ALPACA_ENABLED=true`, Polymarket disabled | `ENABLE_BACKGROUND_WORKER=true` |
+| `production` | `live` | `LIVE_ENABLED=true` | `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true` | `ENABLE_BACKGROUND_WORKER=false` |
 
 The profile values are recorded in `infra/parameters/dev.json` and `infra/parameters/prod.json`, and the CloudFormation task definitions expose matching runtime environment variables.
+Production keeps the in-process scheduler disabled by default so dashboard/API health is isolated from worker memory failures. Set `ENABLE_BACKGROUND_WORKER=true` only after the worker path is verified or split into a separate service.
 
 To refresh local copies of deployed secrets after authenticating to AWS, run:
 
