@@ -5,6 +5,7 @@ environment="${1:?usage: scripts/deploy-stack.sh development|production}"
 
 case "${environment}" in
   development)
+    enable_background_worker_default="true"
     live_enabled="false"
     trading_account_mode="paper"
     default_selected_venue="alpaca"
@@ -28,6 +29,7 @@ case "${environment}" in
     polygon_order_filled_retry_split="${POLYGON_ORDER_FILLED_RETRY_SPLIT:-true}"
     ;;
   production)
+    enable_background_worker_default="false"
     live_enabled="true"
     trading_account_mode="live"
     default_selected_venue="polymarket_us"
@@ -88,7 +90,7 @@ application_domain_name="${APPLICATION_DOMAIN_NAME:-}"
 certificate_arn="${CERTIFICATE_ARN:-}"
 github_client_id="${GITHUB_CLIENT_ID:-${DASHBOARD_GITHUB_CLIENT_ID:-}}"
 github_client_secret="${GITHUB_CLIENT_SECRET:-${DASHBOARD_GITHUB_CLIENT_SECRET:-}}"
-enable_background_worker="${ENABLE_BACKGROUND_WORKER:-true}"
+enable_background_worker="${ENABLE_BACKGROUND_WORKER:-${enable_background_worker_default}}"
 worker_heartbeat_interval_seconds="${WORKER_HEARTBEAT_INTERVAL_SECONDS:-60}"
 signoz_enabled="${SIGNOZ_ENABLED:-false}"
 signoz_frontend_enabled="${SIGNOZ_FRONTEND_ENABLED:-${signoz_enabled}}"
