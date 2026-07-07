@@ -184,10 +184,40 @@ Parameters:
   PolymarketPrivateKeySecretArn:
     Type: String
     Default: ""
+  PolymarketOpenAiKeyIdSecretArn:
+    Type: String
+    Default: ""
+  PolymarketOpenAiSecretKeySecretArn:
+    Type: String
+    Default: ""
+  PolymarketOpenAiPrivateKeySecretArn:
+    Type: String
+    Default: ""
+  PolymarketClaudeKeyIdSecretArn:
+    Type: String
+    Default: ""
+  PolymarketClaudeSecretKeySecretArn:
+    Type: String
+    Default: ""
+  PolymarketClaudePrivateKeySecretArn:
+    Type: String
+    Default: ""
   AlpacaKeyIdSecretArn:
     Type: String
     Default: ""
   AlpacaSecretKeySecretArn:
+    Type: String
+    Default: ""
+  AlpacaOpenAiKeyIdSecretArn:
+    Type: String
+    Default: ""
+  AlpacaOpenAiSecretKeySecretArn:
+    Type: String
+    Default: ""
+  AlpacaClaudeKeyIdSecretArn:
+    Type: String
+    Default: ""
+  AlpacaClaudeSecretKeySecretArn:
     Type: String
     Default: ""
   OpenAiAdminApiKeySecretArn:
@@ -253,8 +283,18 @@ Conditions:
   UsePolymarketKeyIdSecret: !Not [!Equals [!Ref PolymarketKeyIdSecretArn, ""]]
   UsePolymarketSecretKeySecret: !Not [!Equals [!Ref PolymarketSecretKeySecretArn, ""]]
   UsePolymarketPrivateKeySecret: !Not [!Equals [!Ref PolymarketPrivateKeySecretArn, ""]]
+  UsePolymarketOpenAiKeyIdSecret: !Not [!Equals [!Ref PolymarketOpenAiKeyIdSecretArn, ""]]
+  UsePolymarketOpenAiSecretKeySecret: !Not [!Equals [!Ref PolymarketOpenAiSecretKeySecretArn, ""]]
+  UsePolymarketOpenAiPrivateKeySecret: !Not [!Equals [!Ref PolymarketOpenAiPrivateKeySecretArn, ""]]
+  UsePolymarketClaudeKeyIdSecret: !Not [!Equals [!Ref PolymarketClaudeKeyIdSecretArn, ""]]
+  UsePolymarketClaudeSecretKeySecret: !Not [!Equals [!Ref PolymarketClaudeSecretKeySecretArn, ""]]
+  UsePolymarketClaudePrivateKeySecret: !Not [!Equals [!Ref PolymarketClaudePrivateKeySecretArn, ""]]
   UseAlpacaKeyIdSecret: !Not [!Equals [!Ref AlpacaKeyIdSecretArn, ""]]
   UseAlpacaSecretKeySecret: !Not [!Equals [!Ref AlpacaSecretKeySecretArn, ""]]
+  UseAlpacaOpenAiKeyIdSecret: !Not [!Equals [!Ref AlpacaOpenAiKeyIdSecretArn, ""]]
+  UseAlpacaOpenAiSecretKeySecret: !Not [!Equals [!Ref AlpacaOpenAiSecretKeySecretArn, ""]]
+  UseAlpacaClaudeKeyIdSecret: !Not [!Equals [!Ref AlpacaClaudeKeyIdSecretArn, ""]]
+  UseAlpacaClaudeSecretKeySecret: !Not [!Equals [!Ref AlpacaClaudeSecretKeySecretArn, ""]]
   UseOpenAiAdminApiKeySecret: !Not [!Equals [!Ref OpenAiAdminApiKeySecretArn, ""]]
   UseAnthropicAdminApiKeySecret: !Not [!Equals [!Ref AnthropicAdminApiKeySecretArn, ""]]
 
@@ -776,6 +816,36 @@ Resources:
                 ValueFrom: !Ref PolymarketPrivateKeySecretArn
               - !Ref AWS::NoValue
             - !If
+              - UsePolymarketOpenAiKeyIdSecret
+              - Name: POLYMARKET_OPENAI_KEY_ID
+                ValueFrom: !Ref PolymarketOpenAiKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketOpenAiSecretKeySecret
+              - Name: POLYMARKET_OPENAI_SECRET_KEY
+                ValueFrom: !Ref PolymarketOpenAiSecretKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketOpenAiPrivateKeySecret
+              - Name: POLYMARKET_OPENAI_PRIVATE_KEY
+                ValueFrom: !Ref PolymarketOpenAiPrivateKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketClaudeKeyIdSecret
+              - Name: POLYMARKET_CLAUDE_KEY_ID
+                ValueFrom: !Ref PolymarketClaudeKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketClaudeSecretKeySecret
+              - Name: POLYMARKET_CLAUDE_SECRET_KEY
+                ValueFrom: !Ref PolymarketClaudeSecretKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UsePolymarketClaudePrivateKeySecret
+              - Name: POLYMARKET_CLAUDE_PRIVATE_KEY
+                ValueFrom: !Ref PolymarketClaudePrivateKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
               - UseAlpacaKeyIdSecret
               - Name: ALPACA_KEY_ID
                 ValueFrom: !Ref AlpacaKeyIdSecretArn
@@ -784,6 +854,26 @@ Resources:
               - UseAlpacaSecretKeySecret
               - Name: ALPACA_SECRET_KEY
                 ValueFrom: !Ref AlpacaSecretKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaOpenAiKeyIdSecret
+              - Name: ALPACA_OPENAI_KEY_ID
+                ValueFrom: !Ref AlpacaOpenAiKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaOpenAiSecretKeySecret
+              - Name: ALPACA_OPENAI_SECRET_KEY
+                ValueFrom: !Ref AlpacaOpenAiSecretKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaClaudeKeyIdSecret
+              - Name: ALPACA_CLAUDE_KEY_ID
+                ValueFrom: !Ref AlpacaClaudeKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaClaudeSecretKeySecret
+              - Name: ALPACA_CLAUDE_SECRET_KEY
+                ValueFrom: !Ref AlpacaClaudeSecretKeySecretArn
               - !Ref AWS::NoValue
           LogConfiguration:
             LogDriver: awslogs

@@ -207,10 +207,14 @@ def test_req_ui_001_05_live_runtime_wires_venue_submitters_when_credentials_pres
         environment=Environment.PRODUCTION,
         runtime_env={
             "TRADING_ACCOUNT_MODE": "live",
-            "ALPACA_KEY_ID": "alpaca-key",
-            "ALPACA_SECRET_KEY": "alpaca-secret",
-            "POLYMARKET_KEY_ID": "pm-key",
-            "POLYMARKET_SECRET_KEY": "pm-secret",
+            "ALPACA_OPENAI_KEY_ID": "alpaca-openai-key",
+            "ALPACA_OPENAI_SECRET_KEY": "alpaca-openai-secret",
+            "ALPACA_CLAUDE_KEY_ID": "alpaca-claude-key",
+            "ALPACA_CLAUDE_SECRET_KEY": "alpaca-claude-secret",
+            "POLYMARKET_OPENAI_KEY_ID": "pm-openai-key",
+            "POLYMARKET_OPENAI_SECRET_KEY": "pm-openai-secret",
+            "POLYMARKET_CLAUDE_KEY_ID": "pm-claude-key",
+            "POLYMARKET_CLAUDE_SECRET_KEY": "pm-claude-secret",
         },
         live_enabled=True,
         trading_account_mode="live",
@@ -227,6 +231,8 @@ def test_req_ui_001_05_live_runtime_wires_venue_submitters_when_credentials_pres
     assert lifecycle.alpaca_exit_submitter is lifecycle.alpaca_submitter
     assert lifecycle.polymarket_submitter is not None
     assert lifecycle.polymarket_position_closer is lifecycle.polymarket_submitter
+    assert set(lifecycle.alpaca_submitters) == {ModelProvider.OPENAI, ModelProvider.CLAUDE}
+    assert set(lifecycle.polymarket_submitters) == {ModelProvider.OPENAI, ModelProvider.CLAUDE}
 
 
 def test_req_ui_003_03_dashboard_api_blocks_unauthenticated_and_unallowlisted_users() -> None:
@@ -299,11 +305,16 @@ def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch)
     monkeypatch.setenv("POLYMARKET_US_ENABLED", "true")
     monkeypatch.setenv("ALPACA_ENABLED", "true")
     monkeypatch.setenv("ALPACA_ACCOUNT_STATUS", "reviewing")
-    monkeypatch.setenv("POLYMARKET_KEY_ID", "pm-key-id")
-    monkeypatch.setenv("POLYMARKET_SECRET_KEY", "pm-signing-key")
-    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "pm-wallet-key")
-    monkeypatch.setenv("ALPACA_KEY_ID", "alpaca-key-id")
-    monkeypatch.setenv("ALPACA_SECRET_KEY", "alpaca-signing-key")
+    monkeypatch.setenv("POLYMARKET_OPENAI_KEY_ID", "pm-openai-key-id")
+    monkeypatch.setenv("POLYMARKET_OPENAI_SECRET_KEY", "pm-openai-signing-key")
+    monkeypatch.setenv("POLYMARKET_OPENAI_PRIVATE_KEY", "pm-openai-wallet-key")
+    monkeypatch.setenv("POLYMARKET_CLAUDE_KEY_ID", "pm-claude-key-id")
+    monkeypatch.setenv("POLYMARKET_CLAUDE_SECRET_KEY", "pm-claude-signing-key")
+    monkeypatch.setenv("POLYMARKET_CLAUDE_PRIVATE_KEY", "pm-claude-wallet-key")
+    monkeypatch.setenv("ALPACA_OPENAI_KEY_ID", "alpaca-openai-key-id")
+    monkeypatch.setenv("ALPACA_OPENAI_SECRET_KEY", "alpaca-openai-signing-key")
+    monkeypatch.setenv("ALPACA_CLAUDE_KEY_ID", "alpaca-claude-key-id")
+    monkeypatch.setenv("ALPACA_CLAUDE_SECRET_KEY", "alpaca-claude-signing-key")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
     monkeypatch.setenv("SES_IDENTITY_EMAIL", "alerts@example.com")
@@ -320,17 +331,19 @@ def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch)
     assert response.status_code == 200
     status_by_label = {item["label"]: item for item in payload["status"]["items"]}
     assert status_by_label["Venue"]["value"] == "polymarket_us enabled"
-    assert status_by_label["Wallet"]["value"] == "1 missing"
+    assert status_by_label["Wallet"]["value"] == "2 missing"
     assert status_by_label["Ingestion"]["state"] == "ok"
     assert status_by_label["Notification"]["state"] == "ok"
     assert status_by_label["Trading loop"]["value"] == "Live gated"
     credentials = {item["id"]: item for item in payload["wallet"]["credentials"]}
     assert credentials["polymarket_us-openai-wallet"]["status"] == "present"
+    assert credentials["polymarket_us-claude-wallet"]["status"] == "present"
     assert credentials["openai-api"]["status"] == "present"
     assert credentials["anthropic-api"]["status"] == "present"
     assert credentials["alpaca-claude-account"]["status"] == "reviewing"
+    assert credentials["alpaca-openai-account"]["status"] == "reviewing"
     assert payload["notifications"]["recipientCount"] == 1
-    assert "pm-wallet-key" not in str(payload)
+    assert "pm-openai-wallet-key" not in str(payload)
 
 
 def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypatch) -> None:
@@ -346,8 +359,10 @@ def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypa
     monkeypatch.setenv("LIVE_ENABLED", "true")
     monkeypatch.setenv("DEFAULT_SELECTED_VENUE", "alpaca")
     monkeypatch.setenv("ALPACA_ENABLED", "true")
-    monkeypatch.setenv("ALPACA_KEY_ID", "alpaca-key-id")
-    monkeypatch.setenv("ALPACA_SECRET_KEY", "alpaca-signing-key")
+    monkeypatch.setenv("ALPACA_OPENAI_KEY_ID", "alpaca-openai-key-id")
+    monkeypatch.setenv("ALPACA_OPENAI_SECRET_KEY", "alpaca-openai-signing-key")
+    monkeypatch.setenv("ALPACA_CLAUDE_KEY_ID", "alpaca-claude-key-id")
+    monkeypatch.setenv("ALPACA_CLAUDE_SECRET_KEY", "alpaca-claude-signing-key")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
 

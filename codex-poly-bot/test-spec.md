@@ -226,6 +226,8 @@
 | TST-REQ-EXE-016-01 | Happy | REQ-EXE-016 | Given an order is refused, submitted, filled, canceled, or failed, When the event is processed, Then it is persisted and visible in dashboard status. |
 | TST-REQ-EXE-016-02 | Edge | REQ-EXE-016 | Given event persistence fails, When an order event is processed, Then the system reports degraded status and avoids hiding the failure. |
 | TST-REQ-EXE-016-03 | Focus | REQ-EXE-016 | Given the operations dashboard renders order events, When dashboard operations checks run, Then refused, submitted, filled, canceled, failed, and unknown states are displayed. |
+| TST-REQ-EXE-016-07 | Focus | REQ-EXE-016 | Given live execution has provider-specific venue submitters, When OpenAI and Claude outputs are approved, Then each output is submitted through the account for its venue and model provider. |
+| TST-REQ-EXE-016-08 | Edge | REQ-EXE-016 | Given one model provider lacks a venue submitter, When that provider has an approved live output, Then the order is refused instead of using another provider's account. |
 | TST-REQ-EXE-017-01 | Happy | REQ-EXE-017 | Given dry-run is disabled, venue is enabled, account mode is valid, and all checks pass, When live execution runs, Then live orders are permitted. |
 | TST-REQ-EXE-017-02 | Edge | REQ-EXE-017 | Given dry-run is disabled but a venue is disabled or account mode fails checks, When live execution runs, Then live orders are blocked. |
 | TST-REQ-EXE-017-03 | Focus | REQ-EXE-017 | Given live trading checklist docs, When an operator prepares live trading, Then account, dry-run, venue, risk, auth, SES, and kill-switch checks are required. |
@@ -420,7 +422,7 @@
 | REQ-DB-005 | TST-REQ-DB-005-01, TST-REQ-DB-005-02 |
 | REQ-DB-006 | TST-REQ-DB-006-01 |
 | REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02, TST-REQ-DB-007-03 |
-| REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02 |
+| REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02, TST-REQ-EXE-016-07, TST-REQ-EXE-016-08 |
 | REQ-WAL-002 | TST-REQ-WAL-002-01, TST-REQ-WAL-002-02 |
 | REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03, TST-REQ-WAL-003-04 |
 | REQ-WAL-004 | TST-REQ-WAL-004-01, TST-REQ-WAL-004-02 |
@@ -458,7 +460,7 @@
 | REQ-EXE-013 | TST-REQ-EXE-013-01, TST-REQ-EXE-013-02 |
 | REQ-EXE-014 | TST-REQ-EXE-014-01, TST-REQ-EXE-014-02, TST-REQ-EXE-014-03 |
 | REQ-EXE-015 | TST-REQ-EXE-015-01, TST-REQ-EXE-015-02, TST-REQ-EXE-015-03 |
-| REQ-EXE-016 | TST-REQ-EXE-016-01, TST-REQ-EXE-016-02, TST-REQ-EXE-016-03 |
+| REQ-EXE-016 | TST-REQ-EXE-016-01, TST-REQ-EXE-016-02, TST-REQ-EXE-016-03, TST-REQ-EXE-016-07, TST-REQ-EXE-016-08 |
 | REQ-EXE-017 | TST-REQ-EXE-017-01, TST-REQ-EXE-017-02, TST-REQ-EXE-017-03 |
 | REQ-EXT-001 | TST-REQ-EXT-001-01, TST-REQ-EXT-001-02 |
 | REQ-EXT-002 | TST-REQ-EXT-002-01, TST-REQ-EXT-002-02 |

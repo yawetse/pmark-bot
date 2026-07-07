@@ -21,9 +21,28 @@ Deployed environments must read private keys, brokerage credentials, LLM API key
 Examples:
 
 ```text
-/codex-poly-bot/development/polymarket/openai/private-key
-/codex-poly-bot/production/alpaca/anthropic/api-key
+/codex-poly-bot/development/polymarket_us/openai/wallet
+/codex-poly-bot/development/polymarket_us/claude/wallet
+/codex-poly-bot/production/alpaca/openai/api-key
+/codex-poly-bot/production/alpaca/claude/api-key
 ```
+
+The deployed backend reads separate runtime variables for the four live account slots:
+
+```text
+POLYMARKET_OPENAI_KEY_ID
+POLYMARKET_OPENAI_SECRET_KEY
+POLYMARKET_OPENAI_PRIVATE_KEY
+POLYMARKET_CLAUDE_KEY_ID
+POLYMARKET_CLAUDE_SECRET_KEY
+POLYMARKET_CLAUDE_PRIVATE_KEY
+ALPACA_OPENAI_KEY_ID
+ALPACA_OPENAI_SECRET_KEY
+ALPACA_CLAUDE_KEY_ID
+ALPACA_CLAUDE_SECRET_KEY
+```
+
+These values let OpenAI and Claude use separate Polymarket US wallets and separate Alpaca accounts, so comparison metrics are not mixed across models. The dashboard displays only status, variable names, and secret references. It must not display private keys, API secrets, tokens, seed phrases, or raw `.env` values.
 
 ## Live Order Gate
 

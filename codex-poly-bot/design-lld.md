@@ -1969,11 +1969,12 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
   2. Create reservation.
   3. Build idempotency key.
   4. Persist order intent and audit event in one transaction.
-  5. For Alpaca live orders, refresh pre-submit reconciliation and refuse if account ID, account status, buying power, open orders, or positions are stale or mismatched.
-  6. Read current `KillSwitchState` again immediately before the venue call; if active, persist `KILL_SWITCH_BLOCKED`, release the reservation, and do not call the venue.
-  7. Submit via venue adapter.
-  8. Persist venue acknowledgement or ambiguous state.
-  9. Release reservation only on terminal state or safe refusal.
+  5. Resolve the live submitter from the venue and model provider, for example `polymarket_us:openai` or `alpaca:claude`.
+  6. For Alpaca live orders, refresh pre-submit reconciliation and refuse if account ID, account status, buying power, open orders, or positions are stale or mismatched.
+  7. Read current `KillSwitchState` again immediately before the venue call; if active, persist `KILL_SWITCH_BLOCKED`, release the reservation, and do not call the venue.
+  8. Submit via venue adapter.
+  9. Persist venue acknowledgement or ambiguous state.
+  10. Release reservation only on terminal state or safe refusal.
 
 #### Kill-Switch Cancel Flow
 

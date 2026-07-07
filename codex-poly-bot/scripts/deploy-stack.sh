@@ -213,11 +213,41 @@ add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/polymarket/private-key" \
   "PolymarketPrivateKeySecretArn"
 add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/polymarket_us/openai/key-id" \
+  "PolymarketOpenAiKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/polymarket_us/openai/secret-key" \
+  "PolymarketOpenAiSecretKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/polymarket_us/openai/private-key" \
+  "PolymarketOpenAiPrivateKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/polymarket_us/claude/key-id" \
+  "PolymarketClaudeKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/polymarket_us/claude/secret-key" \
+  "PolymarketClaudeSecretKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/polymarket_us/claude/private-key" \
+  "PolymarketClaudePrivateKeySecretArn"
+add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/alpaca/key-id" \
   "AlpacaKeyIdSecretArn"
 add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/alpaca/secret-key" \
   "AlpacaSecretKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/openai/key-id" \
+  "AlpacaOpenAiKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/openai/secret-key" \
+  "AlpacaOpenAiSecretKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/claude/key-id" \
+  "AlpacaClaudeKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/claude/secret-key" \
+  "AlpacaClaudeSecretKeySecretArn"
 add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/openai/admin-api-key" \
   "OpenAiAdminApiKeySecretArn"

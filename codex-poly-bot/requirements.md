@@ -147,7 +147,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-EXE-014 | P0 | When the kill switch is activated, the system shall disable live trading for all models and venues. |
 | REQ-EXE-015 | P0 | When the kill switch is activated, the system shall attempt to cancel open orders for all enabled live venues. |
 | REQ-EXE-016 | P0 | When the system refuses, submits, fills, cancels, or fails an order, the system shall persist the event and expose it in dashboard status. |
-| REQ-EXE-017 | P0 | When global dry-run mode is disabled, the system shall permit live orders only for explicitly enabled venues and account modes that pass all venue-specific and shared risk checks. |
+| REQ-EXE-017 | P0 | When global dry-run mode is disabled, the system shall permit live orders only for explicitly enabled venues, model-provider accounts, and account modes that pass all venue-specific and shared risk checks. |
 
 ### Exit Monitoring
 

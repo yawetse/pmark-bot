@@ -31,12 +31,14 @@ def test_req_wal_001_01_environment_venue_model_provider_combinations_credential
         resolve_credential_ref(CredentialTarget(Environment.DEVELOPMENT, Venue.POLYMARKET_US, ModelProvider.OPENAI)),
         resolve_credential_ref(CredentialTarget(Environment.DEVELOPMENT, Venue.POLYMARKET_US, ModelProvider.CLAUDE)),
         resolve_credential_ref(CredentialTarget(Environment.PRODUCTION, Venue.ALPACA, ModelProvider.OPENAI, "api-key")),
+        resolve_credential_ref(CredentialTarget(Environment.PRODUCTION, Venue.ALPACA, ModelProvider.CLAUDE, "api-key")),
     }
 
     assert refs == {
         "/codex-poly-bot/development/polymarket_us/openai/wallet",
         "/codex-poly-bot/development/polymarket_us/claude/wallet",
         "/codex-poly-bot/production/alpaca/openai/api-key",
+        "/codex-poly-bot/production/alpaca/claude/api-key",
     }
 
 def test_req_wal_001_02_two_combinations_resolve_same_disallowed_credential_reference_live() -> None:

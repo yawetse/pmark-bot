@@ -15,7 +15,9 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 - Confirm Polymarket wallet setup is complete for the selected account mode.
 - Confirm Alpaca paper or live account setup is complete for the selected account mode.
 - Confirm deployed secrets exist only in AWS Secrets Manager under `/codex-poly-bot/{environment}/...`.
-- Confirm production runtime exposes `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`, `POLYMARKET_KEY_ID`, and either `POLYMARKET_SECRET_KEY` or `POLYMARKET_PRIVATE_KEY` through ECS secret injection.
+- Confirm production runtime exposes separate credentials for `polymarket_us / openai`, `polymarket_us / claude`, `alpaca / openai`, and `alpaca / claude` through ECS secret injection.
+- For Polymarket US, confirm each provider has `POLYMARKET_{OPENAI|CLAUDE}_KEY_ID` plus either `POLYMARKET_{OPENAI|CLAUDE}_SECRET_KEY` or `POLYMARKET_{OPENAI|CLAUDE}_PRIVATE_KEY`.
+- For Alpaca, confirm each provider has `ALPACA_{OPENAI|CLAUDE}_KEY_ID` and `ALPACA_{OPENAI|CLAUDE}_SECRET_KEY`.
 
 ## Dry-Run Evidence
 
