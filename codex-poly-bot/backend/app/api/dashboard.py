@@ -448,6 +448,32 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             ),
         }
 
+    @router.post("/api/notifications/test")
+    async def notification_test(
+        request: Request,
+        response: Response,
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+        _: None = Depends(require_mutation_context),
+    ) -> dict[str, Any]:
+        """Send a test notification through the configured delivery adapter."""
+
+        payload = await request.json()
+        environment = _parse_environment(payload.get("environment"), context.environment)
+        config_snapshot = _current_config(environment, context.actor.username)
+        result = services.runtime_status.send_test_notification(
+            environment=environment,
+            config_payload=config_snapshot["settings"],
+            requested_by=context.actor.username,
+            message=str(payload.get("message") or ""),
+        )
+        if result["sent"]:
+            response.status_code = status.HTTP_202_ACCEPTED
+        elif result["retryable"] or result["errorSummary"]:
+            response.status_code = status.HTTP_502_BAD_GATEWAY
+        else:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return result
+
     @router.get("/api/operations/summary")
     def operations_summary(
         include_history: bool = Query(default=False),

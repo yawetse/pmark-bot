@@ -15,7 +15,12 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.adapters.aws import BillingUnavailableError, billing_adapter_from_env, ses_adapter_from_env
+from app.adapters.aws import (
+    BillingUnavailableError,
+    EmailMessage,
+    billing_adapter_from_env,
+    ses_adapter_from_env,
+)
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
@@ -61,7 +66,11 @@ from app.services.lifecycle_service import (
     execution_run_payload,
     exit_run_payload,
 )
-from app.services.notification_service import NotificationDeliveryLedger
+from app.services.notification_service import (
+    NotificationDeliveryLedger,
+    NotificationDeliveryRecord,
+    NotificationSettings,
+)
 from app.services.wallet_service import CredentialTarget, resolve_credential_ref
 from app.services.stock_universe import (
     DEFAULT_ALPACA_PRESET_REFRESH_CONFIG,
@@ -1358,6 +1367,82 @@ class RuntimeStatusService:
             "recipientCount": recipient_count,
             "sesIdentity": ses_identity,
             "settings": notification_config,
+        }
+
+    def send_test_notification(
+        self,
+        *,
+        environment: Environment,
+        config_payload: dict[str, Any],
+        requested_by: str,
+        message: str = "",
+    ) -> dict[str, Any]:
+        """Send a harmless operator notification through the configured adapter."""
+
+        now = datetime.now(UTC)
+        notification_config = config_payload.get("notifications", {})
+        settings = NotificationSettings.from_config(notification_config)
+        recipients = settings.recipient_emails
+        subject = f"Codex Poly Bot test notification: {environment.value}"
+        body = "\n".join(
+            line
+            for line in (
+                "This is a test notification from Codex Poly Bot.",
+                f"Environment: {environment.value}",
+                f"Requested by: {requested_by}",
+                f"Message: {message.strip()}" if message.strip() else "",
+            )
+            if line
+        )
+        email = EmailMessage(recipients=recipients, subject=subject, body=body)
+        adapter = self.lifecycle.notification_adapter
+        if adapter is None:
+            delivery = None
+            sent = False
+            attempt_recorded = False
+            message_id = None
+            retryable = False
+            skipped_reason = "notification adapter not configured"
+            error_summary = None
+        else:
+            delivery = adapter.send_alert(email)
+            sent = delivery.sent
+            attempt_recorded = delivery.attempt_recorded
+            message_id = delivery.message_id
+            retryable = delivery.retryable
+            skipped_reason = delivery.skipped_reason
+            error_summary = delivery.error_summary
+        next_retry_at = (
+            now + timedelta(seconds=settings.retry_delay_seconds)
+            if retryable
+            else None
+        )
+        self.notification_ledger.record(
+            NotificationDeliveryRecord(
+                notification_type="test_notification",
+                recipients=recipients,
+                subject=subject,
+                attempted_at=now,
+                sent=sent,
+                message_id=message_id,
+                skipped_reason=skipped_reason,
+                retryable=retryable,
+                next_retry_at=next_retry_at,
+                error_summary=error_summary,
+            )
+        )
+        return {
+            "environment": environment.value,
+            "notificationType": "test_notification",
+            "sent": sent,
+            "attemptRecorded": attempt_recorded,
+            "recipientCount": len(recipients),
+            "messageId": message_id,
+            "retryable": retryable,
+            "skippedReason": skipped_reason,
+            "errorSummary": error_summary,
+            "attemptedAt": now.isoformat(),
+            "nextRetryAt": next_retry_at.isoformat() if next_retry_at else None,
         }
 
     def tick_schedule(
