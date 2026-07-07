@@ -13,7 +13,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import JSONResponse
 
 from app.db import PersistenceUnavailableError, normalize_config_username
@@ -142,7 +153,10 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             preferences=preferences["settings"],
         )
         credentials = services.runtime_status.credential_rows(context.environment)
-        operations = services.runtime_status.operations_summary(context.environment)
+        operations = services.runtime_status.operations_summary(
+            context.environment,
+            include_history=False,
+        )
         kill_switch_active = services.kill_switch.state(context.environment).active
         operations["killSwitch"] = "active" if kill_switch_active else "inactive"
         notifications = services.runtime_status.notification_summary(settings_payload)
@@ -187,6 +201,8 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 config_payload=settings_payload,
                 config_degraded=config_snapshot["degraded"],
                 kill_switch_active=kill_switch_active,
+                market_data=market_data,
+                order_events=operations["orderEvents"],
             ),
             "audit": {"items": _audit_events()},
             "degraded_sections": [],
@@ -434,6 +450,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
     @router.get("/api/operations/summary")
     def operations_summary(
+        include_history: bool = Query(default=False),
         context: DashboardRequestContext = Depends(require_dashboard_access),
     ) -> dict[str, Any]:
         """Return operations dashboard state.
@@ -441,7 +458,10 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-UI-008, REQ-EXE-016, REQ-OBS-005
         """
 
-        operations = services.runtime_status.operations_summary(context.environment)
+        operations = services.runtime_status.operations_summary(
+            context.environment,
+            include_history=include_history,
+        )
         operations["killSwitch"] = (
             "active" if services.kill_switch.state(context.environment).active else "inactive"
         )
@@ -793,18 +813,21 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     def _realtime_snapshot(context: DashboardRequestContext) -> dict[str, Any]:
         config_snapshot = _current_config(context.environment, context.actor.username)
         settings_payload = config_snapshot["settings"]
-        operations = services.runtime_status.operations_summary(context.environment)
-        operations["killSwitch"] = (
-            "active" if services.kill_switch.state(context.environment).active else "inactive"
+        operations = services.runtime_status.operations_summary(
+            context.environment,
+            include_history=False,
+        )
+        kill_switch_active = services.kill_switch.state(context.environment).active
+        operations["killSwitch"] = "active" if kill_switch_active else "inactive"
+        market_data = services.runtime_status.market_data_pull(
+            environment=context.environment,
+            config_payload=settings_payload,
         )
         return {
             "environment": context.environment.value,
             "generatedAt": _now(),
             "operations": operations,
-            "marketData": services.runtime_status.market_data_pull(
-                environment=context.environment,
-                config_payload=settings_payload,
-            ),
+            "marketData": market_data,
             "tickSchedule": services.runtime_status.tick_schedule(
                 environment=context.environment,
                 config_payload=settings_payload,
@@ -813,7 +836,9 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 environment=context.environment,
                 config_payload=settings_payload,
                 config_degraded=config_snapshot["degraded"],
-                kill_switch_active=services.kill_switch.state(context.environment).active,
+                kill_switch_active=kill_switch_active,
+                market_data=market_data,
+                order_events=operations["orderEvents"],
             ),
         }
 

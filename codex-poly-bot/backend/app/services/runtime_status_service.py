@@ -300,6 +300,7 @@ class RuntimeStatusService:
     USER_PREFERENCES_TABLE = f"{SHARED_SCHEMA}.user_preferences"
     LEGACY_MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.market_data_pulls"
     MARKET_DATA_PULLS_TABLE = f"{SHARED_SCHEMA}.dashboard_market_data_pulls"
+    MARKET_DATA_DASHBOARD_CANDIDATE_LIMIT = 50
     PIPELINE_RUNS_TABLE = f"{SHARED_SCHEMA}.pipeline_runs"
     PIPELINE_STEPS_TABLE = f"{SHARED_SCHEMA}.pipeline_steps"
     TICK_SUMMARIES_TABLE = f"{SHARED_SCHEMA}.tick_summaries"
@@ -1589,7 +1590,12 @@ class RuntimeStatusService:
             ),
         }
 
-    def operations_summary(self, environment: Environment) -> dict[str, Any]:
+    def operations_summary(
+        self,
+        environment: Environment,
+        *,
+        include_history: bool = False,
+    ) -> dict[str, Any]:
         """Return operational status and latest order rows.
 
         REQ: REQ-EXE-014, REQ-EXE-016, REQ-OBS-005
@@ -1616,8 +1622,40 @@ class RuntimeStatusService:
             "strategyConsensus": self.strategy_consensus_summary(environment),
             "execution": self.execution_summary(environment),
             "exit": self.exit_summary(environment),
-            "historicalImport": self.historical_import_summary(environment),
-            "brokerHistory": self.broker_history_summary(environment),
+            "historicalImport": (
+                self.historical_import_summary(environment)
+                if include_history
+                else self._deferred_historical_import_summary()
+            ),
+            "brokerHistory": (
+                self.broker_history_summary(environment)
+                if include_history
+                else self._deferred_broker_history_summary()
+            ),
+        }
+
+    def _deferred_historical_import_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": (
+                "Historical Polymarket import details are deferred from the default "
+                "operations summary to keep dashboard polling bounded."
+            ),
+            "counts": _empty_historical_import_counts(),
+            "checkpoints": [],
+            "lastUpdatedAt": None,
+        }
+
+    def _deferred_broker_history_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": (
+                "Broker history details are deferred from the default operations summary "
+                "to keep dashboard polling bounded."
+            ),
+            "counts": _empty_broker_history_counts(),
+            "checkpoints": [],
+            "lastUpdatedAt": None,
         }
 
     def scanner_summary(self, environment: Environment) -> dict[str, Any]:
@@ -2135,6 +2173,7 @@ class RuntimeStatusService:
         *,
         environment: Environment,
         config_payload: dict[str, Any],
+        candidate_limit: int | None = None,
     ) -> dict[str, Any]:
         """Return the latest dashboard-visible market-data pull.
 
@@ -2151,6 +2190,11 @@ class RuntimeStatusService:
             config_payload=config_payload,
             rows=rows,
             selected_venue=selected_venue,
+            candidate_limit=(
+                self.MARKET_DATA_DASHBOARD_CANDIDATE_LIMIT
+                if candidate_limit is None
+                else candidate_limit
+            ),
         )
 
     def economics_summary(
@@ -2283,6 +2327,8 @@ class RuntimeStatusService:
         config_payload: dict[str, Any],
         config_degraded: bool = False,
         kill_switch_active: bool = False,
+        market_data: dict[str, Any] | None = None,
+        order_events: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Return a dashboard-safe view of loop timing, inputs, gates, and logic.
 
@@ -2309,7 +2355,8 @@ class RuntimeStatusService:
         live_enabled = bool(config_payload.get("live_enabled", False))
         credentials = self.credential_rows(environment)
         credential_blockers = self._loop_credential_blockers(credentials, enabled_venues)
-        order_events = self.order_events()
+        if order_events is None:
+            order_events = self.order_events()
         open_orders = [
             item
             for item in order_events
@@ -2331,10 +2378,11 @@ class RuntimeStatusService:
             for name, strategy_config in config_payload.get("strategies", {}).items()
             if strategy_config.get("enabled", False)
         ]
-        market_data = self.market_data_pull(
-            environment=environment,
-            config_payload=config_payload,
-        )
+        if market_data is None:
+            market_data = self.market_data_pull(
+                environment=environment,
+                config_payload=config_payload,
+            )
 
         return {
             "environment": environment.value,
@@ -3413,13 +3461,19 @@ class RuntimeStatusService:
         config_payload: dict[str, Any],
         rows: list[dict[str, Any]],
         selected_venue: str,
+        candidate_limit: int | None = None,
     ) -> dict[str, Any]:
         venues = self._market_data_venues(config_payload)
         venue_payloads = []
         for venue in venues:
             venue_rows = [row for row in rows if row["venue"] == venue]
             if venue_rows:
-                venue_payloads.append(self._market_data_payload(max(venue_rows, key=lambda row: row["created_at"])))
+                venue_payloads.append(
+                    self._market_data_payload(
+                        max(venue_rows, key=lambda row: row["created_at"]),
+                        candidate_limit=candidate_limit,
+                    )
+                )
             else:
                 venue_payloads.append(
                     self._empty_market_data_payload(
@@ -3438,7 +3492,7 @@ class RuntimeStatusService:
                 message="No market data pull has been recorded in the dashboard store.",
             )
         else:
-            summary = self._market_data_payload(latest)
+            summary = self._market_data_payload(latest, candidate_limit=candidate_limit)
             summary["message"] = (
                 f"Latest market data pull records are shown for {len(venue_payloads)} enabled venue"
                 f"{'' if len(venue_payloads) == 1 else 's'}."
@@ -3449,16 +3503,34 @@ class RuntimeStatusService:
             for venue_payload in venue_payloads
             for candidate in venue_payload["candidates"]
         ]
+        total_candidate_count = sum(
+            venue_payload["candidateCount"] for venue_payload in venue_payloads
+        )
         summary["status"] = _aggregate_market_data_pull_status(
             [venue_payload["status"] for venue_payload in venue_payloads]
         )
-        summary["candidateCount"] = len(all_candidates)
-        summary["candidates"] = all_candidates
+        summary["candidateCount"] = total_candidate_count
+        summary["candidates"] = (
+            all_candidates[:candidate_limit]
+            if candidate_limit is not None
+            else all_candidates
+        )
         summary["venues"] = venue_payloads
         return summary
 
-    def _market_data_payload(self, row: dict[str, Any]) -> dict[str, Any]:
-        candidates = [_safe_candidate_payload(candidate) for candidate in row.get("candidates", [])]
+    def _market_data_payload(
+        self,
+        row: dict[str, Any],
+        *,
+        candidate_limit: int | None = None,
+    ) -> dict[str, Any]:
+        raw_candidates = row.get("candidates", [])
+        limited_candidates = (
+            raw_candidates[:candidate_limit]
+            if candidate_limit is not None
+            else raw_candidates
+        )
+        candidates = [_safe_candidate_payload(candidate) for candidate in limited_candidates]
         return {
             "id": row["id"],
             "environment": row["environment"],
@@ -3467,7 +3539,7 @@ class RuntimeStatusService:
             "trigger": row.get("trigger", "unknown"),
             "source": row.get("source", "dashboard store"),
             "lastPulledAt": row["created_at"].isoformat(),
-            "candidateCount": len(candidates),
+            "candidateCount": len(raw_candidates),
             "candidates": candidates,
             "message": row.get("message") or "Market data pull recorded.",
             "errorCode": row.get("error_code"),

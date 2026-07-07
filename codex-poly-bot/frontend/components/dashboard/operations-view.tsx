@@ -1561,6 +1561,7 @@ function statusClass(status: string): "ok" | "idle" | "blocked" {
       "idle",
       "skipped",
       "empty",
+      "deferred",
       "no_candidates_passed",
       "no_candidates",
       "no_scores",

@@ -420,6 +420,34 @@ def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypa
     assert "alpaca-signing-key" not in str(loop)
 
 
+def test_req_obs_005_04_operations_summary_defers_heavy_history_by_default(monkeypatch) -> None:
+    """TST-REQ-OBS-005-04: Validates REQ-OBS-005 and REQ-UI-008
+
+    Given: an authenticated operator opens the live operations dashboard
+    When: the default summary endpoint is requested
+    Then: high-volume historical import sections are deferred unless explicitly requested
+    """
+
+    client, token = _client()
+    runtime_status = client.app.state.services.runtime_status
+
+    def fail_if_loaded(*_: object, **__: object) -> dict[str, object]:
+        raise AssertionError("full history should not load in the default operations summary")
+
+    monkeypatch.setattr(runtime_status, "historical_import_summary", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "broker_history_summary", fail_if_loaded)
+
+    response = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["historicalImport"]["status"] == "deferred"
+    assert payload["brokerHistory"]["status"] == "deferred"
+
+
 def test_req_ui_004_05_dashboard_preferences_persist_theme_timezone_and_costs() -> None:
     """TST-REQ-UI-004-05: Validates REQ-UI-004 and REQ-OBS-004
 
@@ -1031,7 +1059,7 @@ def test_req_dat_009_11_operations_summary_exposes_historical_import_status() ->
     )
 
     response = client.get(
-        "/api/operations/summary",
+        "/api/operations/summary?include_history=true",
         headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
     )
     historical = response.json()["historicalImport"]
@@ -1143,7 +1171,7 @@ def test_req_alp_017_06_operations_summary_exposes_broker_history_status() -> No
     )
 
     response = client.get(
-        "/api/operations/summary",
+        "/api/operations/summary?include_history=true",
         headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
     )
     payload = response.json()
