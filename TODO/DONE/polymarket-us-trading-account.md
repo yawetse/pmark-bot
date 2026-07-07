@@ -6,13 +6,15 @@ Do not paste API keys, private keys, seed phrases, or account secrets into this 
 
 ## Account Setup
 
-- [ ] Download the Polymarket US app.
+- [x] Download the Polymarket US app.
 - [x] Create the Polymarket US account using the sign-in method that will also be used for the developer portal.
-- [ ] Complete identity verification and wait for trading approval.
-- [ ] Confirm the account is approved for live trading in the app.
-- [ ] Set up the funding method supported by the app.
-- [ ] Fund the account with the starting live-test amount.
-- [ ] Record the non-secret account identifier or username in the credential inventory, if Polymarket US exposes one.
+- [x] Complete identity verification and wait for trading approval.
+- [x] Confirm the account is approved for live trading in the app.
+- [x] Set up the funding method supported by the app.
+- [x] Fund the account with the starting live-test amount.
+- [x] Record the non-secret account identifier or username in the credential inventory, if Polymarket US exposes one.
+
+Evidence 2026-07-02: operator confirmed Polymarket US is set for live trading and provided an app screenshot showing username `goofyrobin3284`, `$120 cash`, deposit and withdraw controls, and no positions. The non-secret identifier is recorded in `docs/trading-account-inventory.md`.
 
 ## API Setup
 
