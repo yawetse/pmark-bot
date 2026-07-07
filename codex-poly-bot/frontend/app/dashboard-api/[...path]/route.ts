@@ -7,6 +7,8 @@ import { getDashboardSession } from "@/lib/server/session";
 
 export const runtime = "nodejs";
 
+const BACKEND_READ_TIMEOUT_MS = 25_000;
+
 type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
@@ -41,6 +43,7 @@ async function proxyToBackend(request: NextRequest, context: RouteContext): Prom
   const backendUrl = backendApiUrl(params.path, request.nextUrl.search);
   const headers = backendHeaders(request, sessionCheck.session.username);
   const body = request.method === "GET" ? undefined : await request.arrayBuffer();
+  const timeout = request.method === "GET" ? createTimeout(BACKEND_READ_TIMEOUT_MS) : null;
   let response: Response;
   try {
     response = await fetch(backendUrl, {
@@ -48,12 +51,15 @@ async function proxyToBackend(request: NextRequest, context: RouteContext): Prom
       headers,
       body,
       cache: "no-store",
+      signal: timeout?.signal,
     });
   } catch (error) {
+    const timedOut = isAbortError(error);
+    const status = timedOut ? 504 : 502;
     logBackendProxyResponse({
       method: request.method,
       path: request.nextUrl.pathname,
-      status: 502,
+      status,
       durationMs: performance.now() - startedAt,
     });
     console.error(
@@ -63,15 +69,20 @@ async function proxyToBackend(request: NextRequest, context: RouteContext): Prom
         method: request.method,
         path: request.nextUrl.pathname,
         error_type: error instanceof Error ? error.name : "unknown",
+        timed_out: timedOut,
       }),
     );
     return NextResponse.json(
       {
-        error_code: "backend_gateway_unavailable",
-        message: "The backend gateway returned 502, so the request did not complete.",
+        error_code: timedOut ? "backend_gateway_timeout" : "backend_gateway_unavailable",
+        message: timedOut
+          ? "The backend gateway timed out, so the request did not complete."
+          : "The backend gateway returned 502, so the request did not complete.",
       },
-      { status: 502 },
+      { status },
     );
+  } finally {
+    timeout?.cancel();
   }
   logBackendProxyResponse({
     method: request.method,
@@ -108,6 +119,21 @@ function logBackendProxyResponse({
       environment: process.env.NEXT_PUBLIC_APP_ENV ?? "local",
     }),
   );
+}
+
+function createTimeout(timeoutMs: number): { signal: AbortSignal; cancel: () => void } {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    cancel: () => clearTimeout(timeoutId),
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 }
 
 function backendApiUrl(pathParts: string[], search: string): string {

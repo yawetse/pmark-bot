@@ -458,6 +458,11 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 2fr) minmax(280px, 0.72fr);
 }
 
+.settings-side-stack {
+  display: grid;
+  gap: 16px;
+}
+
 .page-stack,
 .operator-board {
   display: grid;
@@ -740,6 +745,38 @@ textarea:focus-visible {
 
 .safety-status-list li > span:last-child {
   text-align: left;
+}
+
+.account-settings-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.logout-control {
+  align-items: start;
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 12px;
+}
+
+.logout-control div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.logout-control span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.logout-control strong {
+  overflow-wrap: anywhere;
 }
 
 .status {

@@ -66,6 +66,12 @@ export async function setDashboardSession(username: string): Promise<void> {
   });
 }
 
+export async function clearDashboardSession(): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.delete(SESSION_COOKIE_NAME);
+  cookieStore.delete(OAUTH_STATE_COOKIE_NAME);
+}
+
 export function allowedUsers(): Set<string> {
   return new Set(
     (process.env.DASHBOARD_ALLOWED_USERS ?? "")
