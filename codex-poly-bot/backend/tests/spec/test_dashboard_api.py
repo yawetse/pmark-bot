@@ -431,9 +431,16 @@ def test_req_obs_005_04_operations_summary_defers_heavy_history_by_default(monke
     client, token = _client()
     runtime_status = client.app.state.services.runtime_status
 
-    def fail_if_loaded(*_: object, **__: object) -> dict[str, object]:
-        raise AssertionError("full history should not load in the default operations summary")
+    def fail_if_loaded(*_: object, **__: object) -> dict[str, object] | list[object]:
+        raise AssertionError("high-volume details should not load in the default operations summary")
 
+    monkeypatch.setattr(runtime_status, "order_events", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "pipeline_runs", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "scanner_summary", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "reasoning_summary", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "strategy_consensus_summary", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "execution_summary", fail_if_loaded)
+    monkeypatch.setattr(runtime_status, "exit_summary", fail_if_loaded)
     monkeypatch.setattr(runtime_status, "historical_import_summary", fail_if_loaded)
     monkeypatch.setattr(runtime_status, "broker_history_summary", fail_if_loaded)
 
@@ -444,6 +451,13 @@ def test_req_obs_005_04_operations_summary_defers_heavy_history_by_default(monke
     payload = response.json()
 
     assert response.status_code == 200
+    assert payload["orderEvents"] == []
+    assert payload["pipelineRuns"] == []
+    assert payload["scanner"]["status"] == "deferred"
+    assert payload["reasoning"]["status"] == "deferred"
+    assert payload["strategyConsensus"]["status"] == "deferred"
+    assert payload["execution"]["status"] == "deferred"
+    assert payload["exit"]["status"] == "deferred"
     assert payload["historicalImport"]["status"] == "deferred"
     assert payload["brokerHistory"]["status"] == "deferred"
 
@@ -871,7 +885,8 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
     )
     assert realtime.status_code == 200
     assert realtime.json()["tickSchedule"]["lastTickRunId"] == run_id
-    assert realtime.json()["operations"]["pipelineRuns"][0]["id"] == run_id
+    assert realtime.json()["operations"]["pipelineRuns"] == []
+    assert realtime.json()["operations"]["scanner"]["status"] == "deferred"
 
 
 def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> None:

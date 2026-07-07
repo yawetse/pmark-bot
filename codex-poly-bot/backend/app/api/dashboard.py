@@ -451,6 +451,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     @router.get("/api/operations/summary")
     def operations_summary(
         include_history: bool = Query(default=False),
+        include_details: bool = Query(default=False),
         context: DashboardRequestContext = Depends(require_dashboard_access),
     ) -> dict[str, Any]:
         """Return operations dashboard state.
@@ -461,6 +462,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         operations = services.runtime_status.operations_summary(
             context.environment,
             include_history=include_history,
+            include_details=include_details,
         )
         operations["killSwitch"] = (
             "active" if services.kill_switch.state(context.environment).active else "inactive"
