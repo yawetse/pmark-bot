@@ -1518,17 +1518,15 @@ class RuntimeStatusService:
 
         datasets = []
         for alias, metadata in DATA_EXPLORER_DATASETS.items():
-            rows = self._data_explorer_rows(environment, alias)
-            sample_rows = [_explorer_row_payload(row) for row in rows[:5]]
             datasets.append(
                 {
                     "id": alias,
                     "label": metadata["label"],
                     "table": metadata["table"],
                     "description": metadata["description"],
-                    "rowCount": len(rows),
-                    "columns": _explorer_columns(sample_rows, metadata["columns"]),
-                    "sampleRows": sample_rows,
+                    "rowCount": 0,
+                    "columns": list(metadata["columns"]),
+                    "sampleRows": [],
                 }
             )
         return {
@@ -1549,7 +1547,8 @@ class RuntimeStatusService:
 
         parsed = _parse_explorer_query(query)
         dataset_id = parsed["dataset"]
-        rows = self._explorer_rows_for_query(environment, parsed)
+        limit = min(max(1, int(parsed["limit"] or default_limit)), DASHBOARD_DATA_EXPLORER_ROW_LIMIT)
+        rows = self._explorer_rows_for_query(environment, parsed, row_limit=limit)
         filtered_rows = [
             row
             for row in rows
@@ -1560,7 +1559,6 @@ class RuntimeStatusService:
                 key=lambda row: _sortable_explorer_value(_nested_explorer_value(row, parsed["orderBy"])),
                 reverse=parsed["orderDirection"] == "desc",
             )
-        limit = min(max(1, int(parsed["limit"] or default_limit)), 500)
         selected_rows = filtered_rows[:limit]
         columns = (
             _explorer_columns(selected_rows, ())
@@ -3587,16 +3585,23 @@ class RuntimeStatusService:
             if row["environment"] == environment.value
         ]
 
-    def _data_explorer_rows(self, environment: Environment, dataset_id: str) -> list[dict[str, Any]]:
+    def _data_explorer_rows(
+        self,
+        environment: Environment,
+        dataset_id: str,
+        *,
+        limit: int = DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+    ) -> list[dict[str, Any]]:
         metadata = DATA_EXPLORER_DATASETS.get(dataset_id)
         if metadata is None:
             raise ValueError(f"unsupported dataset: {dataset_id}")
+        bounded_limit = min(max(1, int(limit)), DASHBOARD_DATA_EXPLORER_ROW_LIMIT)
         try:
             rows = [
                 row
                 for row in self.registry.state.rows(
                     metadata["table"],
-                    limit=DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+                    limit=bounded_limit,
                     newest_first=True,
                     filters={"environment": environment.value},
                 )
@@ -3607,7 +3612,7 @@ class RuntimeStatusService:
                     row
                     for row in self.registry.state.rows(
                         self.LEGACY_MARKET_DATA_PULLS_TABLE,
-                        limit=DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+                        limit=bounded_limit,
                         newest_first=True,
                         filters={"environment": environment.value},
                     )
@@ -3618,12 +3623,18 @@ class RuntimeStatusService:
         rows.sort(key=_row_datetime_sort_key, reverse=True)
         return rows
 
-    def _explorer_rows_for_query(self, environment: Environment, parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    def _explorer_rows_for_query(
+        self,
+        environment: Environment,
+        parsed: dict[str, Any],
+        *,
+        row_limit: int = DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+    ) -> list[dict[str, Any]]:
         dataset_id = str(parsed["dataset"])
         base_alias = str(parsed.get("alias") or dataset_id)
         rows = [
             _explorer_row_payload(row)
-            for row in self._data_explorer_rows(environment, dataset_id)
+            for row in self._data_explorer_rows(environment, dataset_id, limit=row_limit)
         ]
         joins = parsed.get("joins", [])
         if not joins:
@@ -3634,7 +3645,11 @@ class RuntimeStatusService:
             join_alias = str(join["alias"])
             join_rows = [
                 _explorer_row_payload(row)
-                for row in self._data_explorer_rows(environment, str(join["dataset"]))
+                for row in self._data_explorer_rows(
+                    environment,
+                    str(join["dataset"]),
+                    limit=row_limit,
+                )
             ]
             next_rows: list[dict[str, Any]] = []
             for current_row in joined_rows:
