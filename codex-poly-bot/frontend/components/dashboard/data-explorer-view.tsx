@@ -298,7 +298,7 @@ export function DataExplorerView() {
             >
               {state.metadata.datasets.map((dataset) => (
                 <option key={dataset.id} value={dataset.id}>
-                  {dataset.label} ({dataset.rowCount} rows)
+                  {dataset.label}
                 </option>
               ))}
             </select>
