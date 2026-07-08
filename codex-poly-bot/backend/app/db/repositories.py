@@ -65,12 +65,31 @@ class DatabaseState:
         self.tables.setdefault(table_name, []).append(row)
         return row
 
-    def rows(self, table_name: str) -> list[dict]:
+    def rows(
+        self,
+        table_name: str,
+        *,
+        limit: int | None = None,
+        newest_first: bool = False,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict]:
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
         if table_name in self.fail_on_read_tables:
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
-        return self.tables.setdefault(table_name, [])
+        rows = self.tables.setdefault(table_name, [])
+        if filters is None and limit is None and not newest_first:
+            return rows
+        selected_rows = [
+            row
+            for row in rows
+            if all(row.get(key) == value for key, value in (filters or {}).items())
+        ]
+        if newest_first:
+            selected_rows.sort(key=_row_order_value, reverse=True)
+        if limit is not None:
+            selected_rows = selected_rows[: max(1, int(limit))]
+        return selected_rows
 
 
 @dataclass(frozen=True)
@@ -145,17 +164,32 @@ class PersistentDatabaseState(DatabaseState):
             if owns_session:
                 session.close()
 
-    def rows(self, table_name: str) -> list[dict]:
+    def rows(
+        self,
+        table_name: str,
+        *,
+        limit: int | None = None,
+        newest_first: bool = False,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict]:
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
         if table_name in self.fail_on_read_tables:
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
         table = _table_for_name(table_name)
         statement = table.select()
+        for key, value in (filters or {}).items():
+            if key not in table.c:
+                raise SchemaViolationError(f"unknown repository column: {table_name}.{key}")
+            statement = statement.where(table.c[key] == value)
         if "created_at" in table.c:
-            statement = statement.order_by(table.c.created_at.asc())
+            column = table.c.created_at
+            statement = statement.order_by(column.desc() if newest_first else column.asc())
         elif "updated_at" in table.c:
-            statement = statement.order_by(table.c.updated_at.asc())
+            column = table.c.updated_at
+            statement = statement.order_by(column.desc() if newest_first else column.asc())
+        if limit is not None:
+            statement = statement.limit(max(1, int(limit)))
         session = self._active_session.get()
         owns_session = session is None
         if owns_session:
@@ -174,6 +208,13 @@ def _table_for_name(table_name: str):
     if table is None:
         raise SchemaViolationError(f"unknown repository table: {table_name}")
     return table
+
+
+def _row_order_value(row: dict[str, Any]) -> str:
+    value = row.get("created_at") if "created_at" in row else row.get("updated_at")
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return "" if value is None else str(value)
 
 
 @dataclass(frozen=True)

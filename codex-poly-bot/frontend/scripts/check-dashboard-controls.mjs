@@ -76,6 +76,16 @@ for (const token of [
   assert.match(apiClient, new RegExp(token));
 }
 
+const serverDashboardApi = read("lib/server/dashboard-api.ts");
+for (const token of [
+  "errorMessage",
+  "looksLikeHtml",
+  "gatewayErrorMessage",
+  "backend gateway returned",
+]) {
+  assert.match(serverDashboardApi, new RegExp(token));
+}
+
 const configPage = read("app/dashboard/config/page.tsx");
 assert.match(configPage, /serverDashboardApi<ConfigSnapshot>/);
 assert.match(configPage, /"config\/current"/);
