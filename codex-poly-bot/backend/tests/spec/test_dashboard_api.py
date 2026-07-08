@@ -11,7 +11,15 @@ from app.adapters.aws import AwsBillingCost, InMemorySesEmailAdapter
 from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
-from app.services.runtime_status_service import _config_for_manual_mode
+from app.services.runtime_status_service import (
+    DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+    DASHBOARD_MARKET_DATA_ROW_LIMIT,
+    DASHBOARD_PIPELINE_RECORD_ROW_LIMIT,
+    DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
+    DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
+    DATA_EXPLORER_DATASETS,
+    _config_for_manual_mode,
+)
 from app.services.stock_universe_refresh_service import (
     StaticStockUniverseSource,
     StockUniverseRefreshService,
@@ -126,6 +134,149 @@ class FakeMarketDataFetcher:
             }
         )
         return self.results[venue]
+
+
+def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch) -> None:
+    """TST-REQ-UI-008-08: Validates REQ-UI-008, REQ-DAT-008, and REQ-OBS-005
+
+    Given: dashboard data is read from the persistent store
+    When: Run, Markets, and What-if summary data is loaded
+    Then: the dashboard reads recent environment-scoped windows instead of full tables
+    """
+
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    state = app.state.services.registry.state
+    original_rows = state.rows
+    calls: list[tuple[str, dict]] = []
+
+    def observed_rows(table_name: str, *args, **kwargs):
+        calls.append((table_name, kwargs))
+        return original_rows(table_name, *args, **kwargs)
+
+    monkeypatch.setattr(state, "rows", observed_rows)
+    service = app.state.services.runtime_status
+    config_payload = service.runtime_config_payload()
+
+    service.data_explorer(Environment.DEVELOPMENT)
+    service.market_data_pull(
+        environment=Environment.DEVELOPMENT,
+        config_payload=config_payload,
+    )
+    service.pipeline_runs(Environment.DEVELOPMENT, limit=20)
+
+    environment_filter = {"environment": Environment.DEVELOPMENT.value}
+    for metadata in DATA_EXPLORER_DATASETS.values():
+        assert any(
+            table_name == metadata["table"]
+            and kwargs.get("limit") == DASHBOARD_DATA_EXPLORER_ROW_LIMIT
+            and kwargs.get("newest_first") is True
+            and kwargs.get("filters") == environment_filter
+            for table_name, kwargs in calls
+        )
+    assert any(
+        table_name == service.MARKET_DATA_PULLS_TABLE
+        and kwargs.get("limit") == DASHBOARD_MARKET_DATA_ROW_LIMIT
+        and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == environment_filter
+        for table_name, kwargs in calls
+    )
+    assert any(
+        table_name == service.PIPELINE_RUNS_TABLE
+        and kwargs.get("limit") == DASHBOARD_PIPELINE_RUN_ROW_LIMIT
+        and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == environment_filter
+        for table_name, kwargs in calls
+    )
+    assert any(
+        table_name == service.PIPELINE_STEPS_TABLE
+        and kwargs.get("limit") == DASHBOARD_PIPELINE_STEP_ROW_LIMIT
+        and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == environment_filter
+        for table_name, kwargs in calls
+    )
+
+
+def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypatch) -> None:
+    """TST-REQ-UI-008-09: Validates REQ-UI-008 and REQ-OBS-005
+
+    Given: a selected pipeline run has step record IDs
+    When: scenario detail loads the records for that run
+    Then: record lookup uses bounded recent reads instead of full table scans
+    """
+
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    service = app.state.services.runtime_status
+    state = app.state.services.registry.state
+    now = datetime.now(UTC)
+    state.insert(
+        service.PIPELINE_RUNS_TABLE,
+        {
+            "id": "run-1",
+            "environment": Environment.DEVELOPMENT.value,
+            "trigger": "scheduled",
+            "status": "accepted",
+            "started_at": now,
+            "completed_at": now,
+            "metadata": {},
+            "created_at": now,
+        },
+    )
+    state.insert(
+        service.PIPELINE_STEPS_TABLE,
+        {
+            "id": "step-1",
+            "run_id": "run-1",
+            "environment": Environment.DEVELOPMENT.value,
+            "step_key": "data_fetch",
+            "step_order": 1,
+            "label": "Data Fetch",
+            "status": "accepted",
+            "started_at": now,
+            "completed_at": now,
+            "message": None,
+            "metrics": {},
+            "record_ids": ["pull-1"],
+            "created_at": now,
+        },
+    )
+    state.insert(
+        service.MARKET_DATA_PULLS_TABLE,
+        {
+            "id": "pull-1",
+            "environment": Environment.DEVELOPMENT.value,
+            "venue": "polymarket_us",
+            "status": "pulled",
+            "trigger": "scheduled",
+            "source": "test",
+            "candidates": [],
+            "message": "Pulled test data.",
+            "error_code": None,
+            "run_id": "run-1",
+            "created_at": now,
+        },
+    )
+    original_rows = state.rows
+    calls: list[tuple[str, dict]] = []
+
+    def observed_rows(table_name: str, *args, **kwargs):
+        calls.append((table_name, kwargs))
+        return original_rows(table_name, *args, **kwargs)
+
+    monkeypatch.setattr(state, "rows", observed_rows)
+
+    detail = service.pipeline_run_detail(Environment.DEVELOPMENT, "run-1")
+
+    assert detail is not None
+    assert detail["records"][0]["recordCount"] == 1
+    assert detail["records"][0]["items"][0]["id"] == "pull-1"
+    assert any(
+        table_name == service.MARKET_DATA_PULLS_TABLE
+        and kwargs.get("limit") == DASHBOARD_PIPELINE_RECORD_ROW_LIMIT
+        and kwargs.get("newest_first") is True
+        for table_name, kwargs in calls
+    )
 
 
 def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
