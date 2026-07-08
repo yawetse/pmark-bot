@@ -6,7 +6,7 @@ REQ: REQ-DAT-001, REQ-DAT-002, REQ-DAT-008, REQ-OBS-005
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
@@ -30,6 +30,7 @@ ALPACA_DATA_BASE_URL = "https://data.alpaca.markets/v2"
 POLYMARKET_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com"
 DEFAULT_ALPACA_SYMBOL_CHUNK_SIZE = 50
+DEFAULT_ALPACA_HISTORICAL_LOOKBACK_DAYS = 45
 DEFAULT_ALPACA_PER_SYMBOL_FALLBACK_LIMIT = 25
 DEFAULT_POLYMARKET_ORDER_BOOK_RETRIES = 2
 DEFAULT_POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS = 0.25
@@ -163,6 +164,12 @@ class ProviderBackedMarketDataFetcher:
             30,
             minimum=1,
             maximum=100,
+        )
+        self.alpaca_historical_lookback_days = _int_setting(
+            source.get("ALPACA_HISTORICAL_LOOKBACK_DAYS"),
+            DEFAULT_ALPACA_HISTORICAL_LOOKBACK_DAYS,
+            minimum=2,
+            maximum=365,
         )
         self.alpaca_per_symbol_fallback_enabled = _boolish(
             source.get("ALPACA_ENABLE_PER_SYMBOL_FALLBACK"),
@@ -301,10 +308,13 @@ class ProviderBackedMarketDataFetcher:
         pulled_at: datetime,
     ) -> tuple[list[dict[str, Any]], list[ProviderHttpError]]:
         request_params = {**params, "symbols": ",".join(symbols)}
+        history_start = pulled_at - timedelta(days=self.alpaca_historical_lookback_days)
         history_params = {
             **request_params,
             "timeframe": "1Day",
             "limit": str(self.alpaca_historical_bar_limit),
+            "start": _rfc3339_utc(history_start),
+            "end": _rfc3339_utc(pulled_at),
         }
         errors: list[ProviderHttpError] = []
         snapshot_payload: dict[str, Any] | list[Any] | None = None
@@ -1193,6 +1203,11 @@ def _timestamp_from_number(value: Decimal, fallback: datetime) -> str:
         return datetime.fromtimestamp(timestamp, tz=UTC).isoformat()
     except (OSError, OverflowError, ValueError):
         return fallback.isoformat()
+
+
+def _rfc3339_utc(value: datetime) -> str:
+    parsed = value if value.tzinfo else value.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _first_string(*values: Any) -> str | None:
