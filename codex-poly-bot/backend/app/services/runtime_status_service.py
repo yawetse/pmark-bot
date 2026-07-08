@@ -94,6 +94,16 @@ PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
 TRADING_MODEL_PROVIDERS = (ModelProvider.OPENAI, ModelProvider.CLAUDE)
 MANUAL_NON_LIVE_POLYMARKET_MARKET_DATA_LIMIT = 10
 MANUAL_NON_LIVE_ALPACA_SYMBOL_LIMIT = 20
+DASHBOARD_RECENT_JOB_ROW_LIMIT = 250
+DASHBOARD_MARKET_DATA_ROW_LIMIT = 250
+DASHBOARD_DATA_EXPLORER_ROW_LIMIT = 500
+DASHBOARD_PIPELINE_RUN_ROW_LIMIT = 250
+DASHBOARD_PIPELINE_STEP_ROW_LIMIT = 1_250
+DASHBOARD_PIPELINE_RECORD_ROW_LIMIT = 1_000
+DASHBOARD_TICK_SUMMARY_ROW_LIMIT = 100
+DASHBOARD_AI_USAGE_ROW_LIMIT = 2_000
+DASHBOARD_AI_USAGE_IMPORT_ROW_LIMIT = 250
+DASHBOARD_ECONOMICS_SNAPSHOT_ROW_LIMIT = 400
 CURRENT_WORKER_HEARTBEAT_STATUSES = {
     "ok",
     "accepted",
@@ -1193,7 +1203,11 @@ class RuntimeStatusService:
         try:
             rows = [
                 row
-                for row in self.registry.state.rows(f"{SHARED_SCHEMA}.job_runs")
+                for row in self.registry.state.rows(
+                    f"{SHARED_SCHEMA}.job_runs",
+                    limit=DASHBOARD_RECENT_JOB_ROW_LIMIT,
+                    newest_first=True,
+                )
                 if row["job_name"] == self.WORKER_JOB_NAME
             ]
         except PersistenceUnavailableError:
@@ -2209,12 +2223,22 @@ class RuntimeStatusService:
         try:
             rows = [
                 row
-                for row in self.registry.state.rows(self.PIPELINE_RUNS_TABLE)
+                for row in self.registry.state.rows(
+                    self.PIPELINE_RUNS_TABLE,
+                    limit=max(DASHBOARD_PIPELINE_RUN_ROW_LIMIT, limit * 5),
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
                 if row["environment"] == environment.value
             ]
             step_rows = [
                 row
-                for row in self.registry.state.rows(self.PIPELINE_STEPS_TABLE)
+                for row in self.registry.state.rows(
+                    self.PIPELINE_STEPS_TABLE,
+                    limit=max(DASHBOARD_PIPELINE_STEP_ROW_LIMIT, limit * 25),
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
                 if row["environment"] == environment.value
             ]
         except PersistenceUnavailableError:
@@ -2241,12 +2265,22 @@ class RuntimeStatusService:
         try:
             run_rows = [
                 row
-                for row in self.registry.state.rows(self.PIPELINE_RUNS_TABLE)
+                for row in self.registry.state.rows(
+                    self.PIPELINE_RUNS_TABLE,
+                    limit=DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
                 if row["environment"] == environment.value and row["id"] == run_id
             ]
             step_rows = [
                 row
-                for row in self.registry.state.rows(self.PIPELINE_STEPS_TABLE)
+                for row in self.registry.state.rows(
+                    self.PIPELINE_STEPS_TABLE,
+                    limit=DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
                 if row["environment"] == environment.value and row["run_id"] == run_id
             ]
         except PersistenceUnavailableError:
@@ -3368,7 +3402,12 @@ class RuntimeStatusService:
         try:
             rows = [
                 row
-                for row in self.registry.state.rows(self.TICK_SUMMARIES_TABLE)
+                for row in self.registry.state.rows(
+                    self.TICK_SUMMARIES_TABLE,
+                    limit=DASHBOARD_TICK_SUMMARY_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
                 if row.get("environment") == environment.value
                 and row.get("window_minutes") == window_minutes
                 and row.get("latest_run_id") == latest_run_id
@@ -3445,7 +3484,11 @@ class RuntimeStatusService:
         records: list[dict[str, Any]] = []
         for table in tables:
             try:
-                rows = self.registry.state.rows(table)
+                rows = self.registry.state.rows(
+                    table,
+                    limit=DASHBOARD_PIPELINE_RECORD_ROW_LIMIT,
+                    newest_first=True,
+                )
             except PersistenceUnavailableError:
                 continue
             for row in rows:
@@ -3523,14 +3566,24 @@ class RuntimeStatusService:
     def _market_data_rows(self, environment: Environment) -> list[dict[str, Any]]:
         rows = [
             row
-            for row in self.registry.state.rows(self.MARKET_DATA_PULLS_TABLE)
+            for row in self.registry.state.rows(
+                self.MARKET_DATA_PULLS_TABLE,
+                limit=DASHBOARD_MARKET_DATA_ROW_LIMIT,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
             if row["environment"] == environment.value
         ]
         if rows:
             return rows
         return [
             row
-            for row in self.registry.state.rows(self.LEGACY_MARKET_DATA_PULLS_TABLE)
+            for row in self.registry.state.rows(
+                self.LEGACY_MARKET_DATA_PULLS_TABLE,
+                limit=DASHBOARD_MARKET_DATA_ROW_LIMIT,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
             if row["environment"] == environment.value
         ]
 
@@ -3541,13 +3594,23 @@ class RuntimeStatusService:
         try:
             rows = [
                 row
-                for row in self.registry.state.rows(metadata["table"])
+                for row in self.registry.state.rows(
+                    metadata["table"],
+                    limit=DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
                 if row.get("environment", environment.value) == environment.value
             ]
             if dataset_id == "market_data_pulls" and not rows:
                 rows = [
                     row
-                    for row in self.registry.state.rows(self.LEGACY_MARKET_DATA_PULLS_TABLE)
+                    for row in self.registry.state.rows(
+                        self.LEGACY_MARKET_DATA_PULLS_TABLE,
+                        limit=DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+                        newest_first=True,
+                        filters={"environment": environment.value},
+                    )
                     if row.get("environment", environment.value) == environment.value
                 ]
         except PersistenceUnavailableError:
@@ -3772,10 +3835,19 @@ class RuntimeStatusService:
         month_key: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            return self.registry.shared().economics_snapshots(
-                environment=environment,
-                month_key=month_key,
-            )
+            rows = [
+                row
+                for row in self.registry.state.rows(
+                    self.ECONOMICS_SNAPSHOTS_TABLE,
+                    limit=DASHBOARD_ECONOMICS_SNAPSHOT_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
+                if row["environment"] == environment.value
+            ]
+            if month_key is not None:
+                rows = [row for row in rows if row["month_key"] == month_key]
+            return rows
         except PersistenceUnavailableError:
             return []
 
@@ -3882,17 +3954,32 @@ class RuntimeStatusService:
 
     def _ai_usage_rows(self, environment: Environment, provider: ModelProvider) -> list[dict[str, Any]]:
         try:
-            rows = self.registry.shared().ai_usage_events(
-                environment=environment,
-                provider=provider,
-            )
+            rows = [
+                row
+                for row in self.registry.state.rows(
+                    self.AI_USAGE_EVENTS_TABLE,
+                    limit=DASHBOARD_AI_USAGE_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
+                if row["environment"] == environment.value
+            ]
         except PersistenceUnavailableError:
             return []
-        return rows
+        return [row for row in rows if row["provider"] == provider.value]
 
     def _ai_usage_import_rows(self, environment: Environment) -> list[dict[str, Any]]:
         try:
-            return self.registry.shared().ai_usage_import_runs(environment=environment)
+            return [
+                row
+                for row in self.registry.state.rows(
+                    self.AI_USAGE_IMPORT_RUNS_TABLE,
+                    limit=DASHBOARD_AI_USAGE_IMPORT_ROW_LIMIT,
+                    newest_first=True,
+                    filters={"environment": environment.value},
+                )
+                if row["environment"] == environment.value
+            ]
         except PersistenceUnavailableError:
             return []
 
