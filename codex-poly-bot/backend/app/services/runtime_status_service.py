@@ -1874,14 +1874,19 @@ class RuntimeStatusService:
             candidate for candidate in candidates if candidate["scanner_run_id"] == latest["id"]
         ]
         latest_candidates.sort(key=lambda row: row.get("created_at"), reverse=True)
-        payload = scanner_run_payload(latest, latest_candidates[:100])
+        payload = scanner_run_payload(
+            latest,
+            _balanced_scanner_candidate_items(latest_candidates, limit=100),
+        )
+        rejection_breakdown = _scanner_rejection_breakdown(latest_candidates)
         return {
             "status": payload["status"],
-            "message": _scanner_summary_message(payload),
+            "message": _scanner_summary_message({**payload, "rejectionBreakdown": rejection_breakdown}),
             "latestRun": payload,
             "candidateCount": payload["candidateCount"],
             "acceptedCount": payload["acceptedCount"],
             "rejectedCount": payload["rejectedCount"],
+            "rejectionBreakdown": rejection_breakdown,
             "candidates": payload["candidates"],
         }
 
@@ -3108,15 +3113,10 @@ class RuntimeStatusService:
             )
             if value
         ]
+        scanner_rejection_breakdown = _scanner_rejection_breakdown(scanner_run.get("candidates", []))
         scanner_message = str(
             scanner_run.get("message")
-            or (
-                f"Scanner accepted {scanner_run['acceptedCount']} and rejected "
-                f"{scanner_run['rejectedCount']} candidate"
-                f"{'' if scanner_run['rejectedCount'] == 1 else 's'}."
-                if scanner_run.get("candidateCount")
-                else "No priced candidates reached the scanner from provider data."
-            )
+            or _scanner_step_message(scanner_run, scanner_rejection_breakdown)
         )
         reasoning_record_ids = [
             value
@@ -3199,6 +3199,7 @@ class RuntimeStatusService:
                     "candidateCount": scanner_run.get("candidateCount", candidate_count),
                     "acceptedCount": scanner_run["acceptedCount"],
                     "rejectedCount": scanner_run["rejectedCount"],
+                    "rejectionBreakdown": scanner_rejection_breakdown,
                 },
                 "record_ids": scanner_record_ids,
                 "inputs": {
@@ -3209,9 +3210,11 @@ class RuntimeStatusService:
                     "scannerRunId": scanner_run.get("id"),
                     "acceptedCount": scanner_run.get("acceptedCount", 0),
                     "rejectedCount": scanner_run.get("rejectedCount", 0),
+                    "rejectionBreakdown": scanner_rejection_breakdown,
                 },
                 "decisions": {
                     "status": scanner_run.get("status"),
+                    "rejectionBreakdown": scanner_rejection_breakdown,
                     "candidates": _compact_candidate_decisions(scanner_run.get("candidates", [])),
                 },
             },
@@ -5949,11 +5952,13 @@ def _scanner_summary_message(payload: dict[str, Any]) -> str:
         return "Latest scanner run was blocked before candidate evaluation completed."
     if status == "empty":
         return "Latest scanner run had no provider candidates to evaluate."
-    return (
+    base = (
         f"Latest scanner run accepted {payload.get('acceptedCount', 0)} and rejected "
         f"{payload.get('rejectedCount', 0)} candidate"
         f"{'' if payload.get('rejectedCount', 0) == 1 else 's'}."
     )
+    formatted = _format_scanner_breakdown(payload.get("rejectionBreakdown"))
+    return f"{base} Top rejections: {formatted}." if formatted else base
 
 
 def _reasoning_summary_message(payload: dict[str, Any]) -> str:
@@ -6065,8 +6070,109 @@ def _compact_candidate_decisions(candidates: Any) -> list[dict[str, Any]]:
             "liquidity": candidate.get("liquidity"),
             "spread": candidate.get("spread"),
         }
-        for candidate in _first_dict_items(candidates)
+        for candidate in _balanced_scanner_candidate_items(candidates)
     ]
+
+
+def _balanced_scanner_candidate_items(items: Any, limit: int = 20) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    candidates = [item for item in items if isinstance(item, dict)]
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+
+    def add(candidate: dict[str, Any]) -> None:
+        if len(selected) >= limit:
+            return
+        key = _scanner_candidate_key(candidate)
+        if key in selected_keys:
+            return
+        selected.append(candidate)
+        selected_keys.add(key)
+
+    for candidate in candidates:
+        if _scanner_candidate_status(candidate) == "accepted":
+            add(candidate)
+
+    seen_buckets: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        bucket = (_scanner_candidate_venue(candidate), _scanner_candidate_reason(candidate))
+        if bucket in seen_buckets:
+            continue
+        seen_buckets.add(bucket)
+        add(candidate)
+
+    for candidate in candidates:
+        add(candidate)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _scanner_candidate_key(candidate: dict[str, Any]) -> str:
+    return str(
+        candidate.get("id")
+        or candidate.get("instrumentId")
+        or candidate.get("instrument_id")
+        or candidate.get("displayName")
+        or candidate.get("display_name")
+        or id(candidate)
+    )
+
+
+def _scanner_candidate_status(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("status") or "unknown")
+
+
+def _scanner_candidate_venue(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("venue") or "unknown")
+
+
+def _scanner_candidate_reason(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("refusalReason") or candidate.get("refusal_reason") or "accepted")
+
+
+def _scanner_rejection_breakdown(candidates: Any, limit: int = 12) -> list[dict[str, Any]]:
+    if not isinstance(candidates, list):
+        return []
+    counts: dict[tuple[str, str], int] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if _scanner_candidate_status(candidate) != "rejected":
+            continue
+        bucket = (_scanner_candidate_venue(candidate), _scanner_candidate_reason(candidate))
+        counts[bucket] = counts.get(bucket, 0) + 1
+    rows = [
+        {"venue": venue, "reason": reason, "count": count}
+        for (venue, reason), count in counts.items()
+    ]
+    rows.sort(key=lambda row: (-int(row["count"]), str(row["venue"]), str(row["reason"])))
+    return rows[:limit]
+
+
+def _scanner_step_message(scanner_run: dict[str, Any], breakdown: list[dict[str, Any]]) -> str:
+    if not scanner_run.get("candidateCount"):
+        return "No priced candidates reached the scanner from provider data."
+    base = (
+        f"Scanner accepted {scanner_run['acceptedCount']} and rejected "
+        f"{scanner_run['rejectedCount']} candidate"
+        f"{'' if scanner_run['rejectedCount'] == 1 else 's'}."
+    )
+    formatted = _format_scanner_breakdown(breakdown)
+    return f"{base} Top rejections: {formatted}." if formatted else base
+
+
+def _format_scanner_breakdown(breakdown: Any) -> str:
+    if not isinstance(breakdown, list):
+        return ""
+    rows = [row for row in breakdown if isinstance(row, dict)]
+    if not rows:
+        return ""
+    return "; ".join(
+        f"{row.get('venue', 'unknown')}: {row.get('reason', 'rejected')} ({row.get('count', 0)})"
+        for row in rows[:6]
+    )
 
 
 def _compact_reasoning_decisions(outputs: Any) -> list[dict[str, Any]]:

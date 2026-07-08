@@ -288,6 +288,8 @@ def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates(
     Then: priced dashboard candidates include price, spread, liquidity, timestamp, and history metadata
     """
 
+    bar_params: list[dict[str, str]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v2/stocks/snapshots":
             return httpx.Response(
@@ -316,6 +318,7 @@ def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates(
                 },
             )
         if request.url.path == "/v2/stocks/bars":
+            bar_params.append(dict(request.url.params))
             return httpx.Response(
                 200,
                 json={
@@ -362,6 +365,9 @@ def test_req_dat_008_04_alpaca_provider_fetches_latest_quote_and_bar_candidates(
     assert result.candidates[0]["historyBarCount"] == 2
     assert result.candidates[0]["previousClose"] == "498.25"
     assert result.candidates[1]["price"] == "380.02"
+    assert bar_params[0]["start"] == "2026-05-10T18:00:00Z"
+    assert bar_params[0]["end"] == "2026-06-24T18:00:00Z"
+    assert bar_params[0]["limit"] == "30"
 
 
 def test_req_dat_008_07_alpaca_provider_normalizes_class_share_symbols(caplog: pytest.LogCaptureFixture) -> None:
