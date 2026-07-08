@@ -788,6 +788,7 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         environment=Environment.DEVELOPMENT,
         polymarket_us_enabled=True,
         alpaca_enabled=True,
+        alpaca_symbol_universe=("AMD",),
     )
     app = create_app(settings)
     app.state.services.runtime_status.market_data_fetcher = FakeMarketDataFetcher(
@@ -817,10 +818,10 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
                 message="Fetched 1 Alpaca priced candidate.",
                 candidates=[
                     {
-                        "id": "alpaca:SPY",
+                        "id": "alpaca:AMD",
                         "venue": "alpaca",
-                        "symbol": "SPY",
-                        "price": "500.01",
+                        "symbol": "AMD",
+                        "price": "200.01",
                         "liquidity": "3",
                         "spread": "0.02",
                         "state": "priced",
@@ -879,6 +880,12 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert payload["pipelineRun"]["steps"][0]["decisions"]["accepted"] is True
     assert payload["pipelineRun"]["steps"][1]["metrics"]["acceptedCount"] == 0
     assert payload["pipelineRun"]["steps"][1]["metrics"]["rejectedCount"] == 2
+    scanner_breakdown = payload["pipelineRun"]["steps"][1]["metrics"]["rejectionBreakdown"]
+    assert {"venue": "alpaca", "reason": "insufficient historical bars", "count": 1} in scanner_breakdown
+    assert {"venue": "polymarket_us", "reason": "liquidity below minimum", "count": 1} in scanner_breakdown
+    scanner_candidates = payload["pipelineRun"]["steps"][1]["decisions"]["candidates"]
+    assert {candidate["venue"] for candidate in scanner_candidates} == {"polymarket_us", "alpaca"}
+    assert "alpaca: insufficient historical bars (1)" in payload["pipelineRun"]["steps"][1]["message"]
     assert "trace" not in payload["pipelineRun"]["steps"][0]["metrics"]
     assert payload["scannerRun"]["candidateCount"] == 2
     assert payload["scannerRun"]["rejectedCount"] == 2
@@ -941,7 +948,7 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
         "shared.dashboard_market_data_pulls"
     }
     operations = client.get(
-        "/api/operations/summary",
+        "/api/operations/summary?include_details=true",
         headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
     )
     operations_again = client.get(
@@ -950,6 +957,8 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     )
     assert operations.status_code == 200
     assert "tickSummary" not in operations.json()
+    assert {"venue": "alpaca", "reason": "insufficient historical bars", "count": 1} in operations.json()["scanner"]["rejectionBreakdown"]
+    assert "alpaca: insufficient historical bars (1)" in operations.json()["scanner"]["message"]
     assert operations_again.status_code == 200
     assert "tickSummary" not in operations_again.json()
     tick_summary = client.get(

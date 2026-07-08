@@ -194,3 +194,59 @@ def test_req_str_003_04_stock_scanner_persists_strategy_matches_and_refusals() -
     assert spy["metrics"]["historyBarCount"] == 3
     assert xyz["status"] == "rejected"
     assert xyz["refusal_reason"] == "symbol outside universe"
+
+
+def test_req_alp_014_04_stock_scanner_matches_class_share_symbol_aliases() -> None:
+    """TST-REQ-ALP-014-04: Validates REQ-ALP-014 and REQ-STR-003
+
+    Given: the configured universe stores a class-share symbol with hyphen notation
+    When: Alpaca returns the API symbol with dot notation
+    Then: the scanner treats the symbols as the same stock instead of rejecting it
+    """
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 18, 0, tzinfo=UTC)
+
+    result = ScannerService(registry).run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="run-class-share",
+        trigger="manual",
+        started_at=now,
+        completed_at=now,
+        config_payload={"alpaca": {"symbol_universe": ["BRK-B"]}},
+        market_data_pulls=[
+            {
+                "id": "pull-class-share",
+                "venue": Venue.ALPACA.value,
+                "status": "pulled",
+                "candidates": [
+                    {
+                        "id": "alpaca:BRK.B",
+                        "venue": Venue.ALPACA.value,
+                        "symbol": "BRK.B",
+                        "requestedSymbol": "BRK-B",
+                        "state": "priced",
+                        "price": "410",
+                        "liquidity": "3",
+                        "spread": "0.02",
+                        "historyBarCount": 2,
+                        "previousClose": "400",
+                        "latestOpen": "402",
+                        "latestHigh": "412",
+                        "latestLow": "401",
+                        "latestClose": "410",
+                        "latestVolume": "150000",
+                        "averageVolume": "100000",
+                    },
+                ],
+            }
+        ],
+    )
+
+    rows = registry.shared().scanner_candidates(environment=Environment.DEVELOPMENT)
+    candidate = rows[0]
+
+    assert result.payload["acceptedCount"] == 1
+    assert candidate["symbol"] == "BRK.B"
+    assert candidate["status"] == "accepted"
+    assert candidate["refusal_reason"] is None

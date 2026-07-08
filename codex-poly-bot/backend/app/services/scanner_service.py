@@ -158,7 +158,11 @@ class ScannerService:
         scanned_at: datetime,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        symbol_universe = {symbol.upper() for symbol in resolve_alpaca_symbol_universe(config_payload)}
+        symbol_universe = {
+            key
+            for symbol in resolve_alpaca_symbol_universe(config_payload)
+            for key in _stock_symbol_keys(symbol)
+        }
         for pull in market_data_pulls:
             for candidate in pull.get("candidates", []):
                 if not isinstance(candidate, dict):
@@ -534,7 +538,7 @@ def _stock_refusal(
         return "candidate unpriced"
     if not symbol:
         return "symbol missing"
-    if symbol_universe and symbol not in symbol_universe:
+    if symbol_universe and not any(key in symbol_universe for key in _stock_symbol_keys(symbol)):
         return "symbol outside universe"
     if price is None:
         return "price missing"
@@ -635,10 +639,10 @@ def _stock_bars_for_symbol(
     symbol: str,
     fallback_candidate: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    if symbol:
+    for key in _stock_symbol_keys(symbol):
         bars = registry.shared().stock_bars(
             environment=environment,
-            symbol=symbol,
+            symbol=key,
             timeframe="1Day",
         )
         bars.sort(key=lambda row: row.get("bar_start_at") or datetime.min.replace(tzinfo=UTC))
@@ -679,6 +683,18 @@ def _synthetic_bars_from_candidate(candidate: dict[str, Any]) -> list[dict[str, 
             "volume": latest_volume,
         },
     ]
+
+
+def _stock_symbol_keys(symbol: Any) -> tuple[str, ...]:
+    text = str(symbol or "").strip().upper()
+    if not text:
+        return ()
+    aliases = [text]
+    if "." in text:
+        aliases.append(text.replace(".", "-"))
+    if "-" in text:
+        aliases.append(text.replace("-", "."))
+    return tuple(dict.fromkeys(aliases))
 
 
 def _market_id(candidate: dict[str, Any]) -> str | None:
