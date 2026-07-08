@@ -157,8 +157,16 @@ def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch)
     monkeypatch.setattr(state, "rows", observed_rows)
     service = app.state.services.runtime_status
     config_payload = service.runtime_config_payload()
+    calls.clear()
 
-    service.data_explorer(Environment.DEVELOPMENT)
+    explorer = service.data_explorer(Environment.DEVELOPMENT)
+    assert explorer["datasets"]
+    assert calls == []
+
+    service.query_data(
+        environment=Environment.DEVELOPMENT,
+        query="select * from market_data_pulls limit 25",
+    )
     service.market_data_pull(
         environment=Environment.DEVELOPMENT,
         config_payload=config_payload,
@@ -166,14 +174,18 @@ def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch)
     service.pipeline_runs(Environment.DEVELOPMENT, limit=20)
 
     environment_filter = {"environment": Environment.DEVELOPMENT.value}
-    for metadata in DATA_EXPLORER_DATASETS.values():
-        assert any(
-            table_name == metadata["table"]
-            and kwargs.get("limit") == DASHBOARD_DATA_EXPLORER_ROW_LIMIT
-            and kwargs.get("newest_first") is True
-            and kwargs.get("filters") == environment_filter
-            for table_name, kwargs in calls
-        )
+    assert any(
+        table_name == service.MARKET_DATA_PULLS_TABLE
+        and kwargs.get("limit") == 25
+        and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == environment_filter
+        for table_name, kwargs in calls
+    )
+    assert all(
+        kwargs.get("limit") != DASHBOARD_DATA_EXPLORER_ROW_LIMIT
+        for table_name, kwargs in calls
+        if table_name in {metadata["table"] for metadata in DATA_EXPLORER_DATASETS.values()}
+    )
     assert any(
         table_name == service.MARKET_DATA_PULLS_TABLE
         and kwargs.get("limit") == DASHBOARD_MARKET_DATA_ROW_LIMIT
