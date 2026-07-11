@@ -493,6 +493,11 @@ def test_req_dep_006_04_workflow_deploys_infrastructure_before_ecr_publish() -> 
         assert "ALPACA_SYMBOL_UNIVERSE: ${{ vars.ALPACA_SYMBOL_UNIVERSE }}" in text
         assert "ALPACA_SYMBOL_CHUNK_SIZE: ${{ vars.ALPACA_SYMBOL_CHUNK_SIZE }}" in text
         assert "ALPACA_HISTORICAL_BAR_LIMIT: ${{ vars.ALPACA_HISTORICAL_BAR_LIMIT }}" in text
+        assert "ENABLE_BACKGROUND_WORKER: ${{ vars.ENABLE_BACKGROUND_WORKER }}" in text
+        assert (
+            "WORKER_HEARTBEAT_INTERVAL_SECONDS: ${{ vars.WORKER_HEARTBEAT_INTERVAL_SECONDS }}"
+            in text
+        )
         assert "environment: production" in text
         assert "environment: development" in text
         assert "aws ecs wait services-stable" in text
