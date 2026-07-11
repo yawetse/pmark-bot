@@ -291,6 +291,7 @@
 | TST-REQ-UI-011-01 | Happy | REQ-UI-011 | Given comparison metrics exist for Polymarket and Alpaca, When dashboard comparison views render, Then P&L, win rate, drawdown, cost, exposure, trade count, and return-to-risk are shown. |
 | TST-REQ-UI-011-02 | Edge | REQ-UI-011 | Given one model or venue has insufficient comparison data, When comparison views render, Then unavailable metrics are labeled without showing misleading zero values. |
 | TST-REQ-UI-011-03 | Focus | REQ-UI-011 | Given frontend comparison routes exist, When dashboard operations checks run, Then unavailable comparison metrics show caveats rather than zero values. |
+| TST-REQ-UI-012-01 | Focus | REQ-UI-012 | Given recent scanner rejections point to configurable thresholds, When dashboard control checks run, Then the dashboard exposes a targeted recommendation that can save the suggested config through the existing audited config flow. |
 
 ### Cross-Market Comparison Analytics
 
@@ -479,6 +480,7 @@
 | REQ-UI-009 | TST-REQ-UI-009-01, TST-REQ-UI-009-02 |
 | REQ-UI-010 | TST-REQ-UI-010-01, TST-REQ-UI-010-02 |
 | REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02, TST-REQ-UI-011-03 |
+| REQ-UI-012 | TST-REQ-UI-012-01 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |
