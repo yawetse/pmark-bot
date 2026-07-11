@@ -658,8 +658,8 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub "${ProjectName}-${EnvironmentName}-backend"
-      Cpu: "512"
-      Memory: "4096"
+      Cpu: "1024"
+      Memory: "8192"
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
