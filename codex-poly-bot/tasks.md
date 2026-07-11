@@ -921,6 +921,7 @@
 - REQ-UI-007
 - REQ-UI-009
 - REQ-ALP-014
+- REQ-UI-012
 - REQ-NOT-006
 - REQ-STR-009
 - REQ-LLM-006
@@ -936,6 +937,7 @@
 | AC-023-03 | When wallet status is shown, the dashboard shall display public identifiers and health without displaying private keys or API secrets. |
 | AC-023-04 | If a config save conflicts with a newer version, the dashboard shall show the current server version and require reload before resubmission. |
 | AC-023-05 | When multiple users use the dashboard, summary and economics views shall load each actor's saved database preferences. |
+| AC-023-06 | When scanner rejections point to configurable blockers, the dashboard shall show targeted config changes and save them through the same audited per-user config flow as manual settings. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests

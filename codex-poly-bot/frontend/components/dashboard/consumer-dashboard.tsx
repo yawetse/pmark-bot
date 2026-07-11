@@ -24,13 +24,16 @@ import {
 
 import type { EconomicsSummaryView } from "@/components/dashboard/economics-panel";
 import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
-import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
+import type {
+  OperationsSummaryView,
+  ScannerCandidateView,
+} from "@/components/dashboard/operations-view";
 import { FALLBACK_TICK_SUMMARY, type TickSummaryView } from "@/components/dashboard/tick-summary-panel";
 import { dashboardApi, type ApiClientResult } from "@/lib/api";
 import { CONFIG_PATH_DETAILS, type AllowedConfigPath } from "@/lib/config-paths";
 import { useDashboardRealtime, type TickScheduleView } from "@/lib/use-dashboard-realtime";
 
-// REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-NOT-006, REQ-OBS-005
+// REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-UI-012, REQ-NOT-006, REQ-OBS-005
 
 type ConfigValue = string | boolean | number | string[] | Record<string, unknown>;
 
@@ -88,6 +91,14 @@ type RecommendationPlan = {
   effect: string;
   risk: string;
   patches: RecommendationPatch[];
+};
+
+type TradeUnblockRecommendation = {
+  title: string;
+  body: string;
+  primaryBlocker: string;
+  patches: RecommendationPatch[];
+  notes: string[];
 };
 
 type DashboardAction = {
@@ -282,6 +293,10 @@ export function ConsumerDashboard() {
     () => recommendationPlans(settings, currentDailySummary, operations),
     [settings, currentDailySummary, operations],
   );
+  const tradeUnblock = useMemo(
+    () => tradeUnblockRecommendation(settings, currentDailySummary, operations),
+    [settings, currentDailySummary, operations],
+  );
   const inferredPlanId = useMemo(() => inferredRecommendationPlanId(settings), [settings]);
   const activePlan = plans.find((plan) => plan.id === (activePlanId ?? inferredPlanId)) ?? plans[1];
   const generatedAt = formatDateTime(currentDailySummary.generatedAt);
@@ -323,6 +338,13 @@ export function ConsumerDashboard() {
     await saveConfigPatches(
       plan.patches.map((patch) => ({ path: patch.path, value: patch.nextValue })),
       `${plan.title} applied`,
+    );
+  }
+
+  async function applyTradeUnblockRecommendation(recommendation: TradeUnblockRecommendation) {
+    await saveConfigPatches(
+      recommendation.patches.map((patch) => ({ path: patch.path, value: patch.nextValue })),
+      "Candidate settings saved",
     );
   }
 
@@ -770,6 +792,54 @@ export function ConsumerDashboard() {
             <p className="status-message blocked">{configState.message}</p>
           ) : (
             <>
+              {tradeUnblock ? (
+                <div className="trade-unblock-card">
+                  <div className="trade-unblock-heading">
+                    <div>
+                      <span className="status blocked">{tradeUnblock.primaryBlocker}</span>
+                      <strong>{tradeUnblock.title}</strong>
+                      <p>{tradeUnblock.body}</p>
+                    </div>
+                    <CircleAlert aria-hidden="true" size={22} />
+                  </div>
+                  {tradeUnblock.patches.length ? (
+                    <div className="trade-unblock-patches" aria-label="Suggested setting changes">
+                      {tradeUnblock.patches.map((patch) => (
+                        <div key={`unblock-${patch.path}`}>
+                          <span>{CONFIG_PATH_DETAILS[patch.path].label}</span>
+                          <strong>
+                            {formatConfigValue(patch.currentValue)} to {formatConfigValue(patch.nextValue)}
+                          </strong>
+                          <small>{patch.why}</small>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {tradeUnblock.notes.length ? (
+                    <ul className="trade-unblock-notes">
+                      {tradeUnblock.notes.map((note) => (
+                        <li key={note}>{note}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="recommendation-actions">
+                    <button
+                      className="button primary recommendation-apply-button"
+                      disabled={!canEditConfig || !tradeUnblock.patches.length}
+                      type="button"
+                      onClick={() => void applyTradeUnblockRecommendation(tradeUnblock)}
+                    >
+                      {saveState.status === "submitting" && saveState.label === "Candidate settings saved"
+                        ? "Applying"
+                        : "Allow more candidates"}
+                    </button>
+                    <Link className="button subtle" href="/dashboard/scenario">
+                      Review what-if
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="recommendation-options">
                 {plans.map((plan) => {
                   const selected = plan.id === activePlan.id;
@@ -1403,6 +1473,165 @@ function recommendationContext(dailySummary: TickSummaryView, operations: Operat
   };
 }
 
+function tradeUnblockRecommendation(
+  settings: Record<string, unknown>,
+  dailySummary: TickSummaryView,
+  operations: OperationsSummaryView | null,
+): TradeUnblockRecommendation | null {
+  const scannerCandidates = operations?.scanner?.candidates ?? [];
+  const rejected = scannerCandidates.filter((candidate) => candidate.status === "rejected");
+  const counts = rejectionCounts(rejected);
+  const text = [
+    dailySummary.summaryMarkdown,
+    ...(dailySummary.keyEvents ?? []),
+    ...(dailySummary.warnings ?? []),
+    operations?.scanner?.message ?? "",
+  ].join(" ").toLowerCase();
+  const patches = new Map<AllowedConfigPath, RecommendationPatch>();
+  const notes: string[] = [];
+  const putPatch = (patch: RecommendationPatch) => {
+    patches.set(patch.path, patch);
+  };
+
+  const polymarketResolutionRejected = rejected.filter(
+    (candidate) => isVenue(candidate, "polymarket") && normalizedReason(candidate) === "resolution too far",
+  );
+  if (polymarketResolutionRejected.length || text.includes("resolution too far")) {
+    const currentHours = numberValue(valueAtPath(settings, "scanner.polymarket.max_hours_to_resolution"), 168);
+    const observedHours = maxCandidateNumber(polymarketResolutionRejected, [
+      "hoursToResolution",
+      "metrics.hoursToResolution",
+    ]);
+    const nextHours = Math.min(
+      720,
+      observedHours === null
+        ? currentHours < 336
+          ? 336
+          : currentHours + 168
+        : roundUpToStep(observedHours + 24, 12),
+    );
+    if (nextHours > currentHours) {
+      putPatch(
+        patchFor(
+          settings,
+          "scanner.polymarket.max_hours_to_resolution",
+          trimNumber(nextHours),
+          `Raises the Polymarket resolution window from ${trimNumber(currentHours)} hours so farther-out markets can reach reasoning.`,
+        ),
+      );
+    } else {
+      notes.push("Polymarket max hours is already at the dashboard limit. Review market selection before widening risk.");
+    }
+  }
+
+  const alpacaQuoteRejected = rejected.filter(
+    (candidate) => isVenue(candidate, "alpaca") && normalizedReason(candidate) === "quote liquidity below minimum",
+  );
+  if (alpacaQuoteRejected.length) {
+    const current = numberValue(valueAtPath(settings, "scanner.alpaca.min_quote_liquidity"), 1);
+    const observed = minCandidateNumber(alpacaQuoteRejected, ["liquidity"]);
+    const next = Math.max(0.25, observed === null ? current / 2 : observed);
+    if (next < current) {
+      putPatch(
+        patchFor(
+          settings,
+          "scanner.alpaca.min_quote_liquidity",
+          trimNumber(next),
+          "Lowers the stock quote liquidity gate for scanner diagnosis.",
+        ),
+      );
+    }
+  }
+
+  const alpacaSpreadRejected = rejected.filter(
+    (candidate) => isVenue(candidate, "alpaca") && normalizedReason(candidate) === "spread too wide",
+  );
+  if (alpacaSpreadRejected.length) {
+    const current = numberValue(valueAtPath(settings, "scanner.alpaca.max_spread"), 0.5);
+    const observed = maxCandidateNumber(alpacaSpreadRejected, ["spread"]);
+    const next = Math.min(5, observed === null ? current + 0.25 : roundUpToStep(observed + 0.05, 0.01));
+    if (next > current) {
+      putPatch(
+        patchFor(
+          settings,
+          "scanner.alpaca.max_spread",
+          trimNumber(next),
+          "Allows wider stock quotes through the scanner before model scoring.",
+        ),
+      );
+    }
+  }
+
+  const historyRejected = rejected.filter(
+    (candidate) => isVenue(candidate, "alpaca") && normalizedReason(candidate) === "insufficient historical bars",
+  );
+  if (historyRejected.length) {
+    const current = numberValue(valueAtPath(settings, "scanner.alpaca.min_history_bars"), 2);
+    if (current > 2) {
+      putPatch(
+        patchFor(
+          settings,
+          "scanner.alpaca.min_history_bars",
+          2,
+          "Restores the stock history requirement to the supported two-bar minimum.",
+        ),
+      );
+    } else {
+      notes.push("Alpaca history bars are a data freshness issue, not a setting to loosen below 2 for live use.");
+    }
+  }
+
+  const strategyRejected = rejected.filter(
+    (candidate) => isVenue(candidate, "alpaca") && normalizedReason(candidate) === "no stock strategy threshold met",
+  );
+  if (strategyRejected.length) {
+    for (const [path, value] of [
+      ["scanner.alpaca.strategies.momentum.min_change_pct", "0.005"],
+      ["scanner.alpaca.strategies.mean_reversion.min_deviation_pct", "0.01"],
+      ["scanner.alpaca.strategies.gap.min_gap_pct", "0.0075"],
+      ["scanner.alpaca.strategies.liquidity.min_volume", "50000"],
+      ["scanner.alpaca.strategies.volatility.min_range_pct", "0.01"],
+      ["scanner.alpaca.strategies.unusual_volume.min_ratio", "1.2"],
+    ] as Array<[AllowedConfigPath, string]>) {
+      const current = numberValue(valueAtPath(settings, path), Number(value));
+      const next = Number(value);
+      if (Number.isFinite(current) && current > next) {
+        putPatch(
+          patchFor(
+            settings,
+            path,
+            value,
+            "Lowers stock strategy scanner thresholds so more symbols can reach model scoring.",
+          ),
+        );
+      }
+    }
+  }
+
+  const symbolRejected = rejected.filter(
+    (candidate) => isVenue(candidate, "alpaca") && normalizedReason(candidate) === "symbol outside universe",
+  );
+  if (symbolRejected.length) {
+    notes.push("Some Alpaca symbols are outside the configured universe. Add the symbol or preset in Settings if you want them scanned.");
+  }
+
+  const finalPatches = [...patches.values()].filter((patch) => !sameConfigValue(patch.currentValue, patch.nextValue));
+  if (!finalPatches.length && !notes.length) {
+    return null;
+  }
+
+  return {
+    title: "Update settings to allow more candidates",
+    body:
+      finalPatches.length > 0
+        ? "The latest scanner output points to settings that are still too restrictive. These changes apply to your saved config on the next loop and do not bypass model, risk, credential, or market-hours gates."
+        : "The latest scanner output points to a blocker that needs data or universe cleanup before settings can help.",
+    primaryBlocker: topRejectionLabel(counts) ?? "scanner blocked",
+    patches: finalPatches,
+    notes,
+  };
+}
+
 function friendlyEmergencyStopStatus(value: string | null | undefined): string {
   if (!value) {
     return "loading";
@@ -1463,7 +1692,7 @@ function inferredRecommendationPlanId(settings: Record<string, unknown>): Recomm
 function patchFor(
   settings: Record<string, unknown>,
   path: AllowedConfigPath,
-  nextValue: string,
+  nextValue: ConfigValue,
   why: string,
 ): RecommendationPatch {
   return {
@@ -1472,6 +1701,76 @@ function patchFor(
     nextValue,
     why,
   };
+}
+
+function rejectionCounts(candidates: ScannerCandidateView[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const candidate of candidates) {
+    const reason = normalizedReason(candidate);
+    if (!reason) {
+      continue;
+    }
+    const venue = isVenue(candidate, "alpaca")
+      ? "Alpaca"
+      : isVenue(candidate, "polymarket")
+        ? "Polymarket"
+        : "Scanner";
+    const key = `${venue}: ${reason}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function topRejectionLabel(counts: Map<string, number>): string | null {
+  let top: { label: string; count: number } | null = null;
+  for (const [label, count] of counts) {
+    if (top === null || count > top.count) {
+      top = { label, count };
+    }
+  }
+  return top ? `${top.label} (${top.count})` : null;
+}
+
+function normalizedReason(candidate: ScannerCandidateView): string {
+  return String(candidate.refusalReason ?? "").trim().toLowerCase();
+}
+
+function isVenue(candidate: ScannerCandidateView, venue: "alpaca" | "polymarket"): boolean {
+  return String(candidate.venue ?? "").toLowerCase().includes(venue);
+}
+
+function maxCandidateNumber(candidates: ScannerCandidateView[], paths: string[]): number | null {
+  const values = candidates
+    .flatMap((candidate) => paths.map((path) => numberFromCandidate(candidate, path)))
+    .filter((value): value is number => value !== null);
+  return values.length ? Math.max(...values) : null;
+}
+
+function minCandidateNumber(candidates: ScannerCandidateView[], paths: string[]): number | null {
+  const values = candidates
+    .flatMap((candidate) => paths.map((path) => numberFromCandidate(candidate, path)))
+    .filter((value): value is number => value !== null);
+  return values.length ? Math.min(...values) : null;
+}
+
+function numberFromCandidate(candidate: ScannerCandidateView, path: string): number | null {
+  const value = valueAtPath(candidate, path);
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function roundUpToStep(value: number, step: number): number {
+  return Math.ceil(value / step) * step;
+}
+
+function sameConfigValue(currentValue: ConfigValue | null, nextValue: ConfigValue): boolean {
+  if (currentValue === null || currentValue === undefined) {
+    return false;
+  }
+  return String(currentValue) === String(nextValue);
 }
 
 function profileValue(
