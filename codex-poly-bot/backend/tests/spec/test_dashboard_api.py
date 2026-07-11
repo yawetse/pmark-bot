@@ -291,6 +291,60 @@ def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypat
     )
 
 
+def test_req_ui_008_10_default_scenario_skips_record_hydration(monkeypatch) -> None:
+    """TST-REQ-UI-008-10: Validates REQ-UI-008 and REQ-OBS-005
+
+    Given: the What-if page loads without a selected run or prompt
+    When: scenario analysis builds the default summary
+    Then: it does not hydrate full step-linked records across all record tables
+    """
+
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    service = app.state.services.runtime_status
+
+    monkeypatch.setattr(
+        service,
+        "pipeline_runs",
+        lambda environment, limit=10: [
+            {
+                "id": "run-1",
+                "trigger": "scheduled",
+                "status": "pulled",
+                "startedAt": datetime.now(UTC).isoformat(),
+                "completedAt": datetime.now(UTC).isoformat(),
+                "steps": [
+                    {
+                        "key": "data_fetch",
+                        "label": "Data Fetch",
+                        "status": "pulled",
+                        "message": "Fetched market data.",
+                        "metrics": {"candidateCount": 30},
+                        "inputs": {},
+                        "outputs": {},
+                        "decisions": {},
+                        "recordIds": ["pull-1"],
+                    }
+                ],
+            }
+        ],
+    )
+
+    def fail_if_loaded(environment: Environment, run_id: str) -> None:
+        raise AssertionError("default scenario load should not hydrate detail records")
+
+    monkeypatch.setattr(service, "pipeline_run_detail", fail_if_loaded)
+
+    payload = service.scenario_analysis(
+        environment=Environment.DEVELOPMENT,
+        config_payload=service.runtime_config_payload(),
+    )
+
+    assert payload["run"]["id"] == "run-1"
+    assert payload["records"] == []
+    assert payload["steps"][0]["recordCount"] == 0
+
+
 def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
     """TST-REQ-UI-001-03: Validates REQ-UI-001
 

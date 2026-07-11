@@ -1622,9 +1622,10 @@ class RuntimeStatusService:
 
         runs = self.pipeline_runs(environment, limit=20)
         selected_run = next((run for run in runs if run["id"] == run_id), runs[0] if runs else None)
+        hydrate_records = bool(run_id or step_key or prompt or config_overrides)
         detail = (
             self.pipeline_run_detail(environment, selected_run["id"])
-            if selected_run
+            if selected_run and hydrate_records
             else None
         )
         record_groups = detail.get("records", []) if detail else []
