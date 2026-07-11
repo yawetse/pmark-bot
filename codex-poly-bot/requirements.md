@@ -175,6 +175,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-UI-009 | P1 | The dashboard shall show wallet public identifiers and health status without showing private keys. |
 | REQ-UI-010 | P1 | The dashboard shall present separate views for Claude and OpenAI positions, decisions, budgets, and P&L. |
 | REQ-UI-011 | P0 | The dashboard shall compare Claude and OpenAI performance across Polymarket and Alpaca using P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics. |
+| REQ-UI-012 | P0 | When recent scanner output identifies a settings-based blocker, the dashboard shall show an actionable config recommendation that saves user-owned database settings through the audited config endpoint and explains that model, credential, market-hours, and risk gates still apply. |
 
 ### Cross-Market Comparison Analytics
 

@@ -2656,7 +2656,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 **File:** `frontend/`  
 **Responsibility:** Provide the Next.js React dashboard, GitHub OAuth flow, configuration editor, model comparison views, and operational controls.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005  
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
 **Dependencies:** Backend API routers, GitHub OAuth app, signed session secret, browser fetch API  
 **Depended On By:** Operators, local testing, Playwright tests
 
@@ -2667,7 +2667,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 | Route | Purpose | REQ Trace |
 |-------|---------|-----------|
 | `/login` | GitHub OAuth sign-in entry | REQ-UI-002 |
-| `/dashboard` | Combined overview | REQ-UI-004 |
+| `/dashboard` | Combined overview with targeted scanner blocker recommendations | REQ-UI-004, REQ-UI-012 |
 | `/dashboard/models/claude` | Claude-specific positions, decisions, budget, P&L | REQ-UI-010 |
 | `/dashboard/models/openai` | OpenAI-specific positions, decisions, budget, P&L | REQ-UI-010 |
 | `/dashboard/comparison` | Claude vs OpenAI across Polymarket and Alpaca | REQ-UI-011 |
@@ -2728,6 +2728,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | 5 | Wallet status includes only public ID | Render public identifier and health, never secret | REQ-UI-009 |
 | 6 | Backend section degraded | Render degraded section with timestamp and retry affordance | REQ-OBS-005 |
 | 7 | Backend token creation module imported by client component | Build/test fails because module is marked server-only | REQ-UI-002 |
+| 8 | Scanner rejections point to configurable blockers | Show targeted config changes and save them through the audited per-user config flow | REQ-UI-012, REQ-UI-005, REQ-UI-006, REQ-UI-007 |
 
 ### 22.5 Error Handling
 

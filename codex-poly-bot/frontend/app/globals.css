@@ -3405,6 +3405,81 @@ th {
   line-height: 1.35;
 }
 
+.trade-unblock-card {
+  background: color-mix(in srgb, var(--status-blocked-bg) 58%, var(--surface));
+  border: 1px solid var(--mode-blocked-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.trade-unblock-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.trade-unblock-heading > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trade-unblock-heading strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.trade-unblock-heading p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.trade-unblock-patches {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.trade-unblock-patches div {
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.trade-unblock-patches span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.trade-unblock-patches strong,
+.trade-unblock-patches small {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.trade-unblock-patches small,
+.trade-unblock-notes {
+  color: var(--muted);
+}
+
+.trade-unblock-notes {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+
 .recommendation-options {
   display: grid;
   gap: 12px;
@@ -4260,7 +4335,8 @@ th {
   }
 
   .scenario-lever-grid,
-  .scenario-summary-strip {
+  .scenario-summary-strip,
+  .trade-unblock-patches {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -4305,6 +4381,15 @@ th {
   .consumer-metric-strip,
   .scenario-lever-grid,
   .scenario-summary-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-unblock-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .trade-unblock-patches {
     grid-template-columns: 1fr;
   }
 

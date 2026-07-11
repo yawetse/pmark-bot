@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.bootstrap import PROJECT_ROOT
 from app.db import DatabaseState, PersistenceUnavailableError, RepositoryRegistry
 from app.domain import Environment, InstrumentType, ModelProvider, Venue
 from app.main import AppSettings, build_dashboard_api_services, _scheduler_config_username
@@ -682,3 +683,21 @@ def test_req_ui_011_02_one_model_venue_insufficient_comparison_data_comparison_v
     assert metric.value is None
     assert metric.unavailable_reason == "no eligible data"
     assert "comparison" in view.degraded_sections
+
+
+def test_req_ui_012_01_scanner_blockers_show_targeted_config_recommendation() -> None:
+    """TST-REQ-UI-012-01: Validates REQ-UI-012
+
+    Given: recent scanner rejections point to configurable thresholds
+    When: dashboard control checks run
+    Then: the dashboard exposes a targeted recommendation that can save through the audited config flow
+    """
+    component = (PROJECT_ROOT / "frontend/components/dashboard/consumer-dashboard.tsx").read_text()
+    static_check = (PROJECT_ROOT / "frontend/scripts/check-dashboard-controls.mjs").read_text()
+
+    assert "tradeUnblockRecommendation" in component
+    assert "Allow more candidates" in component
+    assert "Candidate settings saved" in component
+    assert "saveConfigPatches" in component
+    assert "model, risk, credential, or market-hours gates" in component
+    assert "Allow more candidates" in static_check
