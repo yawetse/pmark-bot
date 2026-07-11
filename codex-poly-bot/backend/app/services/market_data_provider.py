@@ -14,7 +14,7 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Protocol, Sequence
+from typing import Any, Iterator, Protocol, Sequence
 
 import httpx
 
@@ -501,8 +501,11 @@ class ProviderBackedMarketDataFetcher:
                 request_limit=max(market_limit * 2, market_limit),
             )
 
-        for result in self._fetch_polymarket_order_books(book_requests):
-            if len(candidates) >= market_limit:
+        order_book_results = self._fetch_polymarket_order_books(book_requests)
+        while len(candidates) < market_limit:
+            try:
+                result = next(order_book_results)
+            except StopIteration:
                 break
             if result.error is not None:
                 errors.append(result.error)
@@ -536,22 +539,28 @@ class ProviderBackedMarketDataFetcher:
     def _fetch_polymarket_order_books(
         self,
         requests: list[PolymarketBookRequest],
-    ) -> list[PolymarketBookResult]:
+    ) -> Iterator[PolymarketBookResult]:
         if not requests:
-            return []
+            return
         if self.polymarket_order_book_concurrency <= 1 or len(requests) == 1:
-            return [self._fetch_polymarket_order_book(request) for request in requests]
+            for request in requests:
+                yield self._fetch_polymarket_order_book(request)
+            return
 
-        results: dict[int, PolymarketBookResult] = {}
-        with ThreadPoolExecutor(max_workers=self.polymarket_order_book_concurrency) as executor:
-            future_by_index = {
-                executor.submit(self._fetch_polymarket_order_book, request): request.index
-                for request in requests
-            }
-            for future in as_completed(future_by_index):
-                index = future_by_index[future]
-                results[index] = future.result()
-        return [results[index] for index in sorted(results)]
+        batch_size = max(1, self.polymarket_order_book_concurrency)
+        for start in range(0, len(requests), batch_size):
+            batch = requests[start : start + batch_size]
+            results: dict[int, PolymarketBookResult] = {}
+            with ThreadPoolExecutor(max_workers=min(batch_size, len(batch))) as executor:
+                future_by_index = {
+                    executor.submit(self._fetch_polymarket_order_book, request): request.index
+                    for request in batch
+                }
+                for future in as_completed(future_by_index):
+                    index = future_by_index[future]
+                    results[index] = future.result()
+            for index in sorted(results):
+                yield results[index]
 
     def _fetch_polymarket_order_book(
         self,
