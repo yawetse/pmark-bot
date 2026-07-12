@@ -67,6 +67,20 @@ class RecordingPolymarketSubmitter:
         return VenueCallResult(ok=True, payload={"venue_order_id": f"pm-exit-{len(self.close_calls)}"})
 
 
+class FailingPolymarketSubmitter:
+    def submit_order(self, request: PolymarketLiveOrderRequest) -> VenueCallResult:
+        return VenueCallResult(
+            ok=False,
+            refusal_reasons=("Polymarket SDK call failed",),
+            payload={
+                "error_type": "BadRequestError",
+                "operation": "submit_order",
+                "market_slug": request.market_slug,
+                "status_code": 400,
+            },
+        )
+
+
 def test_req_exe_016_04_dry_run_execution_records_polymarket_and_alpaca_order_intents() -> None:
     """TST-REQ-EXE-016-04: Validates REQ-EXE-010, REQ-EXE-016, and REQ-ALP-005
 
@@ -167,6 +181,73 @@ def test_req_exe_016_06_live_execution_submits_when_submitters_are_configured() 
     assert alpaca.calls[0]["symbol"] == "SPY"
     assert alpaca.calls[0]["side"] == "buy"
     assert len(alpaca.calls[0]["client_order_id"]) == 64
+    execution_row = registry.state.rows("shared.execution_runs")[0]
+    assert execution_row["status"] == "completed"
+    assert execution_row["intent_count"] == 2
+    assert execution_row["submitted_count"] == 2
+
+
+def test_req_exe_016_07_polymarket_order_uses_nested_candidate_market_slug() -> None:
+    """TST-REQ-EXE-016-07: Validates REQ-EXE-010 and REQ-VEN-004
+
+    Given: a production-shaped Polymarket market candidate with the slug in its source payload
+    When: live execution builds an SDK order request
+    Then: the adapter receives the real market slug, not the venue name fallback
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    pulls = _market_data_pulls(now, include_alpaca=False)
+    candidate = pulls[0]["candidates"][0]
+    candidate.pop("marketSlug")
+    candidate["source_payload"] = {"marketSlug": "will-fed-cut"}
+    strategy_run = _strategy_run_with_outputs(registry, now, include_alpaca=False)
+    strategy_run["outputs"][0]["source_payload"]["candidate"].pop("marketSlug")
+    polymarket = RecordingPolymarketSubmitter()
+
+    result = PipelineLifecycleService(registry, polymarket_submitter=polymarket).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-nested-slug",
+        trigger="manual",
+        strategy_run=strategy_run,
+        market_data_pulls=pulls,
+        config_payload=_config(live_enabled=True),
+        credential_status={Venue.POLYMARKET_US.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 1
+    assert polymarket.submit_calls[0].market_slug == "will-fed-cut"
+
+
+def test_req_exe_016_08_polymarket_sdk_failure_payload_is_persisted() -> None:
+    """TST-REQ-EXE-016-08: Validates REQ-EXE-016 and REQ-OBS-006
+
+    Given: a live Polymarket SDK submit failure with safe diagnostic metadata
+    When: execution records the refused order intent
+    Then: the dashboard can read the failure payload without exposing credentials
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+
+    result = PipelineLifecycleService(registry, polymarket_submitter=FailingPolymarketSubmitter()).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-sdk-failure",
+        trigger="manual",
+        strategy_run=_strategy_run_with_outputs(registry, now, include_alpaca=False),
+        market_data_pulls=_market_data_pulls(now, include_alpaca=False),
+        config_payload=_config(live_enabled=True),
+        credential_status={Venue.POLYMARKET_US.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["status"] == "refused"
+    intent_row = registry.state.rows("shared.order_intents")[0]
+    execution_result = intent_row["source_payload"]["executionResult"]
+    assert execution_result["error_type"] == "BadRequestError"
+    assert execution_result["market_slug"] == "market-1"
+    assert "secret" not in str(execution_result).lower()
 
 
 def test_req_exe_016_07_live_execution_routes_submitters_by_model_provider() -> None:
