@@ -67,13 +67,13 @@ GPDoc owns the shared SigNoz webhook relay that creates GitHub issues from alert
 - `signoz-alert`
 - `area:codex-poly-bot`
 - `severity:critical`, `severity:error`, `severity:warning`, or `severity:info`
-- `codex-auto` for critical and error alerts that should start Codex triage
+- `codex-auto` only as an operator-visible flag; it does not start Codex triage automatically
 
-The repository root includes `.github/workflows/signoz-codex-alert.yml`. The workflow starts only when an issue has both `signoz-alert` and `codex-auto`. It can comment, upload a patch artifact, or open a draft pull request. It does not merge, deploy, or change live trading settings.
+The repository root includes `.github/workflows/signoz-codex-alert.yml`. The workflow is manual-only and starts from GitHub Actions with an explicit issue number. It can comment, upload a patch artifact, or open a draft pull request. It does not merge, deploy, or change live trading settings.
 
-Alert issue closure is controlled by labels and repository evidence. A `signoz-resolved` issue closes automatically unless an open remediation pull request references the issue. A synthetic or smoke-test alert closes automatically when Codex produces no remediation patch. Other firing production alerts stay open until they are resolved, fixed, or manually closed.
+Alert issue closure is controlled by a manual workflow run, labels, and repository evidence. A `signoz-resolved` issue closes when the manual `close_resolved` operation runs and no open remediation pull request references the issue. A synthetic or smoke-test alert closes when the manual triage operation runs and Codex produces no remediation patch. Other firing production alerts stay open until they are resolved, fixed, or manually closed.
 
-Set the repository secret `OPENAI_API_KEY` before relying on Codex Action runs. Without that secret, the workflow comments on the issue and leaves it open for manual triage.
+Set the repository secret `OPENAI_API_KEY` before relying on Codex Action runs. Without that secret, the workflow comments on the issue and leaves it open for manual triage. If repository settings prevent `GITHUB_TOKEN` from creating pull requests, either enable GitHub Actions pull request creation or set `SIGNOZ_CODEX_PR_TOKEN` with pull request creation rights.
 
 ## Local Check
 

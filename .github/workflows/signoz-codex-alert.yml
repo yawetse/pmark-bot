@@ -2,8 +2,20 @@
 name: SigNoz Codex Alert Triage
 
 on:
-  issues:
-    types: [labeled, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: GitHub issue number for the SigNoz alert to triage.
+        required: true
+        type: string
+      operation:
+        description: Manual action to run for the alert issue.
+        required: true
+        default: triage
+        type: choice
+        options:
+          - triage
+          - close_resolved
 
 permissions:
   contents: read
@@ -11,12 +23,55 @@ permissions:
   pull-requests: read
 
 jobs:
+  issue_context:
+    name: Load alert issue
+    runs-on: ubuntu-latest
+    outputs:
+      issue_number: ${{ steps.issue.outputs.issue_number }}
+      issue_title: ${{ steps.issue.outputs.issue_title }}
+      issue_body: ${{ steps.issue.outputs.issue_body }}
+      has_signoz_resolved: ${{ steps.issue.outputs.has_signoz_resolved }}
+      operation: ${{ steps.issue.outputs.operation }}
+    steps:
+      - name: Load issue metadata
+        id: issue
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const issueNumber = Number('${{ inputs.issue_number }}');
+            if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+              core.setFailed('issue_number must be a positive integer.');
+              return;
+            }
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+
+            const labels = issue.labels
+              .map((label) => typeof label === 'string' ? label : label.name)
+              .filter(Boolean);
+
+            if (!labels.includes('signoz-alert')) {
+              core.setFailed(`Issue #${issueNumber} is not labeled signoz-alert.`);
+              return;
+            }
+
+            core.setOutput('issue_number', String(issue.number));
+            core.setOutput('issue_title', issue.title || '');
+            core.setOutput('issue_body', issue.body || '');
+            core.setOutput('has_signoz_resolved', String(labels.includes('signoz-resolved')));
+            core.setOutput('operation', '${{ inputs.operation }}');
+
   generate_fix:
     name: Generate Codex triage patch
-    if: contains(github.event.issue.labels.*.name, 'signoz-alert') && contains(github.event.issue.labels.*.name, 'codex-auto') && (github.event.action == 'reopened' || github.event.label.name == 'codex-auto')
+    needs: issue_context
+    if: needs.issue_context.outputs.operation == 'triage'
     runs-on: ubuntu-latest
     concurrency:
-      group: signoz-codex-alert-${{ github.event.issue.number }}
+      group: signoz-codex-alert-${{ needs.issue_context.outputs.issue_number }}
       cancel-in-progress: false
     outputs:
       has_patch: ${{ steps.diff.outputs.has_patch }}
@@ -35,15 +90,17 @@ jobs:
 
       - name: Comment when Codex key is missing
         if: steps.key.outputs.has_openai_key != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
+        env:
+          ISSUE_NUMBER: ${{ needs.issue_context.outputs.issue_number }}
         with:
           script: |
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
+              issue_number: Number(process.env.ISSUE_NUMBER),
               body: [
-                'Codex auto-triage did not start because `OPENAI_API_KEY` is not configured for this repository.',
+                'Manual Codex triage did not start because `OPENAI_API_KEY` is not configured for this repository.',
                 '',
                 'The SigNoz alert issue is still available for manual triage.'
               ].join('\n'),
@@ -51,14 +108,14 @@ jobs:
 
       - name: Checkout code
         if: steps.key.outputs.has_openai_key == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Python
         if: steps.key.outputs.has_openai_key == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -86,13 +143,13 @@ jobs:
           sandbox: workspace-write
           output-file: codex-signoz-output.md
           prompt: |
-            A SigNoz alert created GitHub issue #${{ github.event.issue.number }} in yawetse/pmark-bot for codex-poly-bot.
+            A SigNoz alert created GitHub issue #${{ needs.issue_context.outputs.issue_number }} in yawetse/pmark-bot for codex-poly-bot.
 
             Issue title:
-            ${{ github.event.issue.title }}
+            ${{ needs.issue_context.outputs.issue_title }}
 
             Issue body:
-            ${{ github.event.issue.body }}
+            ${{ needs.issue_context.outputs.issue_body }}
 
             Diagnose the likely regression from the alert context and the codex-poly-bot application under `codex-poly-bot/`. Make the smallest safe code or test change only when the cause is clear from repository evidence. Keep live trading disabled and do not add production trading secrets.
 
@@ -100,9 +157,10 @@ jobs:
 
       - name: Comment Codex result
         if: steps.key.outputs.has_openai_key == 'true' && always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.codex.outputs.final-message }}
+          ISSUE_NUMBER: ${{ needs.issue_context.outputs.issue_number }}
         with:
           script: |
             const body = process.env.CODEX_FINAL_MESSAGE?.trim()
@@ -110,7 +168,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
+              issue_number: Number(process.env.ISSUE_NUMBER),
               body,
             });
 
@@ -129,7 +187,7 @@ jobs:
 
       - name: Upload patch artifact
         if: steps.diff.outputs.has_patch == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signoz-codex-alert-patch
           path: codex-signoz.patch
@@ -137,11 +195,15 @@ jobs:
 
       - name: Close synthetic no-change alert
         if: steps.diff.outputs.has_patch == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
+        env:
+          ISSUE_NUMBER: ${{ needs.issue_context.outputs.issue_number }}
+          ISSUE_TITLE: ${{ needs.issue_context.outputs.issue_title }}
+          ISSUE_BODY: ${{ needs.issue_context.outputs.issue_body }}
         with:
           script: |
-            const issue = context.payload.issue;
-            const body = `${issue.title || ''}\n${issue.body || ''}`.toLowerCase();
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const body = `${process.env.ISSUE_TITLE || ''}\n${process.env.ISSUE_BODY || ''}`.toLowerCase();
             const isSynthetic = /\b(synthetic|smoke test|test alert|fake alert)\b/.test(body);
             if (!isSynthetic) {
               return;
@@ -150,7 +212,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issue.number,
+              issue_number: issueNumber,
               body: [
                 'Disposition: this synthetic SigNoz alert produced no remediation patch and can be closed.',
                 '',
@@ -161,25 +223,28 @@ jobs:
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issue.number,
+              issue_number: issueNumber,
               state: 'closed',
               state_reason: 'completed',
             });
 
   close_resolved:
     name: Close resolved alert issue
-    if: contains(github.event.issue.labels.*.name, 'signoz-alert') && contains(github.event.issue.labels.*.name, 'signoz-resolved') && (github.event.action == 'reopened' || github.event.label.name == 'signoz-resolved')
+    needs: issue_context
+    if: needs.issue_context.outputs.operation == 'close_resolved' && needs.issue_context.outputs.has_signoz_resolved == 'true'
     runs-on: ubuntu-latest
     concurrency:
-      group: signoz-resolved-alert-${{ github.event.issue.number }}
+      group: signoz-resolved-alert-${{ needs.issue_context.outputs.issue_number }}
       cancel-in-progress: false
     steps:
       - name: Close when no remediation PR is open
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
+        env:
+          ISSUE_NUMBER: ${{ needs.issue_context.outputs.issue_number }}
         with:
           script: |
-            const issue = context.payload.issue;
-            const issueRef = `#${issue.number}`;
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const issueRef = `#${issueNumber}`;
             const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open "${issueRef}"`;
             const openPrs = await github.paginate(github.rest.search.issuesAndPullRequests, {
               q,
@@ -193,7 +258,7 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: issue.number,
+                issue_number: issueNumber,
                 body: [
                   'SigNoz marked this alert resolved, but an open remediation PR still references this issue.',
                   '',
@@ -208,7 +273,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issue.number,
+              issue_number: issueNumber,
               body: [
                 'SigNoz marked this alert resolved and no open remediation PR references this issue.',
                 '',
@@ -219,14 +284,14 @@ jobs:
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issue.number,
+              issue_number: issueNumber,
               state: 'closed',
               state_reason: 'completed',
             });
 
   open_pr:
     name: Open draft pull request
-    needs: generate_fix
+    needs: [issue_context, generate_fix]
     if: needs.generate_fix.outputs.has_openai_key == 'true' && needs.generate_fix.outputs.has_patch == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -235,13 +300,13 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout default branch
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
 
       - name: Download patch artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: signoz-codex-alert-patch
 
@@ -250,9 +315,9 @@ jobs:
 
       - name: Open draft PR
         env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
+          GH_TOKEN: ${{ secrets.SIGNOZ_CODEX_PR_TOKEN || github.token }}
+          ISSUE_NUMBER: ${{ needs.issue_context.outputs.issue_number }}
+          ISSUE_TITLE: ${{ needs.issue_context.outputs.issue_title }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RUN_ID: ${{ github.run_id }}
         run: |
@@ -272,13 +337,32 @@ jobs:
             echo "Review the patch and run the normal validation before merging."
           } > pr-body.md
 
-          pr_url="$(
+          if pr_url="$(
             gh pr create \
               --draft \
               --base "$DEFAULT_BRANCH" \
               --head "$branch" \
               --title "Investigate SigNoz alert #${ISSUE_NUMBER}" \
-              --body-file pr-body.md
-          )"
-
-          gh issue comment "$ISSUE_NUMBER" --body "Codex opened a draft remediation PR: $pr_url"
+              --body-file pr-body.md \
+              2>pr-error.log
+          )"; then
+            gh issue comment "$ISSUE_NUMBER" --body "Codex opened a draft remediation PR: $pr_url"
+          else
+            if [ -s pr-error.log ]; then
+              pr_error="$(tr '\n' ' ' < pr-error.log | cut -c1-600)"
+            else
+              pr_error="gh pr create failed without stderr output"
+            fi
+            branch_url="https://github.com/${GITHUB_REPOSITORY}/tree/${branch}"
+            {
+              echo "Codex pushed a remediation branch but could not open a draft PR."
+              echo
+              echo "Branch: ${branch_url}"
+              echo
+              echo "Error: \`${pr_error}\`"
+              echo
+              echo "Configure \`SIGNOZ_CODEX_PR_TOKEN\` with pull request creation rights, or enable GitHub Actions pull request creation, before re-enabling automatic triage."
+            } > pr-fallback-comment.md
+            gh issue comment "$ISSUE_NUMBER" --body-file pr-fallback-comment.md
+            echo "::warning::Draft PR creation failed: ${pr_error}"
+          fi
