@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 import json
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any, Mapping, Protocol
 
 import httpx
@@ -22,13 +23,19 @@ from app.venues.polymarket import VenueCallResult
 SCORING_SYSTEM_PROMPT = (
     "Return one JSON object with output_thesis, confidence, "
     "estimated_probability, and cost_estimate for the candidate. "
-    "Use the requested checks in the output thesis."
+    "Use the requested checks in the output thesis. "
+    "confidence and estimated_probability must be decimal strings between 0 and 1, "
+    "for example \"0.64\". cost_estimate is the estimated model API call cost in "
+    "USD as a decimal string, for example \"0.01\". Do not include percentages, "
+    "currency symbols, ranges, units, markdown, or prose outside the JSON object."
 )
 OPENAI_SCORING_MODEL_OPTIONS = ("gpt-5-nano", "gpt-5-mini")
 DEFAULT_OPENAI_SCORING_MODEL = "gpt-5-mini"
 DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_OPENAI_SCORING_REASONING_EFFORT = "minimal"
 DEFAULT_CLAUDE_SCORING_MODEL = "claude-sonnet-5"
+DEFAULT_CLAUDE_SCORING_MAX_TOKENS = 4096
+DEFAULT_SCORING_FALLBACK_COST_ESTIMATE = Decimal("0.01")
 
 
 def cost_controlled_openai_scoring_model(value: Any) -> str:
@@ -444,7 +451,7 @@ class ClaudeMessagesProvider:
         enabled: bool = True,
         model: str = DEFAULT_CLAUDE_SCORING_MODEL,
         base_url: str = "https://api.anthropic.com",
-        max_tokens: int = 800,
+        max_tokens: int = DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
         usage_recorder: LlmUsageRecorder | None = None,
         token_pricing: TokenPricing | None = None,
     ) -> None:
@@ -729,17 +736,107 @@ def _score_from_provider_text(
     request: LlmScoreRequest,
     model_provider: ModelProvider,
 ) -> ScoringOutput:
-    payload = json.loads(text)
+    payload = _provider_json_payload(text)
     return ScoringOutput(
         model_provider=model_provider,
         prompt_version=request.prompt_version,
         input_summary=request.input_summary,
         output_thesis=payload["output_thesis"],
-        confidence=payload["confidence"],
-        estimated_probability=payload["estimated_probability"],
-        cost_estimate=payload["cost_estimate"],
+        confidence=_coerce_probability_text(payload["confidence"], "confidence"),
+        estimated_probability=_coerce_probability_text(
+            payload["estimated_probability"],
+            "estimated_probability",
+        ),
+        cost_estimate=_coerce_cost_estimate(payload["cost_estimate"]),
         instrument=request.instrument,
     )
+
+
+def _provider_json_payload(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        payload = json.loads(cleaned[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("provider scoring response must be a JSON object")
+    return payload
+
+
+_NUMERIC_TEXT_RE = re.compile(r"[-+]?(?:\d+(?:,\d{3})*|\d*\.\d+|\d+)")
+_QUALITATIVE_PROBABILITY = {
+    "very low": Decimal("0.15"),
+    "low": Decimal("0.25"),
+    "moderate-low": Decimal("0.35"),
+    "medium-low": Decimal("0.35"),
+    "moderate": Decimal("0.50"),
+    "medium": Decimal("0.50"),
+    "moderate-high": Decimal("0.65"),
+    "medium-high": Decimal("0.65"),
+    "high": Decimal("0.75"),
+    "very high": Decimal("0.85"),
+}
+
+
+def _coerce_probability_text(value: Any, field_name: str) -> Decimal:
+    if isinstance(value, int | float | Decimal):
+        decimal = _as_decimal(value)
+        return _normalize_probability_decimal(decimal, field_name)
+    text = str(value).strip()
+    try:
+        return _normalize_probability_decimal(_as_decimal(text), field_name)
+    except ValueError:
+        pass
+
+    normalized_text = text.lower().strip()
+    if normalized_text in _QUALITATIVE_PROBABILITY:
+        return _QUALITATIVE_PROBABILITY[normalized_text]
+
+    match = _NUMERIC_TEXT_RE.search(text)
+    if match is None:
+        raise ValueError(f"{field_name} must be a decimal probability")
+    decimal = _as_decimal(match.group(0).replace(",", ""))
+    if "%" in text or decimal > 1:
+        decimal = decimal / Decimal("100")
+    return _normalize_probability_decimal(decimal, field_name)
+
+
+def _normalize_probability_decimal(value: Decimal, field_name: str) -> Decimal:
+    if not value.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    if value < 0 or value > 1:
+        raise ValueError(f"{field_name} must be between 0 and 1")
+    return value
+
+
+def _coerce_cost_estimate(value: Any) -> Decimal:
+    if isinstance(value, int | float | Decimal):
+        return _safe_model_call_cost(_as_decimal(value))
+
+    text = str(value).strip()
+    try:
+        return _safe_model_call_cost(_as_decimal(text))
+    except ValueError:
+        pass
+
+    money_match = re.search(r"\$\s*(" + _NUMERIC_TEXT_RE.pattern + ")", text)
+    match = money_match or _NUMERIC_TEXT_RE.search(text)
+    if match is None:
+        return DEFAULT_SCORING_FALLBACK_COST_ESTIMATE
+    raw = match.group(1) if money_match else match.group(0)
+    return _safe_model_call_cost(_as_decimal(raw.replace(",", "")))
+
+
+def _safe_model_call_cost(value: Decimal) -> Decimal:
+    if not value.is_finite() or value < 0:
+        return DEFAULT_SCORING_FALLBACK_COST_ESTIMATE
+    if value > Decimal("10"):
+        return DEFAULT_SCORING_FALLBACK_COST_ESTIMATE
+    return value
 
 
 def _usage_event_from_provider_response(
