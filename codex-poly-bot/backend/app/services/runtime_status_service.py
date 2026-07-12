@@ -4580,6 +4580,7 @@ def _safe_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
         "tokenId": _optional_text(candidate.get("tokenId")),
         "outcome": _optional_text(candidate.get("outcome")),
         "marketId": _optional_text(candidate.get("marketId")),
+        "marketSlug": _optional_text(candidate.get("marketSlug") or candidate.get("market_slug")),
         "midpoint": _optional_text(candidate.get("midpoint")),
         "bestBid": _optional_text(candidate.get("bestBid")),
         "bestAsk": _optional_text(candidate.get("bestAsk")),
