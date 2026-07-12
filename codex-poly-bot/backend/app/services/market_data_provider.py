@@ -1058,7 +1058,8 @@ def _polymarket_candidate(
         market.get("id"),
         book.get("market"),
     ) or token_id
-    title = _first_string(market.get("question"), market.get("title"), market.get("slug")) or market_id
+    market_slug = _first_string(market.get("slug"), market.get("marketSlug"), market.get("market_slug"))
+    title = _first_string(market.get("question"), market.get("title"), market_slug) or market_id
     display_title = f"{title} - {outcome}" if outcome else title
     end_date = _first_string(
         market.get("endDate"),
@@ -1078,6 +1079,7 @@ def _polymarket_candidate(
         "venue": venue,
         "market": display_title,
         "marketId": market_id,
+        "marketSlug": market_slug,
         "price": _display_decimal(price),
         "midpoint": _display_decimal(price),
         "bestBid": _display_decimal(best_bid),

@@ -174,13 +174,13 @@ class StrategyConsensusService:
             refused_count=refused_count,
             accepted_vote_count=sum(1 for vote in votes if vote.get("status") == "accepted"),
         )
-        run_row.update(
-            {
-                "status": status,
-                "vote_count": len(votes),
-                "approved_count": approved_count,
-                "refused_count": refused_count,
-            }
+        run_row = self.registry.shared().update_strategy_consensus_run_result(
+            consensus_run_id=run_row["id"],
+            status=status,
+            vote_count=len(votes),
+            approved_count=approved_count,
+            refused_count=refused_count,
+            completed_at=completed_at,
         )
         return StrategyConsensusRunResult(
             payload=strategy_consensus_run_payload(run_row, votes, outputs)

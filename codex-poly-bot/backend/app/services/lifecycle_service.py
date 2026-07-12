@@ -193,21 +193,21 @@ class PipelineLifecycleService:
         simulated_count = sum(1 for intent in intents if intent["status"] == "simulated")
         refused_count = sum(1 for intent in intents if intent["status"] == "refused")
         reconciliation_count = sum(1 for intent in intents if intent["status"] == "reconcile_first")
-        run_row.update(
-            {
-                "status": _lifecycle_run_status(
-                    source_count=len(approved_outputs),
-                    action_count=len(intents),
-                    submitted_count=submitted_count,
-                    simulated_count=simulated_count,
-                    refused_count=refused_count,
-                ),
-                "intent_count": len(intents),
-                "submitted_count": submitted_count,
-                "simulated_count": simulated_count,
-                "refused_count": refused_count,
-                "reconciliation_count": reconciliation_count,
-            }
+        run_row = self.registry.shared().update_execution_run_result(
+            execution_run_id=run_row["id"],
+            status=_lifecycle_run_status(
+                source_count=len(approved_outputs),
+                action_count=len(intents),
+                submitted_count=submitted_count,
+                simulated_count=simulated_count,
+                refused_count=refused_count,
+            ),
+            intent_count=len(intents),
+            submitted_count=submitted_count,
+            simulated_count=simulated_count,
+            refused_count=refused_count,
+            reconciliation_count=reconciliation_count,
+            completed_at=completed_at,
         )
         return LifecycleRunResult(payload=execution_run_payload(run_row, intents))
 
@@ -267,21 +267,21 @@ class PipelineLifecycleService:
         submitted_count = sum(1 for intent in intents if intent["status"] == "submitted")
         simulated_count = sum(1 for intent in intents if intent["status"] == "simulated")
         refused_count = sum(1 for intent in intents if intent["status"] == "refused")
-        run_row.update(
-            {
-                "status": _exit_run_status(
-                    open_position_count=len(positions),
-                    triggered_count=len(intents),
-                    submitted_count=submitted_count,
-                    simulated_count=simulated_count,
-                    refused_count=refused_count,
-                ),
-                "open_position_count": len(positions),
-                "triggered_count": len(intents),
-                "simulated_count": simulated_count,
-                "submitted_count": submitted_count,
-                "refused_count": refused_count,
-            }
+        run_row = self.registry.shared().update_exit_run_result(
+            exit_run_id=run_row["id"],
+            status=_exit_run_status(
+                open_position_count=len(positions),
+                triggered_count=len(intents),
+                submitted_count=submitted_count,
+                simulated_count=simulated_count,
+                refused_count=refused_count,
+            ),
+            open_position_count=len(positions),
+            triggered_count=len(intents),
+            simulated_count=simulated_count,
+            submitted_count=submitted_count,
+            refused_count=refused_count,
+            completed_at=completed_at,
         )
         return LifecycleRunResult(payload=exit_run_payload(run_row, intents))
 
@@ -386,6 +386,7 @@ class PipelineLifecycleService:
         status = "pending"
         refusal_reason = _refusal_text(risk_result)
         venue_order_id = None
+        execution_payload: dict[str, Any] = {}
         if risk_result.approved:
             execution_result = self._execute_entry_order(
                 venue=venue,
@@ -402,6 +403,7 @@ class PipelineLifecycleService:
             status = execution_result["status"]
             refusal_reason = execution_result.get("refusal_reason")
             venue_order_id = execution_result.get("venue_order_id")
+            execution_payload = execution_result.get("payload") or {}
         else:
             status = "refused"
 
@@ -425,6 +427,7 @@ class PipelineLifecycleService:
             source_payload={
                 "consensusOutput": _json_ready(output),
                 "marketCandidate": _json_ready(candidate or {}),
+                "executionResult": _json_ready(execution_payload),
             },
             created_at=created_at,
             updated_at=created_at,
@@ -584,6 +587,7 @@ class PipelineLifecycleService:
                 "status": result.status,
                 "refusal_reason": result.refusal_reason,
                 "venue_order_id": result.payload.get("venue_order_id"),
+                "payload": result.payload,
             }
         polymarket_submitter = self._polymarket_submitter_for(model_provider)
         if execution_mode == "live" and polymarket_submitter is None:
@@ -611,6 +615,7 @@ class PipelineLifecycleService:
             "status": result.status,
             "refusal_reason": result.refusal_reason,
             "venue_order_id": result.payload.get("venue_order_id"),
+            "payload": result.payload,
         }
 
     def _open_positions(self, environment: Environment) -> list[dict[str, Any]]:
@@ -1408,12 +1413,24 @@ def _polymarket_order_request(
     price = _candidate_price(candidate) or Decimal("0.50")
     quantity = notional / price if price > 0 else notional
     source_candidate = output.get("source_payload", {}).get("candidate", {})
+    if not isinstance(source_candidate, dict):
+        source_candidate = {}
+    candidate_source = (candidate or {}).get("source_payload", {})
+    if not isinstance(candidate_source, dict):
+        candidate_source = {}
+    source_candidate_payload = source_candidate.get("source_payload", {}) if isinstance(source_candidate, dict) else {}
+    if not isinstance(source_candidate_payload, dict):
+        source_candidate_payload = {}
     market_slug = (
         (candidate or {}).get("marketSlug")
         or (candidate or {}).get("market_slug")
+        or candidate_source.get("marketSlug")
+        or candidate_source.get("market_slug")
         or source_candidate.get("marketSlug")
         or source_candidate.get("market_slug")
-        or instrument_id.split(":", 1)[0]
+        or source_candidate_payload.get("marketSlug")
+        or source_candidate_payload.get("market_slug")
+        or ""
     )
     return PolymarketLiveOrderRequest(
         market_slug=str(market_slug),
