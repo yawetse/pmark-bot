@@ -27,11 +27,14 @@ from app.services.stock_universe import resolve_alpaca_symbol_universe
 
 
 ALPACA_DATA_BASE_URL = "https://data.alpaca.markets/v2"
+POLYMARKET_US_GATEWAY_BASE_URL = "https://gateway.polymarket.us"
 POLYMARKET_GAMMA_BASE_URL = "https://gamma-api.polymarket.com"
 POLYMARKET_CLOB_BASE_URL = "https://clob.polymarket.com"
 DEFAULT_ALPACA_SYMBOL_CHUNK_SIZE = 50
 DEFAULT_ALPACA_HISTORICAL_LOOKBACK_DAYS = 45
 DEFAULT_ALPACA_PER_SYMBOL_FALLBACK_LIMIT = 25
+DEFAULT_POLYMARKET_US_MARKET_SOURCE_LIMIT = 1000
+DEFAULT_POLYMARKET_US_MARKET_PAGE_SIZE = 100
 DEFAULT_POLYMARKET_ORDER_BOOK_RETRIES = 2
 DEFAULT_POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS = 0.25
 DEFAULT_POLYMARKET_ORDER_BOOK_CONCURRENCY = 4
@@ -139,6 +142,10 @@ class ProviderBackedMarketDataFetcher:
             ALPACA_DATA_BASE_URL,
         )
         self.alpaca_data_feed = source.get("ALPACA_DATA_FEED", "iex").strip() or "iex"
+        self.polymarket_us_gateway_base_url = _base_url(
+            source.get("POLYMARKET_GATEWAY_BASE_URL"),
+            POLYMARKET_US_GATEWAY_BASE_URL,
+        )
         self.polymarket_gamma_base_url = _base_url(
             source.get("POLYMARKET_GAMMA_BASE_URL"),
             POLYMARKET_GAMMA_BASE_URL,
@@ -152,6 +159,18 @@ class ProviderBackedMarketDataFetcher:
             DEFAULT_POLYMARKET_MARKET_DATA_LIMIT,
             minimum=1,
             maximum=MAX_POLYMARKET_MARKET_DATA_LIMIT,
+        )
+        self.polymarket_us_market_source_limit = _int_setting(
+            source.get("POLYMARKET_US_MARKET_SOURCE_LIMIT"),
+            DEFAULT_POLYMARKET_US_MARKET_SOURCE_LIMIT,
+            minimum=1,
+            maximum=2000,
+        )
+        self.polymarket_us_market_page_size = _int_setting(
+            source.get("POLYMARKET_US_MARKET_PAGE_SIZE"),
+            DEFAULT_POLYMARKET_US_MARKET_PAGE_SIZE,
+            minimum=1,
+            maximum=250,
         )
         self.alpaca_symbol_chunk_size = _int_setting(
             source.get("ALPACA_SYMBOL_CHUNK_SIZE"),
@@ -468,6 +487,12 @@ class ProviderBackedMarketDataFetcher:
         config_payload: dict[str, Any],
         pulled_at: datetime,
     ) -> MarketDataProviderResult:
+        if venue == Venue.POLYMARKET_US.value:
+            return self._fetch_polymarket_us(
+                config_payload=config_payload,
+                pulled_at=pulled_at,
+            )
+
         errors: list[ProviderHttpError] = []
         candidates: list[dict[str, Any]] = []
         market_limit = _polymarket_market_data_limit(
@@ -534,6 +559,91 @@ class ProviderBackedMarketDataFetcher:
             candidates=candidates,
             errors=errors,
             empty_message="No priced Polymarket candidates were found in active markets.",
+        )
+
+    def _fetch_polymarket_us(
+        self,
+        *,
+        config_payload: dict[str, Any],
+        pulled_at: datetime,
+    ) -> MarketDataProviderResult:
+        errors: list[ProviderHttpError] = []
+        candidates: list[dict[str, Any]] = []
+        market_limit = _polymarket_market_data_limit(
+            config_payload=config_payload,
+            default=self.polymarket_market_limit,
+        )
+        source_limit = max(market_limit, self.polymarket_us_market_source_limit)
+        page_size = min(self.polymarket_us_market_page_size, source_limit)
+        markets_by_slug: dict[str, dict[str, Any]] = {}
+        with self._client() as client:
+            for offset in range(0, source_limit, page_size):
+                try:
+                    market_payload = self._get_json(
+                        client,
+                        f"{self.polymarket_us_gateway_base_url}/v1/markets",
+                        params={
+                            "active": "true",
+                            "closed": "false",
+                            "limit": str(page_size),
+                            "offset": str(offset),
+                        },
+                        operation="polymarket us active markets",
+                    )
+                except ProviderHttpError as exc:
+                    return MarketDataProviderResult(
+                        venue=Venue.POLYMARKET_US.value,
+                        status=exc.status,
+                        source="polymarket us market api",
+                        message=exc.message,
+                        candidates=[],
+                        error_code=exc.error_code,
+                    )
+                page_markets = _market_items(market_payload)
+                if not page_markets:
+                    break
+                for market in page_markets:
+                    slug = _first_string(market.get("slug"), market.get("marketSlug"))
+                    if slug:
+                        markets_by_slug.setdefault(slug, market)
+                if len(page_markets) < page_size:
+                    break
+
+            sorted_markets = sorted(markets_by_slug.values(), key=_polymarket_us_market_sort_key)
+            for market in sorted_markets:
+                if len(candidates) >= market_limit:
+                    break
+                if not _polymarket_us_market_tradable(market):
+                    continue
+                slug = _first_string(market.get("slug"), market.get("marketSlug"))
+                if not slug:
+                    continue
+                try:
+                    book = self._get_json(
+                        client,
+                        f"{self.polymarket_us_gateway_base_url}/v1/markets/{slug}/book",
+                        operation="polymarket us order book",
+                        provider="polymarket_us",
+                        log_context={"market_slug_hash": _short_hash(slug)},
+                    )
+                except ProviderHttpError as exc:
+                    errors.append(exc)
+                    continue
+                candidate = _polymarket_us_candidate(
+                    market=market,
+                    book=book,
+                    pulled_at=pulled_at,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
+
+        return _venue_result(
+            venue=Venue.POLYMARKET_US.value,
+            provider_label="Polymarket US",
+            source="polymarket us market api",
+            candidates=candidates,
+            errors=errors,
+            empty_message="No priced Polymarket US candidates were found in active markets.",
         )
 
     def _fetch_polymarket_order_books(
@@ -1098,6 +1208,148 @@ def _polymarket_candidate(
         "active": _boolish(market.get("active"), default=True),
         "closed": _boolish(market.get("closed"), default=False),
     }
+
+
+def _polymarket_us_candidate(
+    *,
+    market: dict[str, Any],
+    book: dict[str, Any] | list[Any],
+    pulled_at: datetime,
+) -> dict[str, Any] | None:
+    if not isinstance(book, dict):
+        return None
+    book_data = _first_mapping(book.get("marketData"), book)
+    bids = book_data.get("bids") if isinstance(book_data.get("bids"), list) else []
+    asks = book_data.get("offers") if isinstance(book_data.get("offers"), list) else []
+    best_bid = _best_us_book_price(bids, highest=True) or _amount_decimal(market.get("bestBidQuote"))
+    best_ask = _best_us_book_price(asks, highest=False) or _amount_decimal(market.get("bestAskQuote"))
+    price = (
+        _midpoint(best_bid, best_ask)
+        or _amount_decimal(book_data.get("currentPx"))
+        or _amount_decimal(book_data.get("lastTradePx"))
+        or _first_decimal(market.get("price"))
+    )
+    if price is None:
+        return None
+    spread = best_ask - best_bid if best_ask is not None and best_bid is not None else None
+    bid_depth = _sum_us_book_sizes(bids)
+    ask_depth = _sum_us_book_sizes(asks)
+    liquidity = bid_depth + ask_depth
+    market_id = _first_string(market.get("id"), book_data.get("marketId"), market.get("slug")) or ""
+    market_slug = _first_string(book_data.get("marketSlug"), market.get("slug"), market.get("marketSlug"))
+    if not market_slug:
+        return None
+    side = _polymarket_us_long_side(market)
+    outcome = _first_string(side.get("description"), market.get("outcome"), "Yes")
+    title = _first_string(market.get("question"), market.get("title"), market_slug) or market_slug
+    display_title = f"{title} - {outcome}" if outcome else title
+    volume = _first_decimal(
+        market.get("volume24hr"),
+        market.get("volume"),
+        market.get("volume1wk"),
+        market.get("volume1mo"),
+    )
+    end_date = _first_string(market.get("endDate"), market.get("end_date"))
+    return {
+        "id": f"{Venue.POLYMARKET_US.value}:{market_id}:{market_slug}",
+        "venue": Venue.POLYMARKET_US.value,
+        "market": display_title,
+        "marketId": market_id,
+        "marketSlug": market_slug,
+        "price": _display_decimal(price),
+        "midpoint": _display_decimal(price),
+        "bestBid": _display_decimal(best_bid),
+        "bestAsk": _display_decimal(best_ask),
+        "bidDepth": _display_decimal(bid_depth),
+        "askDepth": _display_decimal(ask_depth),
+        "liquidity": _display_decimal(liquidity),
+        "spread": _display_decimal(spread),
+        "state": "priced",
+        "pulledAt": _timestamp(book_data.get("transactTime"), pulled_at),
+        "tokenId": _first_string(side.get("id"), market_slug),
+        "outcome": outcome,
+        "category": _first_string(market.get("category"), market.get("categoryName")),
+        "endDate": end_date,
+        "volume": _display_decimal(volume),
+        "active": _boolish(market.get("active"), default=True),
+        "closed": _boolish(market.get("closed"), default=False),
+        "dataSource": "polymarket_us_market_api",
+    }
+
+
+def _polymarket_us_market_tradable(market: dict[str, Any]) -> bool:
+    if not _boolish(market.get("active"), default=True):
+        return False
+    if _boolish(market.get("closed"), default=False):
+        return False
+    if _boolish(market.get("hidden"), default=False):
+        return False
+    ep3_status = _first_string(market.get("ep3Status"))
+    if ep3_status and ep3_status.upper() != "OPEN":
+        return False
+    sides = market.get("marketSides")
+    if isinstance(sides, list):
+        return any(isinstance(side, dict) and _boolish(side.get("tradable"), default=False) for side in sides)
+    return True
+
+
+def _polymarket_us_market_sort_key(market: dict[str, Any]) -> tuple[datetime, int, Decimal]:
+    end_at = _datetime_or_max(market.get("endDate") or market.get("end_date"))
+    hidden_rank = 1 if _boolish(market.get("hidden"), default=False) else 0
+    volume = _first_decimal(market.get("volume24hr"), market.get("volume"), Decimal("0")) or Decimal("0")
+    return (end_at, hidden_rank, -volume)
+
+
+def _polymarket_us_long_side(market: dict[str, Any]) -> dict[str, Any]:
+    sides = market.get("marketSides")
+    if isinstance(sides, list):
+        for side in sides:
+            if isinstance(side, dict) and _boolish(side.get("long"), default=False):
+                return side
+        for side in sides:
+            if isinstance(side, dict):
+                return side
+    return {}
+
+
+def _best_us_book_price(levels: list[Any], *, highest: bool) -> Decimal | None:
+    prices = [
+        value
+        for value in (_amount_decimal(level.get("px")) for level in levels if isinstance(level, dict))
+        if value is not None
+    ]
+    if not prices:
+        return None
+    return max(prices) if highest else min(prices)
+
+
+def _sum_us_book_sizes(levels: list[Any]) -> Decimal:
+    total = Decimal("0")
+    for level in levels:
+        if not isinstance(level, dict):
+            continue
+        quantity = _decimal_or_none(level.get("qty"))
+        if quantity is not None:
+            total += quantity
+    return total
+
+
+def _amount_decimal(value: Any) -> Decimal | None:
+    if isinstance(value, dict):
+        return _decimal_or_none(value.get("value"))
+    return _decimal_or_none(value)
+
+
+def _datetime_or_max(value: Any) -> datetime:
+    text = _first_string(value)
+    if text:
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+        else:
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return datetime.max.replace(tzinfo=UTC)
 
 
 def _coerce_list(value: Any) -> list[Any]:

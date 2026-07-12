@@ -508,42 +508,58 @@ def test_req_dat_008_08_alpaca_provider_uses_capped_fallback_after_batch_400() -
 def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() -> None:
     """TST-REQ-DAT-008-05: Validates REQ-DAT-008
 
-    Given: Polymarket active markets and CLOB order books return data
-    When: provider-backed ingestion runs for Polymarket
-    Then: priced dashboard candidates include midpoint, spread, liquidity, and token metadata
+    Given: Polymarket US active markets and gateway order books return data
+    When: provider-backed ingestion runs for Polymarket US
+    Then: priced dashboard candidates include midpoint, spread, liquidity, and tradable slug metadata
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/markets":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "conditionId": "condition-1",
-                        "question": "Will rates fall?",
-                        "clobTokenIds": json.dumps(["yes-token"]),
-                        "outcomes": json.dumps(["Yes"]),
-                    }
-                ],
-            )
-        if request.url.path == "/book":
+        if request.url.path == "/v1/markets":
             return httpx.Response(
                 200,
                 json={
-                    "market": "condition-1",
-                    "asset_id": "yes-token",
-                    "timestamp": "1782324000",
-                    "bids": [{"price": "0.44", "size": "100"}],
-                    "asks": [{"price": "0.46", "size": "150"}],
-                    "last_trade_price": "0.45",
+                    "markets": [
+                        {
+                            "id": "7898",
+                            "question": "Will New York win?",
+                            "slug": "tec-mlb-win-2026-07-25-nym",
+                            "endDate": "2026-07-25T21:00:00Z",
+                            "category": "sports",
+                            "active": True,
+                            "closed": False,
+                            "hidden": False,
+                            "ep3Status": "OPEN",
+                            "marketSides": [
+                                {
+                                    "id": "15795",
+                                    "description": "Yes",
+                                    "long": True,
+                                    "tradable": True,
+                                }
+                            ],
+                            "volume24hr": 1000,
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/v1/markets/tec-mlb-win-2026-07-25-nym/book":
+            return httpx.Response(
+                200,
+                json={
+                    "marketData": {
+                        "marketSlug": "tec-mlb-win-2026-07-25-nym",
+                        "transactTime": "2026-06-24T18:00:00Z",
+                        "bids": [{"px": {"value": "0.44", "currency": "USD"}, "qty": "100"}],
+                        "offers": [{"px": {"value": "0.46", "currency": "USD"}, "qty": "150"}],
+                    }
                 },
             )
         return httpx.Response(404)
 
     fetcher = ProviderBackedMarketDataFetcher(
         environ={
-            "POLYMARKET_GAMMA_BASE_URL": "https://gamma.polymarket.test",
-            "POLYMARKET_CLOB_BASE_URL": "https://clob.polymarket.test",
+            "POLYMARKET_GATEWAY_BASE_URL": "https://gateway.polymarket.test",
+            "POLYMARKET_US_MARKET_SOURCE_LIMIT": "1",
         },
         transport=httpx.MockTransport(handler),
     )
@@ -555,12 +571,86 @@ def test_req_dat_008_05_polymarket_provider_fetches_active_market_order_books() 
     )
 
     assert result.status == "pulled"
-    assert result.source == "polymarket gamma and clob api"
-    assert result.candidates[0]["market"] == "Will rates fall? - Yes"
+    assert result.source == "polymarket us market api"
+    assert result.candidates[0]["market"] == "Will New York win? - Yes"
+    assert result.candidates[0]["marketSlug"] == "tec-mlb-win-2026-07-25-nym"
     assert result.candidates[0]["price"] == "0.45"
     assert result.candidates[0]["spread"] == "0.02"
     assert result.candidates[0]["liquidity"] == "250"
-    assert result.candidates[0]["tokenId"] == "yes-token"
+    assert result.candidates[0]["tokenId"] == "15795"
+
+
+def test_req_dat_008_15_polymarket_us_pages_and_prefers_near_resolution_markets() -> None:
+    """TST-REQ-DAT-008-15: Validates REQ-DAT-008
+
+    Given: the first Polymarket US page has a longer-dated market than a later page
+    When: provider-backed ingestion scans multiple US pages
+    Then: it fetches the order book for the nearer market first
+    """
+
+    book_calls: list[str] = []
+
+    def market(slug: str, end_date: str) -> dict:
+        return {
+            "id": slug,
+            "question": slug,
+            "slug": slug,
+            "endDate": end_date,
+            "category": "sports",
+            "active": True,
+            "closed": False,
+            "hidden": False,
+            "ep3Status": "OPEN",
+            "marketSides": [{"id": f"{slug}-side", "description": "Yes", "long": True, "tradable": True}],
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/markets":
+            offset = int(request.url.params.get("offset", "0"))
+            return httpx.Response(
+                200,
+                json={
+                    "markets": [
+                        market("long-market", "2026-11-06T16:20:09Z")
+                        if offset == 0
+                        else market("near-market", "2026-07-25T21:00:00Z")
+                    ]
+                },
+            )
+        if request.url.path.startswith("/v1/markets/") and request.url.path.endswith("/book"):
+            slug = request.url.path.removeprefix("/v1/markets/").removesuffix("/book")
+            book_calls.append(slug)
+            return httpx.Response(
+                200,
+                json={
+                    "marketData": {
+                        "marketSlug": slug,
+                        "transactTime": "2026-06-24T18:00:00Z",
+                        "bids": [{"px": {"value": "0.44", "currency": "USD"}, "qty": "1000"}],
+                        "offers": [{"px": {"value": "0.46", "currency": "USD"}, "qty": "1000"}],
+                    }
+                },
+            )
+        return httpx.Response(404)
+
+    fetcher = ProviderBackedMarketDataFetcher(
+        environ={
+            "POLYMARKET_GATEWAY_BASE_URL": "https://gateway.polymarket.test",
+            "POLYMARKET_US_MARKET_PAGE_SIZE": "1",
+            "POLYMARKET_US_MARKET_SOURCE_LIMIT": "2",
+        },
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = fetcher.fetch(
+        venue=Venue.POLYMARKET_US.value,
+        config_payload={"scanner": {"polymarket": {"market_data_limit": 1}}},
+        pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
+    )
+
+    assert result.status == "pulled"
+    assert book_calls == ["near-market"]
+    assert result.candidates[0]["marketSlug"] == "near-market"
 
 
 def test_req_dat_008_12_polymarket_market_data_limit_comes_from_runtime_config() -> None:
@@ -614,7 +704,7 @@ def test_req_dat_008_12_polymarket_market_data_limit_comes_from_runtime_config()
     )
 
     result = fetcher.fetch(
-        venue=Venue.POLYMARKET_US.value,
+        venue=Venue.POLYMARKET_INTERNATIONAL.value,
         config_payload={"scanner": {"polymarket": {"market_data_limit": 3}}},
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
@@ -674,7 +764,7 @@ def test_req_dat_008_14_polymarket_order_books_stop_after_candidate_limit() -> N
     )
 
     result = fetcher.fetch(
-        venue=Venue.POLYMARKET_US.value,
+        venue=Venue.POLYMARKET_INTERNATIONAL.value,
         config_payload={"scanner": {"polymarket": {"market_data_limit": 2}}},
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
@@ -735,7 +825,7 @@ def test_req_dat_008_13_polymarket_default_market_data_limit_is_one_hundred() ->
     )
 
     result = fetcher.fetch(
-        venue=Venue.POLYMARKET_US.value,
+        venue=Venue.POLYMARKET_INTERNATIONAL.value,
         config_payload={},
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
@@ -797,7 +887,7 @@ def test_req_dat_008_09_polymarket_order_book_retries_after_timeout() -> None:
     )
 
     result = fetcher.fetch(
-        venue=Venue.POLYMARKET_US.value,
+        venue=Venue.POLYMARKET_INTERNATIONAL.value,
         config_payload={},
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
@@ -858,13 +948,13 @@ def test_req_dat_008_10_polymarket_order_book_uses_stale_cache_after_timeout() -
     )
 
     first = fetcher.fetch(
-        venue=Venue.POLYMARKET_US.value,
+        venue=Venue.POLYMARKET_INTERNATIONAL.value,
         config_payload={},
         pulled_at=datetime(2026, 6, 24, 18, 0, tzinfo=UTC),
     )
     fail_books = True
     second = fetcher.fetch(
-        venue=Venue.POLYMARKET_US.value,
+        venue=Venue.POLYMARKET_INTERNATIONAL.value,
         config_payload={},
         pulled_at=datetime(2026, 6, 24, 18, 1, tzinfo=UTC),
     )

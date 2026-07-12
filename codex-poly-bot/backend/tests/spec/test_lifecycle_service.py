@@ -220,6 +220,37 @@ def test_req_exe_016_07_polymarket_order_uses_nested_candidate_market_slug() -> 
     assert polymarket.submit_calls[0].market_slug == "will-fed-cut"
 
 
+def test_req_exe_016_09_polymarket_buy_no_uses_buy_short_intent() -> None:
+    """TST-REQ-EXE-016-09: Validates REQ-EXE-010 and REQ-VEN-004
+
+    Given: a persisted Polymarket consensus output from a model buy_no signal
+    When: live execution builds the SDK order request
+    Then: the entry order buys short rather than trying to sell an existing long
+    """
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    strategy_run = _strategy_run_with_outputs(registry, now, include_alpaca=False)
+    output_row = registry.state.rows("shared.strategy_consensus_outputs")[0]
+    output_row["side"] = OrderSide.SELL.value
+    output_row["source_payload"]["output"] = {"directional_signal": "buy_no"}
+    polymarket = RecordingPolymarketSubmitter()
+
+    result = PipelineLifecycleService(registry, polymarket_submitter=polymarket).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-buy-no-entry",
+        trigger="manual",
+        strategy_run=strategy_run,
+        market_data_pulls=_market_data_pulls(now, include_alpaca=False),
+        config_payload=_config(live_enabled=True),
+        credential_status={Venue.POLYMARKET_US.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 1
+    assert polymarket.submit_calls[0].intent == "ORDER_INTENT_BUY_SHORT"
+
+
 def test_req_exe_016_08_polymarket_sdk_failure_payload_is_persisted() -> None:
     """TST-REQ-EXE-016-08: Validates REQ-EXE-016 and REQ-OBS-006
 
