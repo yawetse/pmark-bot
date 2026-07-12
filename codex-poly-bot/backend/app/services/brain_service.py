@@ -17,6 +17,9 @@ from app.domain import Environment, Instrument, InstrumentType, ModelProvider, S
 from app.services.llm_service import (
     ClaudeMessagesProvider,
     cost_controlled_openai_scoring_model,
+    DEFAULT_CLAUDE_SCORING_MODEL,
+    DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
+    DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
     LlmProvider,
     LlmProviderCredential,
     LlmScoreRequest,
@@ -191,13 +194,13 @@ class BrainService:
             skipped_count=skipped,
             failed_count=failed,
         )
-        run_row.update(
-            {
-                "status": status,
-                "scored_count": scored,
-                "skipped_count": skipped,
-                "failed_count": failed,
-            }
+        run_row = self.registry.shared().update_reasoning_run_result(
+            reasoning_run_id=run_row["id"],
+            status=status,
+            scored_count=scored,
+            skipped_count=skipped,
+            failed_count=failed,
+            completed_at=completed_at,
         )
         return ReasoningRunResult(payload=reasoning_run_payload(run_row, outputs))
 
@@ -245,13 +248,25 @@ class BrainService:
                 remaining_budget=openai_budget,
                 enabled=_provider_enabled(llm_config, ModelProvider.OPENAI),
                 model=cost_controlled_openai_scoring_model(openai_settings.get("model")),
+                max_output_tokens=_positive_int(
+                    openai_settings.get("max_output_tokens"),
+                    DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
+                ),
+                reasoning_effort=_optional_string(
+                    openai_settings.get("reasoning_effort"),
+                    DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
+                ),
                 token_pricing=token_pricing_from_env(ModelProvider.OPENAI, self.environ),
             ),
             ClaudeMessagesProvider(
                 credential=LlmProviderCredential(api_key=self.environ.get("ANTHROPIC_API_KEY")),
                 remaining_budget=claude_budget,
                 enabled=_provider_enabled(llm_config, ModelProvider.CLAUDE),
-                model=str(claude_settings.get("model", "claude-opus-4-1-20250805")),
+                model=_optional_string(
+                    claude_settings.get("model"),
+                    DEFAULT_CLAUDE_SCORING_MODEL,
+                )
+                or DEFAULT_CLAUDE_SCORING_MODEL,
                 token_pricing=token_pricing_from_env(ModelProvider.CLAUDE, self.environ),
             ),
         )
@@ -729,6 +744,13 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _optional_string(value: Any, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    parsed = str(value).strip()
+    return parsed or default
 
 
 def _isoformat_or_none(value: Any) -> str | None:
