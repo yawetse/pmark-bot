@@ -11,7 +11,7 @@ import {
   RotateCcw,
   Settings2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -106,6 +106,39 @@ type DashboardAction = {
   body: string;
   href?: string;
   linkLabel?: string;
+};
+
+type LastTickFunnelAction =
+  | {
+      type: "patch";
+      label: string;
+      savedLabel: string;
+      path: AllowedConfigPath;
+      currentValue: ConfigValue | null;
+      nextValue: ConfigValue;
+      detail: string;
+    }
+  | {
+      type: "link";
+      label: string;
+      href: string;
+      detail: string;
+    };
+
+type LastTickFunnelStage = {
+  key: string;
+  label: string;
+  status: string;
+  tone: "ok" | "waiting" | "blocked";
+  entered: number;
+  passed: number;
+  blocked: number;
+  enteredLabel: string;
+  passedLabel: string;
+  blockedLabel: string;
+  reason: string;
+  detail: string;
+  action: LastTickFunnelAction;
 };
 
 type SafetySummary = {
@@ -285,6 +318,11 @@ export function ConsumerDashboard() {
     () => tickTimelineSteps(operations, marketData),
     [operations, marketData],
   );
+  const funnelStages = useMemo(
+    () => lastTickFunnelStages(settings, operations, marketData, liveEnabled, activeVenueLabels),
+    [activeVenueLabels, liveEnabled, marketData, operations, settings],
+  );
+  const funnelSummary = useMemo(() => lastTickFunnelSummary(funnelStages), [funnelStages]);
   const lastTick = useMemo(
     () => lastTickResult(operations, currentDailySummary),
     [operations, currentDailySummary],
@@ -446,6 +484,16 @@ export function ConsumerDashboard() {
     return true;
   }
 
+  async function applyFunnelAction(stage: LastTickFunnelStage) {
+    if (stage.action.type !== "patch") {
+      return;
+    }
+    await saveConfigPatches(
+      [{ path: stage.action.path, value: stage.action.nextValue }],
+      stage.action.savedLabel,
+    );
+  }
+
   return (
     <section className="consumer-dashboard" aria-labelledby="consumer-dashboard-title">
       <div className="consumer-hero">
@@ -500,6 +548,32 @@ export function ConsumerDashboard() {
           tone={realtime.status === "connected" ? "ok" : realtime.status === "offline" ? "blocked" : "waiting"}
         />
       </div>
+
+      <section className="consumer-panel span-3 tick-funnel-panel" aria-labelledby="tick-funnel-title">
+        <div className="consumer-panel-heading tick-funnel-heading">
+          <div>
+            <p className="section-label">Last tick funnel</p>
+            <h2 id="tick-funnel-title">{lastTick.tone === "ok" ? "How the trade passed" : "Why no trade happened"}</h2>
+            <p>{funnelSummary}</p>
+          </div>
+          <span className={`status ${lastTick.tone}`}>{lastTick.status}</span>
+        </div>
+        <LastTickFunnel
+          canEditConfig={canEditConfig}
+          onApplyStageAction={applyFunnelAction}
+          saveState={saveState}
+          stages={funnelStages}
+        />
+        {saveState.status === "submitting" ? (
+          <p className="status-message waiting">Saving {saveState.label.toLowerCase()}.</p>
+        ) : null}
+        {saveState.status === "saved" ? (
+          <p className="status-message ok">{saveState.label}. Changes apply on the next loop.</p>
+        ) : null}
+        {saveState.status === "error" ? (
+          <p className="status-message blocked">{saveState.message}</p>
+        ) : null}
+      </section>
 
       <section className="consumer-cycle-guide" aria-labelledby="cycle-guide-title">
         <div className="cycle-guide-heading">
@@ -967,6 +1041,99 @@ function DashboardControlLink({
   );
 }
 
+function LastTickFunnel({
+  stages,
+  canEditConfig,
+  saveState,
+  onApplyStageAction,
+}: {
+  stages: LastTickFunnelStage[];
+  canEditConfig: boolean;
+  saveState: SaveState;
+  onApplyStageAction: (stage: LastTickFunnelStage) => void;
+}) {
+  const maxCount = Math.max(
+    1,
+    ...stages.map((stage) => Math.max(stage.entered, stage.passed, stage.blocked)),
+  );
+
+  return (
+    <div className="tick-funnel-grid" aria-label="Last tick gate counts">
+      {stages.map((stage) => {
+        const applying =
+          saveState.status === "submitting" &&
+          stage.action.type === "patch" &&
+          saveState.label === stage.action.savedLabel;
+        const style = {
+          "--pass-width": funnelWidth(stage.passed, maxCount),
+          "--blocked-width": funnelWidth(stage.blocked, maxCount),
+        } as CSSProperties;
+
+        return (
+          <article className={`tick-funnel-stage ${stage.tone}`} key={stage.key} style={style}>
+            <div className="funnel-stage-heading">
+              <div>
+                <span>{stage.enteredLabel}</span>
+                <strong>{stage.label}</strong>
+              </div>
+              <span className={`status ${stage.tone}`}>{stage.status}</span>
+            </div>
+            <div className="funnel-flow-track" aria-hidden="true">
+              <span className="funnel-flow-pass" />
+              <span className="funnel-flow-blocked" />
+            </div>
+            <dl className="funnel-stage-counts">
+              <div>
+                <dt>In</dt>
+                <dd>{formatWhole(stage.entered)}</dd>
+              </div>
+              <div>
+                <dt>{stage.passedLabel}</dt>
+                <dd>{formatWhole(stage.passed)}</dd>
+              </div>
+              <div>
+                <dt>{stage.blockedLabel}</dt>
+                <dd>{formatWhole(stage.blocked)}</dd>
+              </div>
+            </dl>
+            <div className="funnel-stage-copy">
+              <strong>{stage.reason}</strong>
+              <p>{stage.detail}</p>
+            </div>
+            <div className="funnel-stage-action">
+              {stage.action.type === "patch" ? (
+                <>
+                  <div className="funnel-setting-change">
+                    <span>{CONFIG_PATH_DETAILS[stage.action.path].label}</span>
+                    <strong>
+                      {formatConfigValue(stage.action.currentValue)} to {formatConfigValue(stage.action.nextValue)}
+                    </strong>
+                  </div>
+                  <button
+                    className="button primary funnel-action-button"
+                    disabled={!canEditConfig || applying}
+                    onClick={() => onApplyStageAction(stage)}
+                    type="button"
+                  >
+                    {applying ? "Applying" : stage.action.label}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p>{stage.action.detail}</p>
+                  <Link className="button subtle funnel-action-button" href={stage.action.href}>
+                    {stage.action.label}
+                  </Link>
+                </>
+              )}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function dashboardHeroSummary({
   liveEnabled,
   operations,
@@ -1306,6 +1473,494 @@ function tickTimelineSteps(
           : "Loading exit results."),
     },
   ].map((step) => ({ ...step, tone: statusTone(step.status) }));
+}
+
+function lastTickFunnelStages(
+  settings: Record<string, unknown>,
+  operations: OperationsSummaryView | null,
+  marketData: MarketDataPullView | null,
+  liveEnabled: boolean,
+  activeVenueLabels: string[],
+): LastTickFunnelStage[] {
+  const marketCandidates = marketDataCandidateCount(marketData);
+  const scanner = operations?.scanner;
+  const reasoning = operations?.reasoning;
+  const strategyConsensus = operations?.strategyConsensus;
+  const execution = operations?.execution;
+
+  const scannerEntered = Math.max(scanner?.candidateCount ?? 0, marketCandidates);
+  const scannerPassed = scanner?.acceptedCount ?? 0;
+  const scannerBlocked = Math.max(scanner?.rejectedCount ?? 0, scannerEntered - scannerPassed);
+  const scannerReason = mostCommonReason(scanner?.candidates.map((candidate) => candidate.refusalReason));
+
+  const reasoningEntered = Math.max(reasoning?.promptCount ?? 0, scannerPassed);
+  const reasoningPassed = reasoning?.scoredCount ?? 0;
+  const reasoningBlocked = Math.max(
+    (reasoning?.skippedCount ?? 0) + (reasoning?.failedCount ?? 0),
+    reasoningEntered - reasoningPassed,
+  );
+  const reasoningReason = mostCommonReason(reasoning?.outputs.map((output) => output.refusalReason));
+
+  const consensusEntered = Math.max(strategyConsensus?.voteCount ?? 0, reasoningPassed);
+  const consensusPassed = strategyConsensus?.approvedCount ?? 0;
+  const consensusBlocked = Math.max(strategyConsensus?.refusedCount ?? 0, consensusEntered - consensusPassed);
+  const consensusReason = mostCommonReason([
+    ...(strategyConsensus?.votes.map((vote) => vote.refusalReason) ?? []),
+    ...(strategyConsensus?.outputs.map((output) => output.refusalReason) ?? []),
+  ]);
+
+  const orderEntered = Math.max(execution?.intentCount ?? 0, consensusPassed);
+  const orderPassed = (execution?.submittedCount ?? 0) + (execution?.simulatedCount ?? 0);
+  const orderBlocked = Math.max(execution?.refusedCount ?? 0, orderEntered - orderPassed);
+  const orderReason = mostCommonReason(execution?.intents.map((intent) => intent.refusalReason));
+
+  const submittedCount = execution?.submittedCount ?? 0;
+  const simulatedCount = execution?.simulatedCount ?? 0;
+  const liveOrderEntered = Math.max(submittedCount + simulatedCount + orderBlocked, orderPassed, orderEntered);
+  const liveOrderBlocked = Math.max(orderBlocked + simulatedCount, liveOrderEntered - submittedCount);
+
+  return [
+    buildFunnelStage({
+      key: "market-data",
+      label: "Market data",
+      status: marketData?.status ?? (operations ? "idle" : "loading"),
+      entered: marketCandidates,
+      passed: marketCandidates,
+      blocked: 0,
+      enteredLabel: "priced records",
+      passedLabel: "Pulled",
+      blockedLabel: "Not pulled",
+      reason:
+        marketCandidates > 0
+          ? `${formatWhole(marketCandidates)} priced candidate${marketCandidates === 1 ? "" : "s"} entered the tick.`
+          : "No priced candidate reached the scanner.",
+      detail: marketData?.message ?? "Waiting for the latest market data pull.",
+      action:
+        activeVenueLabels.length === 0
+          ? linkFunnelAction(
+              "/dashboard/config",
+              "Choose venue",
+              "No active venue can provide market records until one is enabled.",
+            )
+          : marketCandidates === 0
+            ? linkFunnelAction(
+                "/dashboard/operations",
+                "Run cycle",
+                "Run a manual cycle to pull fresh market records.",
+              )
+            : patchFunnelAction(
+                settings,
+                "scanner.polymarket.market_data_limit",
+                nextMarketDataLimit(settings),
+                "Raise cap",
+                "Candidate cap updated",
+                "Raise the Polymarket active-market cap for the next pull.",
+              ),
+    }),
+    buildFunnelStage({
+      key: "scanner",
+      label: "Market filters",
+      status: scanner?.status ?? (operations ? "idle" : "loading"),
+      entered: scannerEntered,
+      passed: scannerPassed,
+      blocked: scannerBlocked,
+      enteredLabel: "records checked",
+      passedLabel: "Passed",
+      blockedLabel: "Filtered",
+      reason:
+        scannerBlocked > 0
+          ? `${formatWhole(scannerBlocked)} stopped in scanner filters.`
+          : "No scanner rejection is visible in the latest tick.",
+      detail:
+        scannerReason.count > 0
+          ? `Main reason: ${scannerReason.reason}.`
+          : scanner?.message ?? "Scanner output has not been recorded yet.",
+      action:
+        scannerEntered > 0 && scannerBlocked > 0
+          ? scannerFilterAction(settings, scannerReason.reason, scanner?.candidates ?? [])
+          : linkFunnelAction(
+              "/dashboard/operations",
+              scannerPassed > 0 ? "Review candidates" : "Run cycle",
+              "The Run page shows scanner records after a manual or scheduled cycle.",
+            ),
+    }),
+    buildFunnelStage({
+      key: "reasoning",
+      label: "Model scoring",
+      status: reasoning?.status ?? (operations ? "idle" : "loading"),
+      entered: reasoningEntered,
+      passed: reasoningPassed,
+      blocked: reasoningBlocked,
+      enteredLabel: "prompts",
+      passedLabel: "Scored",
+      blockedLabel: "Skipped",
+      reason:
+        reasoningBlocked > 0
+          ? `${formatWhole(reasoningBlocked)} prompt${reasoningBlocked === 1 ? "" : "s"} did not produce a score.`
+          : "Model scoring did not stop the latest tick.",
+      detail:
+        reasoningReason.count > 0
+          ? `Main reason: ${reasoningReason.reason}.`
+          : reasoning?.message ?? "Model scoring output has not been recorded yet.",
+      action:
+        reasoningEntered === 0
+          ? linkFunnelAction(
+              "/dashboard/operations",
+              "Review scoring",
+              "Model scoring starts after scanner candidates pass.",
+            )
+          : (reasoning?.skippedCount ?? 0) > 0
+            ? patchFunnelAction(
+                settings,
+                "reasoning.max_prompts_per_provider_per_run",
+                nextPromptCap(settings),
+                "Raise prompt cap",
+                "Prompt cap updated",
+                "Allow more scanner survivors to reach each model provider.",
+              )
+            : patchFunnelAction(
+                settings,
+                "reasoning.polymarket.min_confidence",
+                lowerRatioSetting(settings, "reasoning.polymarket.min_confidence", 0.75, 0.03, 0.62),
+                "Lower confidence",
+                "Confidence gate updated",
+                "Let more scored Polymarket candidates continue to strategy checks.",
+              ),
+    }),
+    buildFunnelStage({
+      key: "strategy",
+      label: "Strategy consensus",
+      status: strategyConsensus?.status ?? (operations ? "idle" : "loading"),
+      entered: consensusEntered,
+      passed: consensusPassed,
+      blocked: consensusBlocked,
+      enteredLabel: "votes",
+      passedLabel: "Approved",
+      blockedLabel: "Refused",
+      reason:
+        consensusBlocked > 0
+          ? `${formatWhole(consensusBlocked)} strategy vote${consensusBlocked === 1 ? "" : "s"} did not approve.`
+          : "Strategy consensus did not block the latest tick.",
+      detail:
+        consensusReason.count > 0
+          ? `Main reason: ${consensusReason.reason}.`
+          : strategyConsensus?.message ?? "Strategy consensus output has not been recorded yet.",
+      action:
+        consensusEntered > 0 && consensusBlocked > 0
+          ? strategyAction(settings)
+          : linkFunnelAction(
+              "/dashboard/operations",
+              consensusPassed > 0 ? "Review approvals" : "Review votes",
+              "The Run page shows each strategy vote and approval record.",
+            ),
+    }),
+    buildFunnelStage({
+      key: "execution",
+      label: "Risk and order plan",
+      status: execution?.status ?? (operations ? "idle" : "loading"),
+      entered: orderEntered,
+      passed: orderPassed,
+      blocked: orderBlocked,
+      enteredLabel: "approved signals",
+      passedLabel: "Order plans",
+      blockedLabel: "Refused",
+      reason:
+        orderBlocked > 0
+          ? `${formatWhole(orderBlocked)} order intent${orderBlocked === 1 ? "" : "s"} refused before venue submission.`
+          : "Risk checks did not refuse an order plan.",
+      detail:
+        orderReason.count > 0
+          ? `Main reason: ${orderReason.reason}.`
+          : execution?.message ?? "Execution output has not been recorded yet.",
+      action:
+        orderEntered > 0 && orderBlocked > 0
+          ? linkFunnelAction(
+              "/dashboard/config",
+              "Review risk",
+              "Position size, loss, slippage, and live-mode settings are controlled in Settings.",
+            )
+          : linkFunnelAction(
+              "/dashboard/operations",
+              orderPassed > 0 ? "Review order plans" : "Review execution",
+              "The Run page shows execution records after a signal reaches order planning.",
+            ),
+    }),
+    buildFunnelStage({
+      key: "live-order",
+      label: "Live order",
+      status: submittedCount > 0 ? "submitted" : simulatedCount > 0 ? "simulated" : execution?.status ?? "idle",
+      entered: liveOrderEntered,
+      passed: submittedCount,
+      blocked: liveOrderBlocked,
+      enteredLabel: "order outcomes",
+      passedLabel: "Submitted",
+      blockedLabel: liveEnabled ? "Not submitted" : "Simulated",
+      reason:
+        submittedCount > 0
+          ? `${formatWhole(submittedCount)} live order${submittedCount === 1 ? "" : "s"} submitted.`
+          : simulatedCount > 0
+            ? `${formatWhole(simulatedCount)} order${simulatedCount === 1 ? "" : "s"} stayed in simulation.`
+            : "No live order was submitted.",
+      detail: liveEnabled
+        ? "Live mode is on, but order submission still depends on venue, risk, and emergency-stop gates."
+        : "Live mode is off, so any approved order remains a practice order.",
+      action: linkFunnelAction(
+        submittedCount > 0 ? "/dashboard/operations" : "/dashboard/config",
+        submittedCount > 0 ? "Open orders" : "Review live mode",
+        submittedCount > 0
+          ? "Order details are recorded on the Run page."
+          : "Live mode should only be changed after account, risk, notification, and dry-run checks pass.",
+      ),
+    }),
+  ];
+}
+
+function buildFunnelStage(
+  stage: Omit<LastTickFunnelStage, "tone">,
+): LastTickFunnelStage {
+  return {
+    ...stage,
+    tone: funnelStageTone(stage.status, stage.entered, stage.passed, stage.blocked),
+  };
+}
+
+function lastTickFunnelSummary(stages: LastTickFunnelStage[]): string {
+  const firstStage = stages[0];
+  const finalStage = stages[stages.length - 1];
+  if ((finalStage?.passed ?? 0) > 0) {
+    return `${formatWhole(firstStage.entered)} market record${firstStage.entered === 1 ? "" : "s"} entered the last tick and ${formatWhole(finalStage.passed)} live order${finalStage.passed === 1 ? "" : "s"} reached the venue.`;
+  }
+  const hardStop = stages.find((stage) => stage.entered > 0 && stage.passed === 0 && stage.blocked > 0);
+  if (hardStop) {
+    return `${formatWhole(firstStage.entered)} market record${firstStage.entered === 1 ? "" : "s"} entered the last tick. The first hard stop was ${hardStop.label.toLowerCase()}: ${hardStop.detail}`;
+  }
+  return `${formatWhole(firstStage.entered)} market record${firstStage.entered === 1 ? "" : "s"} entered the last tick and no live order was submitted.`;
+}
+
+function patchFunnelAction(
+  settings: Record<string, unknown>,
+  path: AllowedConfigPath,
+  nextValue: ConfigValue,
+  label: string,
+  savedLabel: string,
+  detail: string,
+): LastTickFunnelAction {
+  return {
+    type: "patch",
+    label,
+    savedLabel,
+    path,
+    currentValue: valueAtPath(settings, path) as ConfigValue | null,
+    nextValue,
+    detail,
+  };
+}
+
+function linkFunnelAction(href: string, label: string, detail: string): LastTickFunnelAction {
+  return {
+    type: "link",
+    href,
+    label,
+    detail,
+  };
+}
+
+function scannerFilterAction(
+  settings: Record<string, unknown>,
+  reason: string,
+  candidates: ScannerCandidateView[],
+): LastTickFunnelAction {
+  const lowerReason = reason.toLowerCase();
+  const mostlyAlpaca =
+    candidates.some((candidate) => candidate.venue.toLowerCase().includes("alpaca")) &&
+    !candidates.some((candidate) => candidate.venue.toLowerCase().includes("polymarket"));
+
+  if (mostlyAlpaca || lowerReason.includes("quote")) {
+    return patchFunnelAction(
+      settings,
+      "scanner.alpaca.max_spread",
+      higherRatioSetting(settings, "scanner.alpaca.max_spread", 0.5, 0.1, 1),
+      "Widen stock spread",
+      "Stock spread updated",
+      "Allow wider stock quotes to reach model scoring.",
+    );
+  }
+  if (lowerReason.includes("liquidity")) {
+    return patchFunnelAction(
+      settings,
+      "scanner.polymarket.min_liquidity",
+      lowerPositiveSetting(settings, "scanner.polymarket.min_liquidity", 500, 0.8, 1),
+      "Lower liquidity",
+      "Liquidity gate updated",
+      "Allow lower-liquidity Polymarket markets through the scanner.",
+    );
+  }
+  if (lowerReason.includes("depth")) {
+    return patchFunnelAction(
+      settings,
+      "scanner.polymarket.min_depth",
+      lowerPositiveSetting(settings, "scanner.polymarket.min_depth", 500, 0.8, 1),
+      "Lower depth",
+      "Depth gate updated",
+      "Allow thinner Polymarket order books through the scanner.",
+    );
+  }
+  if (lowerReason.includes("volume")) {
+    return patchFunnelAction(
+      settings,
+      "scanner.polymarket.min_volume",
+      lowerPositiveSetting(settings, "scanner.polymarket.min_volume", 1000, 0.8, 0),
+      "Lower volume",
+      "Volume gate updated",
+      "Allow lower-volume Polymarket markets through the scanner.",
+    );
+  }
+  if (lowerReason.includes("hour") || lowerReason.includes("resolution")) {
+    return patchFunnelAction(
+      settings,
+      "scanner.polymarket.max_hours_to_resolution",
+      higherRatioSetting(settings, "scanner.polymarket.max_hours_to_resolution", 168, 24, 336),
+      "Extend window",
+      "Resolution window updated",
+      "Allow markets farther from resolution through the scanner.",
+    );
+  }
+  return patchFunnelAction(
+    settings,
+    "scanner.polymarket.max_spread",
+    higherRatioSetting(settings, "scanner.polymarket.max_spread", 0.05, 0.01, 0.1),
+    "Widen spread",
+    "Spread gate updated",
+    "Allow slightly wider Polymarket spreads through the scanner.",
+  );
+}
+
+function strategyAction(settings: Record<string, unknown>): LastTickFunnelAction {
+  if (!booleanConfigValue(valueAtPath(settings, "strategies.convergence.enabled"))) {
+    return patchFunnelAction(
+      settings,
+      "strategies.convergence.enabled",
+      true,
+      "Enable convergence",
+      "Convergence strategy enabled",
+      "Add convergence votes to future scored candidates.",
+    );
+  }
+  if (!booleanConfigValue(valueAtPath(settings, "strategies.arbitrage.enabled"))) {
+    return patchFunnelAction(
+      settings,
+      "strategies.arbitrage.enabled",
+      true,
+      "Enable arbitrage",
+      "Arbitrage strategy enabled",
+      "Add arbitrage votes to future scored candidates.",
+    );
+  }
+  return linkFunnelAction(
+    "/dashboard/operations",
+    "Review votes",
+    "The Run page shows each strategy vote and refusal reason.",
+  );
+}
+
+function marketDataCandidateCount(marketData: MarketDataPullView | null): number {
+  if (!marketData) {
+    return 0;
+  }
+  const venuePulls = marketData.venues?.length ? marketData.venues : [marketData];
+  const declaredCount = venuePulls.reduce((total, venuePull) => total + (venuePull.candidateCount ?? 0), 0);
+  const rowCount = venuePulls.reduce((total, venuePull) => total + (venuePull.candidates?.length ?? 0), 0);
+  return Math.max(declaredCount, rowCount);
+}
+
+function mostCommonReason(values: Array<string | null | undefined> | undefined): { reason: string; count: number } {
+  const counts = new Map<string, number>();
+  for (const value of values ?? []) {
+    const reason = normalizeReason(value);
+    if (!reason) {
+      continue;
+    }
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  const [reason, count] = [...counts.entries()].sort((left, right) => right[1] - left[1])[0] ?? ["not recorded", 0];
+  return { reason, count };
+}
+
+function normalizeReason(value: string | null | undefined): string {
+  const reason = (value ?? "").trim();
+  if (!reason || ["none", "null", "undefined", "n/a"].includes(reason.toLowerCase())) {
+    return "";
+  }
+  return reason;
+}
+
+function nextMarketDataLimit(settings: Record<string, unknown>): string {
+  const current = numberValue(valueAtPath(settings, "scanner.polymarket.market_data_limit"), 5);
+  return trimNumber(Math.min(250, Math.max(current + 5, current * 2, 10)));
+}
+
+function nextPromptCap(settings: Record<string, unknown>): string {
+  const current = numberValue(valueAtPath(settings, "reasoning.max_prompts_per_provider_per_run"), 100);
+  return trimNumber(Math.max(current + 10, Math.ceil(current * 1.25)));
+}
+
+function higherRatioSetting(
+  settings: Record<string, unknown>,
+  path: AllowedConfigPath,
+  fallback: number,
+  minimumIncrease: number,
+  max: number,
+): string {
+  const current = numberValue(valueAtPath(settings, path), fallback);
+  return trimNumber(Math.min(max, Math.max(current + minimumIncrease, current * 1.25)));
+}
+
+function lowerPositiveSetting(
+  settings: Record<string, unknown>,
+  path: AllowedConfigPath,
+  fallback: number,
+  scale: number,
+  min: number,
+): string {
+  const current = numberValue(valueAtPath(settings, path), fallback);
+  return trimNumber(Math.max(min, current * scale));
+}
+
+function lowerRatioSetting(
+  settings: Record<string, unknown>,
+  path: AllowedConfigPath,
+  fallback: number,
+  drop: number,
+  min: number,
+): string {
+  const current = numberValue(valueAtPath(settings, path), fallback);
+  return trimNumber(Math.max(min, current - drop));
+}
+
+function funnelStageTone(
+  status: string,
+  entered: number,
+  passed: number,
+  blocked: number,
+): "ok" | "waiting" | "blocked" {
+  if (entered > 0 && passed === 0 && blocked > 0) {
+    return "blocked";
+  }
+  if (passed > 0) {
+    return "ok";
+  }
+  return statusTone(status);
+}
+
+function funnelWidth(value: number, max: number): string {
+  if (value <= 0) {
+    return "0%";
+  }
+  return `${Math.max(7, Math.min(100, (value / max) * 100)).toFixed(2)}%`;
+}
+
+function formatWhole(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.max(0, Math.round(value)));
 }
 
 function lastTickResult(

@@ -3091,6 +3091,198 @@ th {
   line-height: 1.35;
 }
 
+.tick-funnel-panel {
+  gap: 18px;
+  overflow: hidden;
+}
+
+.tick-funnel-heading {
+  align-items: flex-start;
+}
+
+.tick-funnel-heading p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 6px 0 0;
+  max-width: 940px;
+}
+
+.tick-funnel-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
+}
+
+.tick-funnel-stage {
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  position: relative;
+}
+
+.tick-funnel-stage.ok {
+  border-color: var(--mode-ok-border);
+}
+
+.tick-funnel-stage.waiting {
+  border-color: var(--mode-waiting-border);
+}
+
+.tick-funnel-stage.blocked {
+  border-color: var(--mode-blocked-border);
+}
+
+.funnel-stage-heading {
+  align-items: start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.funnel-stage-heading > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.funnel-stage-heading span:first-child {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.funnel-stage-heading strong {
+  font-size: 16px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.funnel-flow-track {
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  display: flex;
+  gap: 3px;
+  height: 22px;
+  overflow: hidden;
+  padding: 3px;
+}
+
+.funnel-flow-pass,
+.funnel-flow-blocked {
+  border-radius: 999px;
+  display: block;
+  min-width: 0;
+}
+
+.funnel-flow-pass {
+  background: linear-gradient(90deg, var(--accent), var(--focus));
+  width: var(--pass-width);
+}
+
+.funnel-flow-blocked {
+  background: var(--status-blocked-bg);
+  box-shadow: inset 0 0 0 1px var(--mode-blocked-border);
+  width: var(--blocked-width);
+}
+
+.funnel-stage-counts {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.funnel-stage-counts div {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.funnel-stage-counts dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.funnel-stage-counts dd {
+  font-size: 18px;
+  font-weight: 850;
+  line-height: 1.1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.funnel-stage-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.funnel-stage-copy strong {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.funnel-stage-copy p,
+.funnel-stage-action p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.funnel-stage-action {
+  align-content: end;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.funnel-setting-change {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.funnel-setting-change span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.funnel-setting-change strong {
+  font-size: 13px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.funnel-action-button {
+  justify-content: center;
+  min-height: 38px;
+  width: 100%;
+}
+
 .consumer-cycle-guide {
   background: var(--surface-raised);
   border: 1px solid var(--border);
@@ -4317,6 +4509,7 @@ th {
   .consumer-grid,
   .consumer-tick-strip,
   .cycle-guide-list,
+  .tick-funnel-grid,
   .recommendation-options {
     grid-template-columns: 1fr 1fr;
   }
@@ -4377,6 +4570,7 @@ th {
   .consumer-grid,
   .consumer-tick-strip,
   .cycle-guide-list,
+  .tick-funnel-grid,
   .recommendation-options,
   .consumer-metric-strip,
   .scenario-lever-grid,
