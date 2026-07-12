@@ -9,6 +9,7 @@ import pytest
 import httpx
 from pydantic import ValidationError
 
+import app.db.session as db_session_module
 from app.db import (
     DatabaseState,
     PersistenceConfigurationError,
@@ -1116,6 +1117,38 @@ def test_req_db_007_03_bare_postgres_dsn_uses_packaged_psycopg_driver() -> None:
     session_factory = create_session_factory("postgresql://user:pass@localhost:5432/codex_poly_bot")
 
     assert session_factory.kw["bind"].url.drivername == "postgresql+psycopg"
+
+def test_req_db_007_04_postgres_session_factory_bounds_connection_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TST-REQ-DB-007-04: Validates REQ-DB-007
+
+    Given: production Postgres is temporarily slow to accept connections
+    When: the SQLAlchemy session factory initializes
+    Then: connection and pool waits are bounded so scheduler ticks can fail fast
+    """
+    captured: dict[str, object] = {}
+
+    def fake_create_engine(url: object, **kwargs: object) -> object:
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+
+        class FakeEngine:
+            def __init__(self, engine_url: object) -> None:
+                self.url = engine_url
+
+        return FakeEngine(url)
+
+    monkeypatch.setattr(db_session_module, "create_engine", fake_create_engine)
+
+    session_factory = db_session_module.create_session_factory(
+        "postgresql://user:pass@localhost:5432/codex_poly_bot"
+    )
+
+    assert session_factory.kw["bind"].url.drivername == "postgresql+psycopg"
+    assert captured["kwargs"] == {
+        "pool_pre_ping": True,
+        "pool_timeout": db_session_module.DEFAULT_POOL_TIMEOUT_SECONDS,
+        "connect_args": {"connect_timeout": db_session_module.DEFAULT_CONNECT_TIMEOUT_SECONDS},
+    }
 
 def test_req_db_007_02_postgres_unavailable_live_order_placement_requested_order_blocked() -> None:
     """TST-REQ-DB-007-02: Validates REQ-DB-007
