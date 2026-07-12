@@ -11,6 +11,10 @@ from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
+DEFAULT_POOL_TIMEOUT_SECONDS = 10
+
+
 class PersistenceConfigurationError(ValueError):
     """Raised when database bootstrap configuration is invalid."""
 
@@ -30,7 +34,12 @@ def create_session_factory(database_url: str) -> sessionmaker:
     if url.drivername == "postgresql":
         url = url.set(drivername="postgresql+psycopg")
     try:
-        engine = create_engine(url, pool_pre_ping=True)
+        engine = create_engine(
+            url,
+            pool_pre_ping=True,
+            pool_timeout=DEFAULT_POOL_TIMEOUT_SECONDS,
+            connect_args={"connect_timeout": DEFAULT_CONNECT_TIMEOUT_SECONDS},
+        )
     except (ImportError, SQLAlchemyError) as exc:
         raise PersistenceConfigurationError("database_url could not initialize a Postgres engine") from exc
     return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
