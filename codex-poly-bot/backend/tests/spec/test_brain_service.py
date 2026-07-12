@@ -90,10 +90,13 @@ def test_req_llm_001_04_brain_scores_polymarket_and_stock_scanner_survivors() ->
         completed_at=now,
     )
     outputs = registry.shared().reasoning_outputs(environment=Environment.DEVELOPMENT)
+    runs = registry.shared().reasoning_runs(environment=Environment.DEVELOPMENT)
     usage = registry.state.rows("shared.ai_usage_events")
 
     assert scanner_run.payload["acceptedCount"] == 2
     assert result.payload["status"] == "completed"
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["scored_count"] == 4
     assert result.payload["promptCount"] == 4
     assert result.payload["scoredCount"] == 4
     assert {output["directional_signal"] for output in outputs} == {"buy_yes", "bullish"}

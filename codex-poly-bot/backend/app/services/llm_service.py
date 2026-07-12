@@ -26,6 +26,9 @@ SCORING_SYSTEM_PROMPT = (
 )
 OPENAI_SCORING_MODEL_OPTIONS = ("gpt-5-nano", "gpt-5-mini")
 DEFAULT_OPENAI_SCORING_MODEL = "gpt-5-mini"
+DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_OPENAI_SCORING_REASONING_EFFORT = "minimal"
+DEFAULT_CLAUDE_SCORING_MODEL = "claude-sonnet-5"
 
 
 def cost_controlled_openai_scoring_model(value: Any) -> str:
@@ -347,7 +350,8 @@ class OpenAIResponsesProvider:
         enabled: bool = True,
         model: str = DEFAULT_OPENAI_SCORING_MODEL,
         base_url: str = "https://api.openai.com",
-        max_output_tokens: int = 800,
+        max_output_tokens: int = DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
+        reasoning_effort: str | None = DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
         usage_recorder: LlmUsageRecorder | None = None,
         token_pricing: TokenPricing | None = None,
     ) -> None:
@@ -358,6 +362,7 @@ class OpenAIResponsesProvider:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
         self.usage_recorder = usage_recorder
         self.token_pricing = token_pricing
         self.last_usage_event: LlmUsageEvent | None = None
@@ -369,28 +374,31 @@ class OpenAIResponsesProvider:
         """
 
         self.last_usage_event = None
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "input": [
+                {"role": "system", "content": SCORING_SYSTEM_PROMPT},
+                {"role": "user", "content": _scoring_user_prompt(request)},
+            ],
+            "max_output_tokens": self.max_output_tokens,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "codex_poly_score",
+                    "schema": SCORING_JSON_SCHEMA,
+                    "strict": True,
+                }
+            },
+        }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         body = self.transport.post_json(
             url=f"{self.base_url}/v1/responses",
             headers={
                 "Authorization": f"Bearer {self.credential.api_key}",
                 "Content-Type": "application/json",
             },
-            payload={
-                "model": self.model,
-                "input": [
-                    {"role": "system", "content": SCORING_SYSTEM_PROMPT},
-                    {"role": "user", "content": _scoring_user_prompt(request)},
-                ],
-                "max_output_tokens": self.max_output_tokens,
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "codex_poly_score",
-                        "schema": SCORING_JSON_SCHEMA,
-                        "strict": True,
-                    }
-                },
-            },
+            payload=payload,
         )
         score = _score_from_provider_text(
             text=_openai_response_text(body),
@@ -434,7 +442,7 @@ class ClaudeMessagesProvider:
         transport: LlmProviderTransport | None = None,
         remaining_budget: Decimal = Decimal("0"),
         enabled: bool = True,
-        model: str = "claude-opus-4-1-20250805",
+        model: str = DEFAULT_CLAUDE_SCORING_MODEL,
         base_url: str = "https://api.anthropic.com",
         max_tokens: int = 800,
         usage_recorder: LlmUsageRecorder | None = None,

@@ -65,6 +65,17 @@ class DatabaseState:
         self.tables.setdefault(table_name, []).append(row)
         return row
 
+    def update_by_id(self, table_name: str, row_id: str, values: dict[str, Any]) -> dict:
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_tables:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
+        for row in self.tables.setdefault(table_name, []):
+            if row.get("id") == row_id:
+                row.update(values)
+                return row
+        raise PersistenceUnavailableError(f"row not found for {table_name}")
+
     def rows(
         self,
         table_name: str,
@@ -156,6 +167,42 @@ class PersistentDatabaseState(DatabaseState):
             if owns_session:
                 session.commit()
             return persisted
+        except SQLAlchemyError as exc:
+            if owns_session:
+                session.rollback()
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}") from exc
+        finally:
+            if owns_session:
+                session.close()
+
+    def update_by_id(self, table_name: str, row_id: str, values: dict[str, Any]) -> dict:
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_tables:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
+        table = _table_for_name(table_name)
+        clean_values = {key: value for key, value in values.items() if key in table.c}
+        if not clean_values:
+            raise SchemaViolationError(f"no known repository columns to update for {table_name}")
+        session = self._active_session.get()
+        owns_session = session is None
+        if owns_session:
+            session = self.session_factory()
+        try:
+            result = session.execute(
+                table.update()
+                .where(table.c.id == row_id)
+                .values(**clean_values)
+                .returning(*table.c)
+            )
+            persisted = result.mappings().one_or_none()
+            if persisted is None:
+                if owns_session:
+                    session.rollback()
+                raise PersistenceUnavailableError(f"row not found for {table_name}")
+            if owns_session:
+                session.commit()
+            return dict(persisted)
         except SQLAlchemyError as exc:
             if owns_session:
                 session.rollback()
@@ -1540,6 +1587,29 @@ class SharedRepositories:
                 "started_at": started_at,
                 "completed_at": completed_at,
                 "created_at": created_at or completed_at,
+            },
+        )
+
+    def update_reasoning_run_result(
+        self,
+        *,
+        reasoning_run_id: str,
+        status: str,
+        scored_count: int,
+        skipped_count: int,
+        failed_count: int,
+        completed_at: datetime,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.update_by_id(
+            f"{SHARED_SCHEMA}.reasoning_runs",
+            reasoning_run_id,
+            {
+                "status": status,
+                "scored_count": max(0, int(scored_count)),
+                "skipped_count": max(0, int(skipped_count)),
+                "failed_count": max(0, int(failed_count)),
+                "completed_at": completed_at,
             },
         )
 

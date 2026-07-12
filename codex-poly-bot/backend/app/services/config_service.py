@@ -36,7 +36,13 @@ from app.services.scanner_service import (
     MAX_POLYMARKET_MARKET_DATA_LIMIT,
 )
 from app.services.brain_service import DEFAULT_REASONING_CONFIG
-from app.services.llm_service import DEFAULT_OPENAI_SCORING_MODEL, OPENAI_SCORING_MODEL_OPTIONS
+from app.services.llm_service import (
+    DEFAULT_CLAUDE_SCORING_MODEL,
+    DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
+    DEFAULT_OPENAI_SCORING_MODEL,
+    DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
+    OPENAI_SCORING_MODEL_OPTIONS,
+)
 from app.services.strategy_consensus_service import DEFAULT_STRATEGY_CONSENSUS_CONFIG
 
 
@@ -277,7 +283,7 @@ class ConfigService:
         snapshot = RuntimeConfigSnapshot(
             environment=environment,
             version=row["version"],
-            payload=self._with_stock_universe_snapshots(environment, deepcopy(row["payload"])),
+            payload=self._payload_with_defaults(environment, deepcopy(row["payload"])),
         )
         self._last_good_snapshots[(environment, owner)] = snapshot
         return ConfigReloadResult(snapshot=snapshot)
@@ -356,7 +362,7 @@ class ConfigService:
     def _current_payload(self, environment: Environment, username: str | None = None) -> dict[str, Any]:
         row = self._latest_config_row(environment, username=username)
         if row is not None:
-            return self._with_stock_universe_snapshots(environment, deepcopy(row["payload"]))
+            return self._payload_with_defaults(environment, deepcopy(row["payload"]))
         return self._default_payload(environment)
 
     def _default_payload(self, environment: Environment) -> dict[str, Any]:
@@ -364,6 +370,14 @@ class ConfigService:
             environment,
             deepcopy(self._default_payload_factory()),
         )
+
+    def _payload_with_defaults(
+        self,
+        environment: Environment,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = _deep_merge_missing(deepcopy(self._default_payload_factory()), payload)
+        return self._with_stock_universe_snapshots(environment, merged)
 
     def _with_stock_universe_snapshots(
         self,
@@ -763,10 +777,17 @@ def default_config_payload() -> dict[str, Any]:
             "whale_copy": {"enabled": True, "settings": {}},
         },
         "llm": {
-            ModelProvider.CLAUDE.value: {"budget_usd": "20.00", "settings": {}},
+            ModelProvider.CLAUDE.value: {
+                "budget_usd": "20.00",
+                "settings": {"model": DEFAULT_CLAUDE_SCORING_MODEL},
+            },
             ModelProvider.OPENAI.value: {
                 "budget_usd": "20.00",
-                "settings": {"model": DEFAULT_OPENAI_SCORING_MODEL},
+                "settings": {
+                    "model": DEFAULT_OPENAI_SCORING_MODEL,
+                    "max_output_tokens": DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
+                    "reasoning_effort": DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
+                },
             },
         },
         "risk": {
@@ -808,6 +829,15 @@ def default_config_payload() -> dict[str, Any]:
     }
     payload["alpaca"]["preset_metadata"] = stock_universe_metadata(payload)
     return payload
+
+
+def _deep_merge_missing(defaults: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    for key, value in payload.items():
+        if isinstance(defaults.get(key), dict) and isinstance(value, dict):
+            defaults[key] = _deep_merge_missing(defaults[key], value)
+        else:
+            defaults[key] = value
+    return defaults
 
 
 def _valid_hhmm(value: str) -> bool:
