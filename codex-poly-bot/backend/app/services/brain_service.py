@@ -17,6 +17,7 @@ from app.domain import Environment, Instrument, InstrumentType, ModelProvider, S
 from app.services.llm_service import (
     ClaudeMessagesProvider,
     cost_controlled_openai_scoring_model,
+    DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
     DEFAULT_CLAUDE_SCORING_MODEL,
     DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
     DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
@@ -267,6 +268,10 @@ class BrainService:
                     DEFAULT_CLAUDE_SCORING_MODEL,
                 )
                 or DEFAULT_CLAUDE_SCORING_MODEL,
+                max_tokens=_positive_int(
+                    claude_settings.get("max_tokens"),
+                    DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
+                ),
                 token_pricing=token_pricing_from_env(ModelProvider.CLAUDE, self.environ),
             ),
         )

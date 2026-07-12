@@ -37,6 +37,7 @@ from app.services.scanner_service import (
 )
 from app.services.brain_service import DEFAULT_REASONING_CONFIG
 from app.services.llm_service import (
+    DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
     DEFAULT_CLAUDE_SCORING_MODEL,
     DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
     DEFAULT_OPENAI_SCORING_MODEL,
@@ -779,7 +780,10 @@ def default_config_payload() -> dict[str, Any]:
         "llm": {
             ModelProvider.CLAUDE.value: {
                 "budget_usd": "20.00",
-                "settings": {"model": DEFAULT_CLAUDE_SCORING_MODEL},
+                "settings": {
+                    "model": DEFAULT_CLAUDE_SCORING_MODEL,
+                    "max_tokens": DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
+                },
             },
             ModelProvider.OPENAI.value: {
                 "budget_usd": "20.00",

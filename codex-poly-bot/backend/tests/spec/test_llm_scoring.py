@@ -27,6 +27,7 @@ from app.services import (
     FakeLlmProvider,
     LlmBudgetLedger,
     LlmProviderCredential,
+    LlmScoreRequest,
     ScoringFailure,
     OpenAIResponsesProvider,
     RepositoryLlmUsageRecorder,
@@ -40,6 +41,7 @@ from app.services import (
     token_pricing_from_env,
 )
 from app.services.llm_service import (
+    DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
     DEFAULT_CLAUDE_SCORING_MODEL,
     DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
     DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
@@ -167,6 +169,7 @@ def test_req_llm_001_03_configured_credentials_send_scoring_to_openai_and_claude
     assert claude_transport.calls[0]["url"] == "https://api.anthropic.com/v1/messages"
     assert claude_transport.calls[0]["headers"]["x-api-key"] == "claude-test-key"
     assert claude_transport.calls[0]["payload"]["model"] == DEFAULT_CLAUDE_SCORING_MODEL
+    assert claude_transport.calls[0]["payload"]["max_tokens"] == DEFAULT_CLAUDE_SCORING_MAX_TOKENS
 
 
 def test_req_llm_001_05_openai_nested_output_text_scores_candidate() -> None:
@@ -219,6 +222,97 @@ def test_req_llm_001_05_openai_nested_output_text_scores_candidate() -> None:
     assert transport.calls[0]["payload"]["reasoning"] == {
         "effort": DEFAULT_OPENAI_SCORING_REASONING_EFFORT
     }
+
+
+def test_req_llm_001_06_provider_scoring_text_normalizes_decimal_fields() -> None:
+    """TST-REQ-LLM-001-06: Validates REQ-LLM-001 and REQ-LLM-003
+
+    Given: a provider returns JSON with prose-wrapped probabilities and trade cost wording
+    When: the scoring adapter parses the response
+    Then: numeric scoring fields are normalized without treating vague text as strong confidence
+    """
+
+    transport = RecordingProviderTransport(
+        (
+            {
+                "output_text": (
+                    "```json\n"
+                    "{"
+                    "\"output_thesis\":\"Candidate has limited but positive signal\","
+                    "\"confidence\":\"moderate-low\","
+                    "\"estimated_probability\":\"45% chance after scanner checks\","
+                    "\"cost_estimate\":\"Approximately $200,000 to move the market\""
+                    "}\n"
+                    "```"
+                )
+            },
+        )
+    )
+    provider = OpenAIResponsesProvider(
+        credential=LlmProviderCredential(api_key="openai-test-key"),
+        transport=transport,
+        remaining_budget=Decimal("1.00"),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), (provider,))
+
+    assert result.ok
+    assert result.scores[0].confidence == Decimal("0.35")
+    assert result.scores[0].estimated_probability == Decimal("0.45")
+    assert result.scores[0].cost_estimate == Decimal("0.01")
+
+
+def test_req_llm_001_07_provider_scoring_prompt_demands_strict_decimal_json() -> None:
+    """TST-REQ-LLM-001-07: Validates REQ-LLM-001 and REQ-LLM-003
+
+    Given: provider adapters build scoring requests
+    When: payloads are sent to OpenAI and Claude
+    Then: both prompts explicitly require decimal-only JSON scoring fields
+    """
+
+    openai_transport = RecordingProviderTransport(
+        ({"output_text": scoring_response_text(thesis="OpenAI strict prompt")},)
+    )
+    claude_transport = RecordingProviderTransport(
+        (
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": scoring_response_text(thesis="Claude strict prompt"),
+                    }
+                ]
+            },
+        )
+    )
+
+    OpenAIResponsesProvider(
+        credential=LlmProviderCredential(api_key="openai-test-key"),
+        transport=openai_transport,
+        remaining_budget=Decimal("1.00"),
+    ).score_candidate(
+        LlmScoreRequest(
+            model_provider=ModelProvider.OPENAI,
+            instrument=prediction_instrument(),
+        )
+    )
+    ClaudeMessagesProvider(
+        credential=LlmProviderCredential(api_key="claude-test-key"),
+        transport=claude_transport,
+        remaining_budget=Decimal("1.00"),
+    ).score_candidate(
+        LlmScoreRequest(
+            model_provider=ModelProvider.CLAUDE,
+            instrument=prediction_instrument(),
+        )
+    )
+
+    openai_system = openai_transport.calls[0]["payload"]["input"][0]["content"]
+    claude_system = claude_transport.calls[0]["payload"]["system"]
+    assert "decimal strings between 0 and 1" in openai_system
+    assert "Do not include percentages" in openai_system
+    assert "decimal strings between 0 and 1" in claude_system
+    assert "Do not include percentages" in claude_system
 
 
 def test_req_llm_001_02_one_model_provider_disabled_out_budget_scoring_runs() -> None:
@@ -640,6 +734,10 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
         default_config_payload()["llm"]["claude"]["settings"]["model"]
         == DEFAULT_CLAUDE_SCORING_MODEL
     )
+    assert (
+        default_config_payload()["llm"]["claude"]["settings"]["max_tokens"]
+        == DEFAULT_CLAUDE_SCORING_MAX_TOKENS
+    )
 
     result = service.save_config_patches(
         actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
@@ -695,6 +793,10 @@ def test_req_llm_006_04_legacy_saved_config_loads_new_llm_defaults() -> None:
     assert (
         snapshot.payload["llm"]["claude"]["settings"]["model"]
         == DEFAULT_CLAUDE_SCORING_MODEL
+    )
+    assert (
+        snapshot.payload["llm"]["claude"]["settings"]["max_tokens"]
+        == DEFAULT_CLAUDE_SCORING_MAX_TOKENS
     )
 
 
