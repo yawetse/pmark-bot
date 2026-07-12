@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from app.adapters.aws import AwsBillingCost, InMemorySesEmailAdapter
+from app.adapters.aws import AwsBillingCost, CostExplorerBillingAdapter, InMemorySesEmailAdapter
 from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
@@ -1804,6 +1804,67 @@ def test_req_ui_010_03_dashboard_summary_uses_real_aws_billing_when_available() 
     assert history_payload["count"] == 1
     assert history_payload["snapshots"][0]["awsMonthToDateCostUsd"] == "42.00"
     assert history_payload["snapshots"][0]["netAfterRecordedCostsUsd"] == "10.80"
+
+
+def test_req_ui_010_05_economics_summary_reuses_recent_snapshot() -> None:
+    """TST-REQ-UI-010-05: Validates REQ-UI-010 and REQ-OBS-005
+
+    Given: a recent economics snapshot exists from a dashboard refresh
+    When: the dashboard requests economics again
+    Then: the API reuses the recent snapshot instead of writing on every page load
+    """
+
+    client, token = _client()
+    state = client.app.state.services.registry.state
+
+    headers = {"Authorization": f"Bearer {token}", "X-Environment": "development"}
+    first = client.get("/api/economics/summary", headers=headers)
+    second = client.get("/api/economics/summary", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    snapshot_rows = state.rows("shared.economics_snapshots")
+    assert len(snapshot_rows) == 1
+    assert second.json()["history"]["stored"] is True
+    assert second.json()["history"]["latestSnapshotId"] == snapshot_rows[0]["id"]
+
+
+def test_req_ui_010_06_cost_explorer_dashboard_costs_are_cached() -> None:
+    """TST-REQ-UI-010-06: Validates REQ-UI-010 and REQ-OBS-005
+
+    Given: Cost Explorer returns a current tagged result
+    When: dashboard costs are requested twice inside the cache window
+    Then: the adapter reuses the first result and does not call Cost Explorer again
+    """
+
+    class FakeCostExplorerClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_cost_and_usage(self, **_request: object) -> dict[str, object]:
+            self.calls += 1
+            return {
+                "ResultsByTime": [
+                    {
+                        "Estimated": False,
+                        "Total": {"UnblendedCost": {"Amount": "1.25"}},
+                    }
+                ]
+            }
+
+    client = FakeCostExplorerClient()
+    adapter = CostExplorerBillingAdapter(client=client, cache_ttl_seconds=300)
+    now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
+
+    first = adapter.dashboard_costs(environment=Environment.DEVELOPMENT, now=now)
+    second = adapter.dashboard_costs(
+        environment=Environment.DEVELOPMENT,
+        now=now + timedelta(seconds=60),
+    )
+
+    assert first.daily_cost_usd == Decimal("1.25")
+    assert second.month_to_date_cost_usd == Decimal("1.25")
+    assert client.calls == 2
 
 
 def test_req_ui_010_04_ai_usage_import_reports_provider_status_separately() -> None:
