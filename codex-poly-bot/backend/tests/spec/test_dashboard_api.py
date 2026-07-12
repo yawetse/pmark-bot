@@ -803,6 +803,7 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
                         "id": "polymarket_us:market-1:yes-token",
                         "venue": "polymarket_us",
                         "market": "Will rates fall? - Yes",
+                        "marketSlug": "will-rates-fall",
                         "price": "0.45",
                         "liquidity": "250",
                         "spread": "0.02",
@@ -919,6 +920,10 @@ def test_req_ui_008_04_manual_run_records_heartbeat_audit_and_market_pull() -> N
     assert scanner_rows[0]["pipeline_run_id"] == payload["runId"]
     assert scanner_rows[0]["rejected_count"] == 2
     assert {row["status"] for row in scanner_candidate_rows} == {"rejected"}
+    polymarket_scanner_row = next(
+        row for row in scanner_candidate_rows if row["venue"] == "polymarket_us"
+    )
+    assert polymarket_scanner_row["source_payload"]["marketSlug"] == "will-rates-fall"
     assert reasoning_rows[0]["pipeline_run_id"] == payload["runId"]
     assert reasoning_rows[0]["status"] == "no_candidates"
     assert strategy_rows[0]["pipeline_run_id"] == payload["runId"]
