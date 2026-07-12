@@ -14,10 +14,16 @@ from app.domain import Environment
 
 try:  # pragma: no cover - import availability is environment-specific
     import boto3
+    from botocore.config import Config
     from botocore.exceptions import BotoCoreError, ClientError
 except ImportError:  # pragma: no cover
-    boto3 = None
+    boto3 = Config = None
     BotoCoreError = ClientError = Exception
+
+
+DEFAULT_COST_EXPLORER_TIMEOUT_SECONDS = 3.0
+DEFAULT_COST_EXPLORER_CACHE_TTL_SECONDS = 300
+DEFAULT_COST_EXPLORER_MAX_ATTEMPTS = 1
 
 
 class BillingUnavailableError(RuntimeError):
@@ -58,14 +64,29 @@ class CostExplorerBillingAdapter:
         project_tag_value: str = "codex-poly-bot",
         environment_tag_key: str = "Environment",
         fallback_to_account: bool = True,
+        timeout_seconds: float = DEFAULT_COST_EXPLORER_TIMEOUT_SECONDS,
+        cache_ttl_seconds: int = DEFAULT_COST_EXPLORER_CACHE_TTL_SECONDS,
+        max_attempts: int = DEFAULT_COST_EXPLORER_MAX_ATTEMPTS,
     ) -> None:
         if client is None and boto3 is None:
             raise BillingUnavailableError("boto3 is not installed")
-        self.client = client or boto3.client("ce", region_name=region_name)
+        self.timeout_seconds = max(0.5, float(timeout_seconds))
+        self.cache_ttl_seconds = max(0, int(cache_ttl_seconds))
+        self.max_attempts = max(1, int(max_attempts))
+        self.client = client or boto3.client(
+            "ce",
+            region_name=region_name,
+            config=Config(
+                connect_timeout=self.timeout_seconds,
+                read_timeout=self.timeout_seconds,
+                retries={"max_attempts": self.max_attempts, "mode": "standard"},
+            ),
+        )
         self.project_tag_key = project_tag_key
         self.project_tag_value = project_tag_value
         self.environment_tag_key = environment_tag_key
         self.fallback_to_account = fallback_to_account
+        self._cache: dict[tuple[str, date], tuple[datetime, AwsBillingCost]] = {}
 
     def dashboard_costs(
         self,
@@ -78,7 +99,11 @@ class CostExplorerBillingAdapter:
         REQ: REQ-UI-010
         """
 
-        current = (now or datetime.now(UTC)).astimezone(UTC).date()
+        current_time = (now or datetime.now(UTC)).astimezone(UTC)
+        current = current_time.date()
+        cached = self._cached_cost(environment=environment, current=current, now=current_time)
+        if cached is not None:
+            return cached
         next_day = current + timedelta(days=1)
         month_start = current.replace(day=1)
         tag_filter = self._tag_filter(environment)
@@ -91,40 +116,80 @@ class CostExplorerBillingAdapter:
                 raise
         else:
             if daily > 0 or month > 0 or not self.fallback_to_account:
-                return AwsBillingCost(
-                    daily_cost_usd=daily,
-                    month_to_date_cost_usd=month,
-                    daily_start=current,
-                    daily_end=next_day,
-                    month_start=month_start,
-                    month_end=next_day,
-                    estimated=daily_estimated or month_estimated,
-                    source="aws cost explorer",
-                    scope="tagged",
-                    message=(
-                        "Cost Explorer returned AWS cost for "
-                        f"{self.project_tag_key}={self.project_tag_value} and "
-                        f"{self.environment_tag_key}={environment.value}."
+                return self._cache_cost(
+                    environment=environment,
+                    current=current,
+                    now=current_time,
+                    cost=AwsBillingCost(
+                        daily_cost_usd=daily,
+                        month_to_date_cost_usd=month,
+                        daily_start=current,
+                        daily_end=next_day,
+                        month_start=month_start,
+                        month_end=next_day,
+                        estimated=daily_estimated or month_estimated,
+                        source="aws cost explorer",
+                        scope="tagged",
+                        message=(
+                            "Cost Explorer returned AWS cost for "
+                            f"{self.project_tag_key}={self.project_tag_value} and "
+                            f"{self.environment_tag_key}={environment.value}."
+                        ),
                     ),
                 )
 
         daily, daily_estimated = self._cost_for_period(current, next_day, None)
         month, month_estimated = self._cost_for_period(month_start, next_day, None)
-        return AwsBillingCost(
-            daily_cost_usd=daily,
-            month_to_date_cost_usd=month,
-            daily_start=current,
-            daily_end=next_day,
-            month_start=month_start,
-            month_end=next_day,
-            estimated=daily_estimated or month_estimated,
-            source="aws cost explorer",
-            scope="account",
-            message=(
-                "Cost Explorer returned account-level AWS cost. Project tags are used "
-                "when cost allocation data is available."
+        return self._cache_cost(
+            environment=environment,
+            current=current,
+            now=current_time,
+            cost=AwsBillingCost(
+                daily_cost_usd=daily,
+                month_to_date_cost_usd=month,
+                daily_start=current,
+                daily_end=next_day,
+                month_start=month_start,
+                month_end=next_day,
+                estimated=daily_estimated or month_estimated,
+                source="aws cost explorer",
+                scope="account",
+                message=(
+                    "Cost Explorer returned account-level AWS cost. Project tags are used "
+                    "when cost allocation data is available."
+                ),
             ),
         )
+
+    def _cached_cost(
+        self,
+        *,
+        environment: Environment,
+        current: date,
+        now: datetime,
+    ) -> AwsBillingCost | None:
+        if self.cache_ttl_seconds <= 0:
+            return None
+        cached = self._cache.get((environment.value, current))
+        if cached is None:
+            return None
+        cached_at, cost = cached
+        if now - cached_at <= timedelta(seconds=self.cache_ttl_seconds):
+            return cost
+        self._cache.pop((environment.value, current), None)
+        return None
+
+    def _cache_cost(
+        self,
+        *,
+        environment: Environment,
+        current: date,
+        now: datetime,
+        cost: AwsBillingCost,
+    ) -> AwsBillingCost:
+        if self.cache_ttl_seconds > 0:
+            self._cache[(environment.value, current)] = (now, cost)
+        return cost
 
     def _tag_filter(self, environment: Environment) -> dict[str, Any]:
         return {
@@ -192,6 +257,18 @@ def billing_adapter_from_env(
             runtime_env.get("AWS_COST_EXPLORER_ACCOUNT_FALLBACK"),
             default=True,
         ),
+        timeout_seconds=_float_env(
+            runtime_env.get("AWS_COST_EXPLORER_TIMEOUT_SECONDS"),
+            DEFAULT_COST_EXPLORER_TIMEOUT_SECONDS,
+        ),
+        cache_ttl_seconds=_int_env(
+            runtime_env.get("AWS_COST_EXPLORER_CACHE_TTL_SECONDS"),
+            DEFAULT_COST_EXPLORER_CACHE_TTL_SECONDS,
+        ),
+        max_attempts=_int_env(
+            runtime_env.get("AWS_COST_EXPLORER_MAX_ATTEMPTS"),
+            DEFAULT_COST_EXPLORER_MAX_ATTEMPTS,
+        ),
     )
 
 
@@ -209,3 +286,23 @@ def _bool_env(value: str | None, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _float_env(value: str | None, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _int_env(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default

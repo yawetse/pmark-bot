@@ -104,6 +104,9 @@ DASHBOARD_TICK_SUMMARY_ROW_LIMIT = 100
 DASHBOARD_AI_USAGE_ROW_LIMIT = 2_000
 DASHBOARD_AI_USAGE_IMPORT_ROW_LIMIT = 250
 DASHBOARD_ECONOMICS_SNAPSHOT_ROW_LIMIT = 400
+DASHBOARD_ECONOMICS_SNAPSHOT_MIN_INTERVAL_SECONDS = 300
+DASHBOARD_PNL_POSITION_ROW_LIMIT = 500
+DASHBOARD_ORDER_EVENT_ROW_LIMIT = 50
 CURRENT_WORKER_HEARTBEAT_STATUSES = {
     "ok",
     "accepted",
@@ -2436,13 +2439,24 @@ class RuntimeStatusService:
                 "costBasis": "trading P&L minus recorded AI cost and one day of AWS infrastructure cost",
             },
         }
-        snapshot = self._record_economics_snapshot(
-            environment=environment,
-            payload=payload,
-            created_at=now,
-        )
         month_key = _month_key(now)
         month_rows = self._economics_snapshot_rows(environment, month_key=month_key)
+        latest_snapshot = month_rows[0] if month_rows else None
+        snapshot = latest_snapshot
+        stored_message = "Recent economics snapshot reused for monthly cost history."
+        if _economics_snapshot_due(latest_snapshot, now):
+            recorded = self._record_economics_snapshot(
+                environment=environment,
+                payload=payload,
+                created_at=now,
+            )
+            if recorded is not None:
+                snapshot = recorded
+                month_rows = [recorded, *month_rows]
+                stored_message = "Economics snapshot stored for monthly cost history."
+            else:
+                snapshot = None
+                stored_message = "Economics snapshot storage is unavailable."
         month_rows.sort(key=lambda row: row.get("created_at"), reverse=True)
         payload["history"] = {
             "source": self.ECONOMICS_SNAPSHOTS_TABLE,
@@ -2451,11 +2465,7 @@ class RuntimeStatusService:
             "monthKey": month_key,
             "snapshotsThisMonth": len(month_rows),
             "snapshots": [self._economics_snapshot_payload(row) for row in month_rows[:31]],
-            "message": (
-                "Economics snapshot stored for monthly cost history."
-                if snapshot
-                else "Economics snapshot storage is unavailable."
-            ),
+            "message": stored_message,
         }
         return payload
 
@@ -4065,7 +4075,11 @@ class RuntimeStatusService:
         closed_positions = 0
         for provider in ModelProvider:
             try:
-                rows = self.registry.state.rows(f"{provider.value}.positions")
+                rows = self.registry.state.rows(
+                    f"{provider.value}.positions",
+                    limit=DASHBOARD_PNL_POSITION_ROW_LIMIT,
+                    newest_first=True,
+                )
             except PersistenceUnavailableError:
                 rows = []
             for row in rows:
@@ -4095,10 +4109,14 @@ class RuntimeStatusService:
         for provider in ModelProvider:
             table = f"{provider.value}.order_events"
             try:
-                rows = self.registry.state.rows(table)
+                rows = self.registry.state.rows(
+                    table,
+                    limit=DASHBOARD_ORDER_EVENT_ROW_LIMIT,
+                    newest_first=True,
+                )
             except PersistenceUnavailableError:
                 continue
-            for row in rows[-50:]:
+            for row in rows:
                 items.append(
                     {
                         "id": row["order_id"],
@@ -4536,6 +4554,17 @@ def _aws_fallback_payload(
 
 def _month_key(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m")
+
+
+def _economics_snapshot_due(latest_snapshot: dict[str, Any] | None, now: datetime) -> bool:
+    if latest_snapshot is None:
+        return True
+    created_at = latest_snapshot.get("created_at")
+    if not isinstance(created_at, datetime):
+        return True
+    return now - created_at.astimezone(UTC) >= timedelta(
+        seconds=DASHBOARD_ECONOMICS_SNAPSHOT_MIN_INTERVAL_SECONDS
+    )
 
 
 def _normalize_month_key(value: str | None) -> str:
