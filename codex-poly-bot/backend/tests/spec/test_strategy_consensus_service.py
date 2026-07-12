@@ -50,6 +50,10 @@ def test_req_str_008_03_polymarket_multi_vote_consensus_approves_full_position()
         "convergence",
         "whale_copy",
     }
+    run_row = registry.state.rows("shared.strategy_consensus_runs")[0]
+    assert run_row["status"] == "approved"
+    assert run_row["vote_count"] == 3
+    assert run_row["approved_count"] == 1
     assert len(registry.state.rows("openai.strategy_signals")) == 3
 
 

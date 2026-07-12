@@ -1741,6 +1741,29 @@ class SharedRepositories:
             },
         )
 
+    def update_strategy_consensus_run_result(
+        self,
+        *,
+        consensus_run_id: str,
+        status: str,
+        vote_count: int,
+        approved_count: int,
+        refused_count: int,
+        completed_at: datetime,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.update_by_id(
+            f"{SHARED_SCHEMA}.strategy_consensus_runs",
+            consensus_run_id,
+            {
+                "status": status,
+                "vote_count": max(0, int(vote_count)),
+                "approved_count": max(0, int(approved_count)),
+                "refused_count": max(0, int(refused_count)),
+                "completed_at": completed_at,
+            },
+        )
+
     def record_strategy_vote(
         self,
         *,
@@ -1913,6 +1936,33 @@ class SharedRepositories:
             },
         )
 
+    def update_execution_run_result(
+        self,
+        *,
+        execution_run_id: str,
+        status: str,
+        intent_count: int,
+        submitted_count: int,
+        simulated_count: int,
+        refused_count: int,
+        reconciliation_count: int,
+        completed_at: datetime,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.update_by_id(
+            f"{SHARED_SCHEMA}.execution_runs",
+            execution_run_id,
+            {
+                "status": status,
+                "intent_count": max(0, int(intent_count)),
+                "submitted_count": max(0, int(submitted_count)),
+                "simulated_count": max(0, int(simulated_count)),
+                "refused_count": max(0, int(refused_count)),
+                "reconciliation_count": max(0, int(reconciliation_count)),
+                "completed_at": completed_at,
+            },
+        )
+
     def record_order_intent(
         self,
         *,
@@ -2043,6 +2093,33 @@ class SharedRepositories:
                 "started_at": started_at,
                 "completed_at": completed_at,
                 "created_at": created_at or completed_at,
+            },
+        )
+
+    def update_exit_run_result(
+        self,
+        *,
+        exit_run_id: str,
+        status: str,
+        open_position_count: int,
+        triggered_count: int,
+        simulated_count: int,
+        submitted_count: int,
+        refused_count: int,
+        completed_at: datetime,
+    ) -> dict:
+        self.ensure_schema(SHARED_SCHEMA)
+        return self.state.update_by_id(
+            f"{SHARED_SCHEMA}.exit_runs",
+            exit_run_id,
+            {
+                "status": status,
+                "open_position_count": max(0, int(open_position_count)),
+                "triggered_count": max(0, int(triggered_count)),
+                "simulated_count": max(0, int(simulated_count)),
+                "submitted_count": max(0, int(submitted_count)),
+                "refused_count": max(0, int(refused_count)),
+                "completed_at": completed_at,
             },
         )
 
