@@ -39,7 +39,12 @@ from app.services import (
     TokenPricing,
     token_pricing_from_env,
 )
-from app.services.llm_service import cost_controlled_openai_scoring_model
+from app.services.llm_service import (
+    DEFAULT_CLAUDE_SCORING_MODEL,
+    DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
+    DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
+    cost_controlled_openai_scoring_model,
+)
 
 
 def prediction_instrument() -> Instrument:
@@ -157,9 +162,63 @@ def test_req_llm_001_03_configured_credentials_send_scoring_to_openai_and_claude
     assert openai_transport.calls[0]["url"] == "https://api.openai.com/v1/responses"
     assert openai_transport.calls[0]["headers"]["Authorization"] == "Bearer openai-test-key"
     assert openai_transport.calls[0]["payload"]["model"] == "gpt-5-mini"
+    assert openai_transport.calls[0]["payload"]["max_output_tokens"] == 4096
+    assert openai_transport.calls[0]["payload"]["reasoning"] == {"effort": "minimal"}
     assert claude_transport.calls[0]["url"] == "https://api.anthropic.com/v1/messages"
     assert claude_transport.calls[0]["headers"]["x-api-key"] == "claude-test-key"
-    assert claude_transport.calls[0]["payload"]["model"] == "claude-opus-4-1-20250805"
+    assert claude_transport.calls[0]["payload"]["model"] == DEFAULT_CLAUDE_SCORING_MODEL
+
+
+def test_req_llm_001_05_openai_nested_output_text_scores_candidate() -> None:
+    """TST-REQ-LLM-001-05: Validates REQ-LLM-001 and REQ-LLM-003
+
+    Given: OpenAI returns Responses API message content without top-level output_text
+    When: the scoring adapter normalizes the response
+    Then: nested output_text content still produces a score
+    """
+
+    transport = RecordingProviderTransport(
+        (
+            {
+                "id": "resp-openai-nested",
+                "status": "completed",
+                "output": [
+                    {"type": "reasoning", "content": []},
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": scoring_response_text(
+                                    thesis="Nested output text is usable",
+                                    cost="0.011",
+                                ),
+                            }
+                        ],
+                    },
+                ],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                },
+            },
+        )
+    )
+    provider = OpenAIResponsesProvider(
+        credential=LlmProviderCredential(api_key="openai-test-key"),
+        transport=transport,
+        remaining_budget=Decimal("1.00"),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), (provider,))
+
+    assert result.ok
+    assert result.scores[0].output_thesis == "Nested output text is usable"
+    assert transport.calls[0]["payload"]["max_output_tokens"] == DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS
+    assert transport.calls[0]["payload"]["reasoning"] == {
+        "effort": DEFAULT_OPENAI_SCORING_REASONING_EFFORT
+    }
 
 
 def test_req_llm_001_02_one_model_provider_disabled_out_budget_scoring_runs() -> None:
@@ -569,6 +628,18 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
     service = ConfigService(auth.registry)
 
     assert default_config_payload()["llm"]["openai"]["settings"]["model"] == "gpt-5-mini"
+    assert (
+        default_config_payload()["llm"]["openai"]["settings"]["max_output_tokens"]
+        == DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS
+    )
+    assert (
+        default_config_payload()["llm"]["openai"]["settings"]["reasoning_effort"]
+        == DEFAULT_OPENAI_SCORING_REASONING_EFFORT
+    )
+    assert (
+        default_config_payload()["llm"]["claude"]["settings"]["model"]
+        == DEFAULT_CLAUDE_SCORING_MODEL
+    )
 
     result = service.save_config_patches(
         actor=ActorContext(username="yaw", ip_address="203.0.113.10"),
@@ -588,6 +659,43 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
     assert claude_payload["budget_usd"] == "30.00"
     assert claude_payload["settings"]["temperature"] == "0.2"
     assert openai_payload["settings"]["model"] == "gpt-5-nano"
+
+
+def test_req_llm_006_04_legacy_saved_config_loads_new_llm_defaults() -> None:
+    """TST-REQ-LLM-006-04: Validates REQ-LLM-006 and REQ-UI-007
+
+    Given: an older active config row has empty LLM settings
+    When: runtime config loads the next loop snapshot
+    Then: missing provider defaults are merged without overwriting saved values
+    """
+
+    service = ConfigService(RepositoryRegistry())
+    legacy_payload = default_config_payload()
+    legacy_payload["live_enabled"] = True
+    legacy_payload["llm"]["openai"]["settings"] = {}
+    legacy_payload["llm"]["claude"]["settings"] = {}
+    service.registry.shared().record_config_version(
+        environment=Environment.DEVELOPMENT,
+        username="yaw",
+        version="legacy",
+        payload=legacy_payload,
+    )
+
+    snapshot = service.config_for_next_loop(Environment.DEVELOPMENT, username="yaw").snapshot
+
+    assert snapshot.payload["live_enabled"] is True
+    assert (
+        snapshot.payload["llm"]["openai"]["settings"]["max_output_tokens"]
+        == DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS
+    )
+    assert (
+        snapshot.payload["llm"]["openai"]["settings"]["reasoning_effort"]
+        == DEFAULT_OPENAI_SCORING_REASONING_EFFORT
+    )
+    assert (
+        snapshot.payload["llm"]["claude"]["settings"]["model"]
+        == DEFAULT_CLAUDE_SCORING_MODEL
+    )
 
 
 def test_req_llm_006_02_openai_scoring_model_rejects_full_gpt5() -> None:
