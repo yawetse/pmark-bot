@@ -1434,12 +1434,29 @@ def _polymarket_order_request(
     )
     return PolymarketLiveOrderRequest(
         market_slug=str(market_slug),
-        intent="ORDER_INTENT_BUY_LONG" if side == OrderSide.BUY.value else "ORDER_INTENT_SELL_LONG",
+        intent=_polymarket_entry_intent(side=side, output=output),
         order_type=order_type,
         quantity=quantity,
         cash_order_qty=notional,
         current_price=price,
     )
+
+
+def _polymarket_entry_intent(*, side: str, output: dict[str, Any]) -> str:
+    source_payload = output.get("source_payload") if isinstance(output.get("source_payload"), dict) else {}
+    source_output = source_payload.get("output") if isinstance(source_payload.get("output"), dict) else {}
+    signal = str(
+        output.get("directional_signal")
+        or output.get("directionalSignal")
+        or source_output.get("directional_signal")
+        or source_output.get("directionalSignal")
+        or ""
+    ).strip().lower()
+    if signal in {"buy_no", "bearish"}:
+        return "ORDER_INTENT_BUY_SHORT"
+    if signal in {"buy_yes", "bullish"}:
+        return "ORDER_INTENT_BUY_LONG"
+    return "ORDER_INTENT_BUY_LONG" if side == OrderSide.BUY.value else "ORDER_INTENT_SELL_LONG"
 
 
 def _candidate_price(candidate: dict[str, Any] | None) -> Decimal | None:
