@@ -199,9 +199,23 @@ for (const token of [
   "result.status === 409",
   'method: "POST"',
   "finalizeConfigSave",
+  "marketDataVenueBreakdown",
+  "Polymarket US",
 ]) {
   assert.match(consumerDashboard, new RegExp(token.replaceAll("?", "\\?")));
 }
+assert.match(
+  consumerDashboard,
+  /function nextMarketDataLimit\(settings: Record<string, unknown>\): number/,
+);
+assert.match(
+  consumerDashboard,
+  /function nextPromptCap\(settings: Record<string, unknown>\): number/,
+);
+assert.doesNotMatch(
+  consumerDashboard,
+  /function next(?:MarketDataLimit|PromptCap)[\s\S]{0,240}return trimNumber/,
+);
 assert.doesNotMatch(consumerDashboard, /economics\/summary/);
 
 const venuePortfolio = read("components/dashboard/venue-portfolio-panel.tsx");

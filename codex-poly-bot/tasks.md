@@ -938,6 +938,7 @@
 | AC-023-04 | If a config save conflicts with a newer version, the dashboard shall show the current server version and require reload before resubmission. |
 | AC-023-05 | When multiple users use the dashboard, summary and economics views shall load each actor's saved database preferences. |
 | AC-023-06 | When scanner rejections point to configurable blockers, the dashboard shall show targeted config changes and save them through the same audited per-user config flow as manual settings. |
+| AC-023-07 | When a recommendation updates an integer-only cap and market data spans venues, the dashboard shall submit an integer value and show the candidate count for each venue. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests

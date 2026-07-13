@@ -1438,6 +1438,7 @@ function lastTickFunnelStages(
   activeVenueLabels: string[],
 ): LastTickFunnelStage[] {
   const marketCandidates = marketDataCandidateCount(marketData);
+  const venueCandidateBreakdown = marketDataVenueBreakdown(marketData);
   const scanner = operations?.scanner;
   const reasoning = operations?.reasoning;
   const strategyConsensus = operations?.strategyConsensus;
@@ -1487,7 +1488,7 @@ function lastTickFunnelStages(
       blockedLabel: "Not pulled",
       reason:
         marketCandidates > 0
-          ? `${formatWhole(marketCandidates)} priced candidate${marketCandidates === 1 ? "" : "s"} entered the tick.`
+          ? `${formatWhole(marketCandidates)} priced candidate${marketCandidates === 1 ? "" : "s"} entered the tick${venueCandidateBreakdown ? `: ${venueCandidateBreakdown}` : ""}.`
           : "No priced candidate reached the scanner.",
       detail: marketData?.message ?? "Waiting for the latest market data pull.",
       action:
@@ -1828,6 +1829,36 @@ function marketDataCandidateCount(marketData: MarketDataPullView | null): number
   return Math.max(declaredCount, rowCount);
 }
 
+function marketDataVenueBreakdown(marketData: MarketDataPullView | null): string {
+  if (!marketData) {
+    return "";
+  }
+  const venuePulls = marketData.venues?.length ? marketData.venues : [marketData];
+  if (venuePulls.length < 2) {
+    return "";
+  }
+  return venuePulls
+    .map((venuePull) => {
+      const count = Math.max(venuePull.candidateCount ?? 0, venuePull.candidates?.length ?? 0);
+      return `${formatWhole(count)} ${marketDataVenueLabel(venuePull.venue)}`;
+    })
+    .join(", ");
+}
+
+function marketDataVenueLabel(venue: string): string {
+  const normalized = venue.trim().toLowerCase();
+  if (normalized === "polymarket_us") {
+    return "Polymarket US";
+  }
+  if (normalized === "polymarket_international") {
+    return "Polymarket International";
+  }
+  if (normalized === "alpaca") {
+    return "Alpaca";
+  }
+  return venue;
+}
+
 function mostCommonReason(values: Array<string | null | undefined> | undefined): { reason: string; count: number } {
   const counts = new Map<string, number>();
   for (const value of values ?? []) {
@@ -1849,14 +1880,14 @@ function normalizeReason(value: string | null | undefined): string {
   return reason;
 }
 
-function nextMarketDataLimit(settings: Record<string, unknown>): string {
+function nextMarketDataLimit(settings: Record<string, unknown>): number {
   const current = numberValue(valueAtPath(settings, "scanner.polymarket.market_data_limit"), 5);
-  return trimNumber(Math.min(250, Math.max(current + 5, current * 2, 10)));
+  return Math.min(250, Math.max(Math.floor(current) + 5, Math.ceil(current * 2), 10));
 }
 
-function nextPromptCap(settings: Record<string, unknown>): string {
+function nextPromptCap(settings: Record<string, unknown>): number {
   const current = numberValue(valueAtPath(settings, "reasoning.max_prompts_per_provider_per_run"), 100);
-  return trimNumber(Math.max(current + 10, Math.ceil(current * 1.25)));
+  return Math.max(Math.floor(current) + 10, Math.ceil(current * 1.25));
 }
 
 function higherRatioSetting(
