@@ -180,6 +180,7 @@ Configuration flow:
 | DD-038 | Alpaca order shape | Use notional market and limit orders by default with fractional shares enabled where supported | Whole-share quantity orders only | Easier USD risk limits, broker support can vary by asset | User risk limits are USD-based, so notional orders fit v1. |
 | DD-039 | Alpaca market-hours policy | Regular market hours only, no extended-hours trading in v1 | Extended-hours trading allowed | Fewer opportunities, lower execution ambiguity | Avoids thinner-liquidity and special-session behavior. |
 | DD-040 | Comparison metric windows | Dashboard supports all-time, daily, trailing 7-day, and trailing 30-day windows | One all-time view only | More query work, better experiment readout | Makes Claude/OpenAI and venue comparison usable. |
+| DD-041 | Main portfolio source of truth | Reconcile balances, positions, fills, and P&L from authenticated venue account APIs | Derive portfolio totals from internal order intents and simulated positions | Adds bounded venue polling and snapshots, prevents unfilled or simulated orders from appearing as actual performance | The main dashboard must answer whether confirmed venue trades are making money. |
 
 ## 5. Cross-Cutting Concerns
 
@@ -487,6 +488,8 @@ Development and production do not share wallet private keys, venue API credentia
 ### 5.11 Dashboard Model Separation
 
 The dashboard has a combined overview plus separate Claude and OpenAI views. Each model view shows positions, decisions, strategy signals, budget usage, P&L, refusals, and recent order events for that provider, grouped by Polymarket and Alpaca. Shared system views show ingestion, venue status, Alpaca account mode and health, audit log, notifications, environment health, and kill switch state.
+
+The combined overview uses venue-confirmed account APIs for actual portfolio value, realized and unrealized P&L, open holdings, and confirmed fills. It groups Polymarket US and Alpaca by provider account, deduplicates credentials that resolve to the same account, preserves the last confirmed snapshot when refresh fails, and marks missing values unavailable. Submitted, unfilled, and simulated orders are excluded. AI and AWS costs remain in economics views rather than being mixed into actual venue P&L.
 
 Comparison views calculate P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics by model provider, venue, environment, instrument type, and time window. Supported windows are all-time, current trading day, trailing 7 days, and trailing 30 days. Missing or insufficient data is shown as unavailable rather than zero.
 

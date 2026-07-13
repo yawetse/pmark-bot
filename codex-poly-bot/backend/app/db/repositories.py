@@ -2,7 +2,7 @@
 
 REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
 REQ-DB-007, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016,
-REQ-OBS-003, REQ-OBS-004
+REQ-OBS-003, REQ-OBS-004, REQ-DB-008
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, text
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
@@ -58,6 +59,19 @@ class DatabaseState:
     fail_on_read_tables: set[str] = field(default_factory=set)
     tables: dict[str, list[dict]] = field(default_factory=dict)
 
+    def begin_transaction(self) -> dict[str, list[dict]]:
+        """Capture in-memory state so tests receive transaction semantics."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        return deepcopy(self.tables)
+
+    def commit_transaction(self, transaction: dict[str, list[dict]]) -> None:
+        del transaction
+
+    def rollback_transaction(self, transaction: dict[str, list[dict]]) -> None:
+        self.tables = transaction
+
     def insert(self, table_name: str, row: dict) -> dict:
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
@@ -76,6 +90,20 @@ class DatabaseState:
                 row.update(values)
                 return row
         raise PersistenceUnavailableError(f"row not found for {table_name}")
+
+    def upsert_by_id(self, table_name: str, row_id: str, values: dict[str, Any]) -> dict:
+        """Insert a row or update it by primary key."""
+
+        for row in self.tables.setdefault(table_name, []):
+            if row.get("id") == row_id:
+                row.update(values)
+                return row
+        return self.insert(table_name, {"id": row_id, **values})
+
+    def lock_transaction_key(self, key: str) -> None:
+        """No-op lock for single-process in-memory repositories."""
+
+        del key
 
     def rows(
         self,
@@ -222,6 +250,62 @@ class PersistentDatabaseState(DatabaseState):
         finally:
             if owns_session:
                 session.close()
+
+    def upsert_by_id(self, table_name: str, row_id: str, values: dict[str, Any]) -> dict:
+        """Atomically insert or update a Postgres row by primary key."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_tables:
+            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
+        table = _table_for_name(table_name)
+        insert_values = {
+            key: value
+            for key, value in {"id": row_id, **values}.items()
+            if key in table.c
+        }
+        update_values = {
+            key: value
+            for key, value in values.items()
+            if key in table.c and key not in {"id", "created_at"}
+        }
+        statement = postgresql_insert(table).values(**insert_values)
+        statement = statement.on_conflict_do_update(
+            index_elements=[table.c.id],
+            set_=update_values,
+        ).returning(*table.c)
+        session = self._active_session.get()
+        owns_session = session is None
+        if owns_session:
+            session = self.session_factory()
+        try:
+            persisted = dict(session.execute(statement).mappings().one())
+            if owns_session:
+                session.commit()
+            return persisted
+        except SQLAlchemyError as exc:
+            if owns_session:
+                session.rollback()
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            ) from exc
+        finally:
+            if owns_session:
+                session.close()
+
+    def lock_transaction_key(self, key: str) -> None:
+        """Serialize a logical key for the current Postgres transaction."""
+
+        session = self._active_session.get()
+        if session is None:
+            raise PersistenceUnavailableError("transaction lock requires an active transaction")
+        try:
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": key},
+            )
+        except SQLAlchemyError as exc:
+            raise PersistenceUnavailableError("Postgres transaction lock failed") from exc
 
     def rows(
         self,

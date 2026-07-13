@@ -18,9 +18,9 @@
 
 | Priority | Requirements | Planned Tests |
 |----------|--------------|---------------|
-| P0 | 105 | 210 |
-| P1 | 18 | 18 |
-| Total | 123 | 228 |
+| P0 | 109 | 270 |
+| P1 | 18 | 28 |
+| Total | 127 | 298 |
 
 ## Test Cases
 
@@ -124,6 +124,8 @@
 | TST-REQ-DB-007-01 | Happy | REQ-DB-007 | Given Postgres is available, When live order checks require persistence, Then persistence health passes. |
 | TST-REQ-DB-007-02 | Edge | REQ-DB-007 | Given Postgres is unavailable, When live order placement is requested, Then the order is blocked and logs plus dashboard status surface the failure. |
 | TST-REQ-DB-007-03 | Edge | REQ-DB-007 | Given a deployed bare Postgres DSN, When the SQLAlchemy session factory initializes, Then the installed psycopg driver is selected instead of psycopg2. |
+| TST-REQ-DB-008-01 | Happy | REQ-DB-008 | Given confirmed venue account, position, and fill data, When reconciliation persists a snapshot, Then rows retain environment, venue, provider, and account attribution without credential material. |
+| TST-REQ-DB-008-02 | Edge | REQ-DB-008 | Given a position or fill write fails during account reconciliation, When the database transaction rolls back, Then no partial account snapshot, position, or fill rows remain. |
 
 ### Wallet and Secrets Management
 
@@ -294,6 +296,11 @@
 | TST-REQ-UI-011-02 | Edge | REQ-UI-011 | Given one model or venue has insufficient comparison data, When comparison views render, Then unavailable metrics are labeled without showing misleading zero values. |
 | TST-REQ-UI-011-03 | Focus | REQ-UI-011 | Given frontend comparison routes exist, When dashboard operations checks run, Then unavailable comparison metrics show caveats rather than zero values. |
 | TST-REQ-UI-012-01 | Focus | REQ-UI-012 | Given recent scanner rejections point to configurable thresholds, When dashboard control checks run, Then the dashboard exposes a targeted recommendation that can save the suggested config through the existing audited config flow. |
+| TST-REQ-UI-013-01 | Happy | REQ-UI-013 | Given current Polymarket US and Alpaca account snapshots, When the authenticated portfolio API is read, Then account value, realized P&L, unrealized P&L, open positions, and confirmed fills are returned by venue and model-provider account. |
+| TST-REQ-UI-013-02 | Edge | REQ-UI-013 | Given a venue refresh fails after a successful snapshot, When the main dashboard reads portfolio data, Then the last confirmed values remain visible with stale status and the refresh failure is explained. |
+| TST-REQ-UI-013-03 | Focus | REQ-UI-013 | Given the main dashboard frontend is checked, When dashboard contract tests run, Then the actual portfolio, venue breakdown, open holdings, confirmed fills, freshness, and unavailable states are present. |
+| TST-REQ-UI-013-04 | Focus | REQ-UI-013 | Given configured venue credentials and provider responses, When portfolio sources refresh, Then current Polymarket US decimal positions, confirmed activity, settlements, and Alpaca account data are normalized without exposing credentials. |
+| TST-REQ-UI-013-05 | Edge | REQ-UI-013 | Given venue accounts refresh in adjacent minute buckets, When portfolio history is produced, Then each point carries forward the latest confirmed value for accounts that did not refresh in that minute. |
 
 ### Cross-Market Comparison Analytics
 
@@ -306,6 +313,9 @@
 | TST-REQ-CMP-003-01 | Happy | REQ-CMP-003 | Given complete trade, position, and model cost data, When comparison metrics are calculated, Then documented formulas produce realized P&L, unrealized P&L, win rate, drawdown, cost, exposure, trade count, and return-to-risk. |
 | TST-REQ-CMP-003-02 | Edge | REQ-CMP-003 | Given divide-by-zero or missing input for a documented formula, When metrics are calculated, Then the metric is unavailable rather than invalid. |
 | TST-REQ-CMP-004-01 | Focus | REQ-CMP-004 | Given insufficient data for a metric, When dashboard or API comparison output is produced, Then the metric value is unavailable rather than zero. |
+| TST-REQ-CMP-005-01 | Happy | REQ-CMP-005 | Given confirmed fills, open positions, simulated orders, and duplicate model credentials for one account, When portfolio totals are calculated, Then only confirmed venue data is included and the shared account is counted once. |
+| TST-REQ-CMP-005-02 | Edge | REQ-CMP-005 | Given no successful venue snapshot exists, When portfolio totals are calculated, Then monetary metrics are unavailable rather than reported as zero. |
+| TST-REQ-CMP-005-03 | Edge | REQ-CMP-005 | Given separate model credentials resolve to the same venue account identity, When provider-backed reconciliation runs, Then both providers share one sanitized account reference and totals count the account once. |
 
 ### Notifications
 

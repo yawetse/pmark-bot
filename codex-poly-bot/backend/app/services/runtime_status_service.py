@@ -1,7 +1,8 @@
 """Runtime readiness and dashboard status helpers.
 
 REQ: REQ-UI-004, REQ-UI-009, REQ-NOT-006, REQ-DAT-008,
-REQ-WAL-005, REQ-WAL-006, REQ-OBS-005
+REQ-WAL-005, REQ-WAL-006, REQ-OBS-005, REQ-DB-008, REQ-UI-013,
+REQ-CMP-005
 """
 
 from __future__ import annotations
@@ -83,6 +84,11 @@ from app.services.stock_universe import (
 from app.services.stock_universe_refresh_service import (
     StockUniverseRefreshService,
     latest_preset_snapshot_payloads,
+)
+from app.services.venue_portfolio_service import (
+    ProviderBackedVenuePortfolioSource,
+    VenuePortfolioService,
+    VenuePortfolioSource,
 )
 from app.venues import (
     alpaca_live_order_adapter_from_env,
@@ -362,6 +368,7 @@ class RuntimeStatusService:
         market_data_fetcher: MarketDataProvider | None = None,
         stock_universe_refresher: StockUniverseRefreshService | None = None,
         ai_usage_importer: AiUsageImportService | None = None,
+        venue_portfolio_source: VenuePortfolioSource | None = None,
         alpaca_submitter: Any | None = None,
         polymarket_submitter: Any | None = None,
     ) -> None:
@@ -413,6 +420,27 @@ class RuntimeStatusService:
             self.registry,
             source=ProviderBackedAiUsageImportSource(getattr(settings, "runtime_env", {})),
         )
+        self.venue_portfolio = VenuePortfolioService(
+            self.registry,
+            source=venue_portfolio_source
+            or ProviderBackedVenuePortfolioSource(getattr(settings, "runtime_env", {})),
+        )
+
+    def refresh_venue_portfolio(self, environment: Environment) -> dict[str, Any]:
+        """Refresh sanitized account positions and confirmed fills from each venue.
+
+        REQ: REQ-DB-008, REQ-UI-013, REQ-CMP-005
+        """
+
+        return self.venue_portfolio.refresh(environment)
+
+    def venue_portfolio_summary(self, environment: Environment) -> dict[str, Any]:
+        """Return venue-confirmed portfolio performance for the dashboard.
+
+        REQ: REQ-UI-013, REQ-CMP-005
+        """
+
+        return self.venue_portfolio.summary(environment)
 
     def runtime_config_payload(self) -> dict[str, Any]:
         """Return config defaults aligned to deployed runtime flags.

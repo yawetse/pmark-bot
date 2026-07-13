@@ -795,6 +795,17 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             preferences=preferences["settings"],
         )
 
+    @router.get("/api/portfolio")
+    def venue_portfolio(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return venue-confirmed account value, positions, fills, and P&L.
+
+        REQ: REQ-UI-013, REQ-CMP-005, REQ-OBS-005
+        """
+
+        return services.runtime_status.venue_portfolio_summary(context.environment)
+
     @router.get("/api/economics/history")
     def economics_history(
         month: str | None = None,
