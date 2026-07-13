@@ -2722,7 +2722,7 @@ The backend token signing secret is only available to Next.js server runtime and
 - **What it does:** Lets authorized users edit runtime config without process restart.
 - **Why this approach:** User requested dashboard-controlled risk, venue, model, strategy, Alpaca, and notification settings.
 - **Complexity:** O(number of edited fields).
-- **Key steps:** Load current config/version, render validated controls, submit patch with expected version, show audit result, refresh dashboard state.
+- **Key steps:** Load current config/version, render validated controls, preserve each recommended setting's required JSON value type, show per-venue market-data counts, submit the patch with the expected version, show the audit result, and refresh dashboard state.
 
 ### 22.3 Data Structures
 
@@ -2747,6 +2747,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | 7 | Backend token creation module imported by client component | Build/test fails because module is marked server-only | REQ-UI-002 |
 | 8 | Scanner rejections point to configurable blockers | Show targeted config changes and save them through the audited per-user config flow | REQ-UI-012, REQ-UI-005, REQ-UI-006, REQ-UI-007 |
 | 9 | A venue refresh fails or has never succeeded | Keep the last confirmed values with stale status, or show unavailable rather than zero | REQ-UI-013, REQ-CMP-005 |
+| 10 | A recommendation changes an integer-only cap while the market-data total spans venues | Submit a JSON number and show each venue's candidate count beside the total | REQ-UI-012, REQ-UI-005 |
 
 ### 22.5 Error Handling
 
