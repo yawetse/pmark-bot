@@ -3,7 +3,10 @@ import { redirect } from "next/navigation";
 import type { EconomicsSummaryView } from "@/components/dashboard/economics-panel";
 import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
 import { OperationsView } from "@/components/dashboard/operations-view";
-import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
+import type {
+  OperationsSummaryView,
+  OrderHistoryView,
+} from "@/components/dashboard/operations-view";
 import type { UserPreferencesView } from "@/components/dashboard/preferences-panel";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
 import { getDashboardSession } from "@/lib/server/session";
@@ -18,9 +21,13 @@ export default async function OperationsPage() {
   if (sessionCheck.status === "denied") {
     redirect("/access-denied");
   }
-  const [operations, marketData, economics, preferences] = await Promise.all([
+  const [operations, orderHistory, marketData, economics, preferences] = await Promise.all([
     serverDashboardApi<OperationsSummaryView>(
       "operations/summary",
+      sessionCheck.session.username,
+    ),
+    serverDashboardApi<OrderHistoryView>(
+      "orders",
       sessionCheck.session.username,
     ),
     serverDashboardApi<MarketDataPullView>(
@@ -40,6 +47,8 @@ export default async function OperationsPage() {
   return (
     <OperationsView
       summary={operations.ok ? operations.data : undefined}
+      orderHistory={orderHistory.ok ? orderHistory.data : undefined}
+      orderHistoryError={orderHistory.ok ? undefined : orderHistory.message}
       marketData={marketData.ok ? marketData.data : undefined}
       economics={economics.ok ? economics.data : undefined}
       loadError={operations.ok ? undefined : operations.message}
