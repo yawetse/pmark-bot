@@ -939,6 +939,7 @@
 | AC-023-05 | When multiple users use the dashboard, summary and economics views shall load each actor's saved database preferences. |
 | AC-023-06 | When scanner rejections point to configurable blockers, the dashboard shall show targeted config changes and save them through the same audited per-user config flow as manual settings. |
 | AC-023-07 | When a recommendation updates an integer-only cap and market data spans venues, the dashboard shall submit an integer value and show the candidate count for each venue. |
+| AC-023-08 | When scanner candidate details are deferred from the default dashboard summary, the dashboard shall show the latest persisted accepted and rejected totals and the leading venue-specific rejection reason. |
 
 **Definition of Done:**
 - [x] All acceptance criteria passing as automated tests

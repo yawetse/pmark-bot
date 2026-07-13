@@ -671,13 +671,92 @@ def test_req_obs_005_04_operations_summary_defers_heavy_history_by_default(monke
     assert response.status_code == 200
     assert payload["orderEvents"] == []
     assert payload["pipelineRuns"] == []
-    assert payload["scanner"]["status"] == "deferred"
+    assert payload["scanner"]["status"] == "idle"
+    assert payload["scanner"]["detailsDeferred"] is True
     assert payload["reasoning"]["status"] == "deferred"
     assert payload["strategyConsensus"]["status"] == "deferred"
     assert payload["execution"]["status"] == "deferred"
     assert payload["exit"]["status"] == "deferred"
     assert payload["historicalImport"]["status"] == "deferred"
     assert payload["brokerHistory"]["status"] == "deferred"
+
+
+def test_req_ui_004_06_default_summary_reports_scanner_aggregates_without_details(
+    monkeypatch,
+) -> None:
+    """TST-REQ-UI-004-06: Validates REQ-UI-004 and REQ-OBS-005.
+
+    Given: a persisted scanner run has accepted and rejected candidates
+    When: the default dashboard summary defers candidate detail rows
+    Then: persisted totals and grouped venue-specific rejection reasons remain accurate
+    """
+
+    client, token = _client()
+    runtime_status = client.app.state.services.runtime_status
+    shared = client.app.state.services.registry.shared()
+    observed = datetime(2026, 7, 13, 15, 35, tzinfo=UTC)
+    run = shared.record_scanner_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-reporting",
+        trigger="scheduled",
+        status="completed",
+        config={"alpaca": {"max_spread": "0.75"}},
+        source_pull_ids=["pull-polymarket", "pull-alpaca"],
+        accepted_count=1,
+        rejected_count=2,
+        started_at=observed,
+        completed_at=observed,
+    )
+    shared.record_scanner_candidate(
+        environment=Environment.DEVELOPMENT,
+        scanner_run_id=run["id"],
+        venue=Venue.POLYMARKET_US.value,
+        instrument_id="market-1:yes",
+        display_name="Will rates fall? - Yes",
+        status="accepted",
+        strategy_names=["order_book_depth"],
+        metrics={},
+        source_payload={"id": "market-1"},
+        created_at=observed,
+    )
+    for symbol in ("AAA", "BBB"):
+        shared.record_scanner_candidate(
+            environment=Environment.DEVELOPMENT,
+            scanner_run_id=run["id"],
+            venue=Venue.ALPACA.value,
+            instrument_id=f"alpaca:{symbol}",
+            display_name=symbol,
+            symbol=symbol,
+            status="rejected",
+            refusal_reason="spread too wide",
+            strategy_names=[],
+            metrics={},
+            source_payload={"symbol": symbol},
+            created_at=observed,
+        )
+
+    def fail_if_loaded(*_: object, **__: object) -> dict[str, object]:
+        raise AssertionError("scanner candidate details should remain deferred")
+
+    monkeypatch.setattr(runtime_status, "scanner_summary", fail_if_loaded)
+    response = client.get(
+        "/api/operations/summary",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    scanner = response.json()["scanner"]
+
+    assert response.status_code == 200
+    assert scanner["status"] == "completed"
+    assert scanner["candidateCount"] == 3
+    assert scanner["acceptedCount"] == 1
+    assert scanner["rejectedCount"] == 2
+    assert scanner["rejectionBreakdown"] == [
+        {"venue": "alpaca", "reason": "spread too wide", "count": 2}
+    ]
+    assert scanner["candidates"] == []
+    assert scanner["latestRun"]["candidateCount"] == 3
+    assert scanner["detailsDeferred"] is True
+    assert "accepted 1 and rejected 2 candidates" in scanner["message"]
 
 
 def test_req_exe_016_11_orders_endpoint_reads_durable_environment_history() -> None:
@@ -1321,7 +1400,12 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
     assert realtime.status_code == 200
     assert realtime.json()["tickSchedule"]["lastTickRunId"] == run_id
     assert realtime.json()["operations"]["pipelineRuns"] == []
-    assert realtime.json()["operations"]["scanner"]["status"] == "deferred"
+    assert (
+        realtime.json()["operations"]["scanner"]["status"]
+        == manual.json()["scannerRun"]["status"]
+    )
+    assert realtime.json()["operations"]["scanner"]["candidateCount"] == 1
+    assert realtime.json()["operations"]["scanner"]["detailsDeferred"] is True
 
 
 def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> None:
