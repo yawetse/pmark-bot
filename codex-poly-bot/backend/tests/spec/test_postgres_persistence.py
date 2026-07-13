@@ -174,10 +174,17 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.alpaca_broker_account_snapshots" in plan.table_names
     assert "shared.stock_bars" in plan.table_names
     assert "shared.alpaca_symbol_pnl_snapshots" in plan.table_names
+    assert "shared.venue_portfolio_snapshots" in plan.table_names
+    assert "shared.venue_position_snapshots" in plan.table_names
+    assert "shared.venue_confirmed_fills" in plan.table_names
     assert "openai.order_intents" in plan.table_names
     assert "openai.strategy_signals" in plan.table_names
     assert all("..." not in statement for statement in plan.sql)
     assert any("CREATE TABLE IF NOT EXISTS openai.trade_decisions" in statement for statement in plan.sql)
+    assert any(
+        "CREATE TABLE IF NOT EXISTS shared.venue_portfolio_snapshots" in statement
+        for statement in plan.sql
+    )
     assert registry.for_model(ModelProvider.CLAUDE).schema_name == "claude"
     assert registry.for_model(ModelProvider.OPENAI).schema_name == "openai"
 

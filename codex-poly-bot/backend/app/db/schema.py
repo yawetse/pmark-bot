@@ -1,7 +1,7 @@
 """Postgres schema metadata and migration plan.
 
 REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
-REQ-DB-006, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003,
+REQ-DB-006, REQ-DB-008, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003,
 REQ-OBS-004
 """
 
@@ -821,6 +821,80 @@ def _shared_tables() -> list[Table]:
             Column("created_at", DateTime(timezone=True), nullable=False),
             schema=SHARED_SCHEMA,
         ),
+        Table(
+            "venue_portfolio_snapshots",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("model_provider", String, nullable=False),
+            Column("account_ref", String, nullable=False),
+            Column("account_mode", String, nullable=False),
+            Column("status", String, nullable=False),
+            Column("cash_usd", Numeric(18, 8), nullable=True),
+            Column("buying_power_usd", Numeric(18, 8), nullable=True),
+            Column("account_value_usd", Numeric(18, 8), nullable=True),
+            Column("cost_basis_usd", Numeric(18, 8), nullable=True),
+            Column("market_value_usd", Numeric(18, 8), nullable=True),
+            Column("realized_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("unrealized_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("total_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("open_position_count", Integer, nullable=False),
+            Column("filled_trade_count", Integer, nullable=False),
+            Column("message", String, nullable=False),
+            Column("observed_at", DateTime(timezone=True), nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "venue_position_snapshots",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("portfolio_snapshot_id", String, nullable=False),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("model_provider", String, nullable=False),
+            Column("account_ref", String, nullable=False),
+            Column("instrument_id", String, nullable=False),
+            Column("title", String, nullable=False),
+            Column("outcome", String, nullable=True),
+            Column("quantity", Numeric(24, 8), nullable=False),
+            Column("average_entry_price", Numeric(18, 8), nullable=True),
+            Column("current_price", Numeric(18, 8), nullable=True),
+            Column("cost_basis_usd", Numeric(18, 8), nullable=True),
+            Column("market_value_usd", Numeric(18, 8), nullable=True),
+            Column("realized_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("unrealized_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("total_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("state", String, nullable=False),
+            Column("observed_at", DateTime(timezone=True), nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "venue_confirmed_fills",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("providers", JSONB, nullable=False),
+            Column("account_ref", String, nullable=False),
+            Column("source_trade_id", String, nullable=False),
+            Column("venue_order_id", String, nullable=True),
+            Column("instrument_id", String, nullable=False),
+            Column("title", String, nullable=False),
+            Column("side", String, nullable=False),
+            Column("quantity", Numeric(24, 8), nullable=False),
+            Column("price", Numeric(18, 8), nullable=False),
+            Column("notional_usd", Numeric(18, 8), nullable=False),
+            Column("realized_pnl_usd", Numeric(18, 8), nullable=True),
+            Column("fee_usd", Numeric(18, 8), nullable=True),
+            Column("state", String, nullable=False),
+            Column("executed_at", DateTime(timezone=True), nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            Column("updated_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
     ]
 
 
@@ -1089,6 +1163,27 @@ Index(
     metadata.tables["shared.alpaca_symbol_pnl_snapshots"].c.calculated_at,
 )
 
+Index(
+    "ix_venue_portfolio_environment_venue_observed",
+    metadata.tables["shared.venue_portfolio_snapshots"].c.environment,
+    metadata.tables["shared.venue_portfolio_snapshots"].c.venue,
+    metadata.tables["shared.venue_portfolio_snapshots"].c.observed_at,
+)
+
+Index(
+    "ix_venue_positions_environment_account_observed",
+    metadata.tables["shared.venue_position_snapshots"].c.environment,
+    metadata.tables["shared.venue_position_snapshots"].c.account_ref,
+    metadata.tables["shared.venue_position_snapshots"].c.observed_at,
+)
+
+Index(
+    "ix_venue_fills_environment_venue_executed",
+    metadata.tables["shared.venue_confirmed_fills"].c.environment,
+    metadata.tables["shared.venue_confirmed_fills"].c.venue,
+    metadata.tables["shared.venue_confirmed_fills"].c.executed_at,
+)
+
 
 def _ddl(statement) -> str:
     return f"{str(statement.compile(dialect=_POSTGRES_DIALECT)).strip()};"
@@ -1097,7 +1192,8 @@ def _ddl(statement) -> str:
 def migration_plan() -> MigrationPlan:
     """Build SQL statements that create v1 schemas and tables.
 
-    REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005
+    REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
+    REQ-DB-008
     """
 
     schema_sql = tuple(

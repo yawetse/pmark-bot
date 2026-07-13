@@ -6,29 +6,21 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleAlert,
-  LineChart as LineChartIcon,
   RefreshCw,
   RotateCcw,
   Settings2,
 } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-
-import type { EconomicsSummaryView } from "@/components/dashboard/economics-panel";
 import type { MarketDataPullView } from "@/components/dashboard/market-data-panel";
 import type {
   OperationsSummaryView,
   ScannerCandidateView,
 } from "@/components/dashboard/operations-view";
 import { FALLBACK_TICK_SUMMARY, type TickSummaryView } from "@/components/dashboard/tick-summary-panel";
+import {
+  VenuePortfolioPanel,
+  type VenuePortfolioView,
+} from "@/components/dashboard/venue-portfolio-panel";
 import { dashboardApi, type ApiClientResult } from "@/lib/api";
 import { CONFIG_PATH_DETAILS, type AllowedConfigPath } from "@/lib/config-paths";
 import { useDashboardRealtime, type TickScheduleView } from "@/lib/use-dashboard-realtime";
@@ -199,7 +191,7 @@ const RECOMMENDATION_DEFAULTS: Partial<Record<AllowedConfigPath, ConfigValue>> =
 export function ConsumerDashboard() {
   const [configState, setConfigState] = useState<PanelState<ConfigSnapshot>>({ status: "loading" });
   const [operationsState, setOperationsState] = useState<PanelState<OperationsSummaryView>>({ status: "loading" });
-  const [economicsState, setEconomicsState] = useState<PanelState<EconomicsSummaryView>>({ status: "loading" });
+  const [portfolioState, setPortfolioState] = useState<PanelState<VenuePortfolioView>>({ status: "loading" });
   const [marketDataState, setMarketDataState] = useState<PanelState<MarketDataPullView>>({ status: "loading" });
   const [tickScheduleState, setTickScheduleState] = useState<PanelState<TickScheduleView>>({ status: "loading" });
   const [notificationsState, setNotificationsState] = useState<PanelState<NotificationSettingsView>>({ status: "loading" });
@@ -227,7 +219,7 @@ export function ConsumerDashboard() {
     });
 
     void loadPanel("operations/summary", setOperationsState, () => active);
-    void loadPanel("economics/summary", setEconomicsState, () => active);
+    void loadPanel("portfolio", setPortfolioState, () => active);
     void loadPanel("market-data/latest", setMarketDataState, () => active);
     void loadPanel("operations/tick-schedule", setTickScheduleState, () => active);
     void loadPanel("notifications/settings", setNotificationsState, () => active);
@@ -244,8 +236,13 @@ export function ConsumerDashboard() {
       }
     });
 
+    const portfolioInterval = window.setInterval(() => {
+      void loadPanel("portfolio", setPortfolioState, () => active);
+    }, 60_000);
+
     return () => {
       active = false;
+      window.clearInterval(portfolioInterval);
     };
   }, []);
 
@@ -267,7 +264,6 @@ export function ConsumerDashboard() {
   const realtime = useDashboardRealtime({ onSnapshot: handleRealtimeSnapshot });
 
   const operations = operationsState.status === "ready" ? operationsState.data : null;
-  const economics = economicsState.status === "ready" ? economicsState.data : null;
   const marketData = marketDataState.status === "ready" ? marketDataState.data : null;
   const tickSchedule = tickScheduleState.status === "ready" ? tickScheduleState.data : null;
   const notifications = notificationsState.status === "ready" ? notificationsState.data : null;
@@ -313,7 +309,6 @@ export function ConsumerDashboard() {
   );
   const countdownSeconds = useMemo(() => secondsUntilTick(tickSchedule, nowMs), [tickSchedule, nowMs]);
   const countdownDue = countdownSeconds !== null && countdownSeconds <= 0;
-  const pnlData = useMemo(() => (economics ? pnlChartData(economics) : []), [economics]);
   const timelineSteps = useMemo(
     () => tickTimelineSteps(operations, marketData),
     [operations, marketData],
@@ -680,49 +675,31 @@ export function ConsumerDashboard() {
           </div>
         </section>
 
-        <section className="consumer-panel span-2" aria-labelledby="pnl-chart-title">
-          <div className="consumer-panel-heading">
-            <div>
-              <p className="section-label">Profit and loss</p>
-              <h2 id="pnl-chart-title">P&L over time</h2>
+        {portfolioState.status === "loading" ? (
+          <section className="consumer-panel span-3" aria-labelledby="portfolio-loading-title">
+            <div className="consumer-panel-heading">
+              <div>
+                <p className="section-label">Actual portfolio</p>
+                <h2 id="portfolio-loading-title">Loading venue-confirmed performance</h2>
+              </div>
             </div>
-            <LineChartIcon aria-hidden="true" size={20} />
-          </div>
-          {economicsState.status === "loading" ? (
             <PanelLoadingRows />
-          ) : economicsState.status === "error" ? (
-            <p className="status-message blocked">{economicsState.message}</p>
-          ) : (
-            <>
-              <div className="consumer-metric-strip">
-                <Metric label="Trading P&L" value={formatUsd(economicsState.data.trading.totalPnlUsd)} />
-                <Metric label="Net after costs" value={formatUsd(economicsState.data.profitability.netAfterRecordedCostsUsd)} />
-                <Metric label="Open positions" value={String(economicsState.data.trading.openPositions)} />
+          </section>
+        ) : portfolioState.status === "error" ? (
+          <section className="consumer-panel span-3" aria-labelledby="portfolio-error-title">
+            <div className="consumer-panel-heading">
+              <div>
+                <p className="section-label">Actual portfolio</p>
+                <h2 id="portfolio-error-title">Portfolio unavailable</h2>
               </div>
-              <div className="consumer-chart" aria-label="Profit and loss over time">
-                {pnlData.length > 1 ? (
-                  <ResponsiveContainer height="100%" width="100%">
-                    <LineChart data={pnlData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-                      <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="label" tickLine={false} />
-                      <YAxis tickFormatter={(value) => `$${value}`} tickLine={false} width={58} />
-                      <Tooltip formatter={(value) => formatUsd(String(value))} />
-                      <Line dataKey="trading" dot={false} name="Trading P&L" stroke="var(--accent)" strokeWidth={2.5} />
-                      <Line dataKey="net" dot={false} name="Net after costs" stroke="var(--focus)" strokeWidth={2.5} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="consumer-empty-chart">
-                    <strong>{formatUsd(economicsState.data.trading.totalPnlUsd)}</strong>
-                    <span>Waiting for more P&L snapshots.</span>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </section>
+            </div>
+            <p className="status-message blocked">{portfolioState.message}</p>
+          </section>
+        ) : (
+          <VenuePortfolioPanel portfolio={portfolioState.data} />
+        )}
 
-        <section className="consumer-panel" aria-labelledby="last-tick-title">
+        <section className="consumer-panel span-3" aria-labelledby="last-tick-title">
           <div className="consumer-panel-heading">
             <div>
               <p className="section-label">Last tick</p>
@@ -1391,28 +1368,6 @@ function PanelLoadingRows({ compact = false }: { compact?: boolean }) {
       </div>
     </div>
   );
-}
-
-function pnlChartData(economics: EconomicsSummaryView) {
-  const snapshots = economics.history.snapshots ?? [];
-  const rows = [...snapshots]
-    .filter((snapshot) => snapshot.createdAt)
-    .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
-    .map((snapshot) => ({
-      label: shortDate(snapshot.createdAt),
-      trading: numberValue(snapshot.tradingPnlUsd),
-      net: numberValue(snapshot.netAfterRecordedCostsUsd),
-    }));
-  if (rows.length) {
-    return rows;
-  }
-  return [
-    {
-      label: "Now",
-      trading: numberValue(economics.trading.totalPnlUsd),
-      net: numberValue(economics.profitability.netAfterRecordedCostsUsd),
-    },
-  ];
 }
 
 function tickTimelineSteps(
@@ -2525,26 +2480,6 @@ function formatConfigValue(value: ConfigValue | null): string {
     return JSON.stringify(value);
   }
   return String(value);
-}
-
-function formatUsd(value: string | number | null | undefined): string {
-  const parsed = Number(value ?? 0);
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: Math.abs(parsed) < 1 ? 4 : 2,
-  }).format(Number.isFinite(parsed) ? parsed : 0);
-}
-
-function shortDate(value: string | null | undefined): string {
-  if (!value) {
-    return "Now";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Now";
-  }
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
 
 function formatDateTime(value: string | null | undefined): string {

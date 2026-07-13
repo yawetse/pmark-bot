@@ -1259,7 +1259,7 @@
 **Estimate:** M  
 **Phase:** Phase 7 - Production readiness and runbooks  
 **Labels:** `codex-poly-bot`, `spec-driven-dev`, `phase-7-readiness`  
-**Dependencies:** TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-007, TASK-008, TASK-009, TASK-010, TASK-011, TASK-012, TASK-013, TASK-014, TASK-015, TASK-016, TASK-017, TASK-018, TASK-019, TASK-020, TASK-021, TASK-022, TASK-023, TASK-024, TASK-025, TASK-026, TASK-027, TASK-028, TASK-029, TASK-030, TASK-031
+**Dependencies:** TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-007, TASK-008, TASK-009, TASK-010, TASK-011, TASK-012, TASK-013, TASK-014, TASK-015, TASK-016, TASK-017, TASK-018, TASK-019, TASK-020, TASK-021, TASK-022, TASK-023, TASK-024, TASK-025, TASK-026, TASK-027, TASK-028, TASK-029, TASK-030, TASK-031, TASK-033
 
 **Requirements Covered:**
 - REQ-DEP-005
@@ -1281,3 +1281,35 @@
 - [x] All acceptance criteria passing as automated tests or traceability checks
 - [x] Code or docs annotated with REQ-* traceability
 - [x] No regressions in existing tests
+
+---
+
+### TASK-033: Add Venue-Confirmed Portfolio Performance
+
+**Story:** As an operator, I want the main dashboard to show my actual Polymarket US and Alpaca holdings, fills, account value, and P&L by model account, so that I can see whether confirmed trades are making money.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 4 - Backend API and dashboard
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `phase-4-dashboard`
+**Dependencies:** TASK-003, TASK-008, TASK-009, TASK-020, TASK-021, TASK-024
+
+**Requirements Covered:**
+- REQ-DB-008
+- REQ-UI-013
+- REQ-CMP-005
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-033-01 | When venue portfolio reconciliation runs, the system shall persist sanitized balances, positions, and confirmed fills by environment, venue, provider, and account reference. |
+| AC-033-02 | When the main dashboard loads, the system shall show actual account value, realized P&L, unrealized P&L, open holdings, and recent confirmed fills for Polymarket US and Alpaca. |
+| AC-033-03 | When multiple model credentials resolve to one venue account, the system shall count the account once and retain OpenAI and Claude attribution. |
+| AC-033-04 | If venue data is missing or a refresh fails, then the dashboard shall show unavailable or stale status without replacing missing money values with zero. |
+| AC-033-05 | When portfolio totals are calculated, the system shall exclude submitted, unfilled, and simulated orders and keep AI and AWS costs in separate economics views. |
+
+**Definition of Done:**
+- [x] Portfolio, migration, API, and frontend contract tests pass
+- [x] Code and design artifacts include REQ-* traceability
+- [ ] Development and production deployment health checks pass

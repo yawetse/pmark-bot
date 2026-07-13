@@ -77,6 +77,7 @@ class AppSettings:
     notification_recipients: dict[str, str] = field(default_factory=dict)
     background_worker_enabled: bool = False
     worker_heartbeat_interval_seconds: int = 60
+    portfolio_refresh_interval_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> "AppSettings":
@@ -123,6 +124,10 @@ class AppSettings:
             notification_recipients=_notification_recipients_from_env(),
             background_worker_enabled=_bool_env("ENABLE_BACKGROUND_WORKER", False),
             worker_heartbeat_interval_seconds=_int_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 60),
+            portfolio_refresh_interval_seconds=_int_env(
+                "PORTFOLIO_REFRESH_INTERVAL_SECONDS",
+                60,
+            ),
         )
 
 
@@ -184,6 +189,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.services = resolved_services
     app.state.worker_heartbeat_task = None
+    app.state.portfolio_refresh_task = None
     resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
     configure_observability(app, settings=resolved_settings)
 
@@ -199,15 +205,25 @@ def create_app(
                     interval_seconds=resolved_settings.worker_heartbeat_interval_seconds,
                 )
             )
+            app.state.portfolio_refresh_task = asyncio.create_task(
+                _portfolio_refresh_loop(
+                    services=resolved_services,
+                    environment=resolved_settings.environment,
+                    interval_seconds=resolved_settings.portfolio_refresh_interval_seconds,
+                )
+            )
 
         @app.on_event("shutdown")
         async def _stop_worker_heartbeat() -> None:
-            task = app.state.worker_heartbeat_task
-            if task is None:
-                return
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            for task in (
+                app.state.worker_heartbeat_task,
+                app.state.portfolio_refresh_task,
+            ):
+                if task is None:
+                    continue
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
     app.add_middleware(
         CORSMiddleware,
@@ -384,6 +400,28 @@ async def _worker_heartbeat_loop(
                 status="failed",
                 message="scheduler tick failed",
             )
+        await asyncio.sleep(interval_seconds)
+
+
+async def _portfolio_refresh_loop(
+    *,
+    services: DashboardApiServices,
+    environment: Environment,
+    interval_seconds: int,
+) -> None:
+    """Refresh venue account state independently from the trading tick.
+
+    REQ: REQ-DB-008, REQ-UI-013, REQ-CMP-005
+    """
+
+    while True:
+        try:
+            await asyncio.to_thread(
+                services.runtime_status.refresh_venue_portfolio,
+                environment,
+            )
+        except Exception:
+            LOGGER.exception("venue portfolio refresh failed")
         await asyncio.sleep(interval_seconds)
 
 

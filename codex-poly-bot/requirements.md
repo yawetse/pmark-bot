@@ -88,6 +88,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-DB-005 | P0 | When a position changes state, the system shall persist the prior state, new state, realized P&L, unrealized P&L, and reason for change. |
 | REQ-DB-006 | P1 | The system shall retain Postgres audit, trade, and position history indefinitely unless a later archive policy is configured. |
 | REQ-DB-007 | P0 | If Postgres is configured, then the system shall initialize SQLAlchemy with the packaged Postgres driver; if Postgres is unavailable, then the system shall block live order placement and surface the persistence failure in logs and dashboard status. |
+| REQ-DB-008 | P0 | When an enabled venue account is reconciled, the system shall persist sanitized account, position, and confirmed-fill snapshots by environment, venue, model provider, and account reference without storing credential material. |
 
 ### Wallet and Secrets Management
 
@@ -176,6 +177,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-UI-010 | P1 | The dashboard shall present separate views for Claude and OpenAI positions, decisions, budgets, and P&L. |
 | REQ-UI-011 | P0 | The dashboard shall compare Claude and OpenAI performance across Polymarket and Alpaca using P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics. |
 | REQ-UI-012 | P0 | When recent scanner output identifies a settings-based blocker, the dashboard shall show an actionable config recommendation that saves user-owned database settings through the audited config endpoint and explains that model, credential, market-hours, and risk gates still apply. |
+| REQ-UI-013 | P0 | When an authorized user opens the main dashboard, the system shall show venue-confirmed account value, realized P&L, unrealized P&L, open positions, and confirmed fills for Polymarket US and Alpaca, separated by model-provider account and marked unavailable when venue data is missing or stale. |
 
 ### Cross-Market Comparison Analytics
 
@@ -185,6 +187,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-CMP-002 | P0 | The system shall compare Claude and OpenAI performance across Polymarket bets and Alpaca stocks or ETFs. |
 | REQ-CMP-003 | P0 | The system shall include realized P&L, unrealized P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics in comparison views using documented formulas. |
 | REQ-CMP-004 | P1 | If a metric cannot be calculated because data is missing or insufficient, then the system shall show the metric as unavailable rather than zero. |
+| REQ-CMP-005 | P0 | When portfolio performance is aggregated, the system shall exclude simulated and unfilled orders, deduplicate shared venue accounts, and calculate totals only from venue-confirmed positions and fills. |
 
 ### Notifications
 
