@@ -705,6 +705,35 @@ def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
         source_payload={"symbol": "XYZ"},
         created_at=observed,
     )
+    registry.state.insert(
+        "shared.pipeline_steps",
+        {
+            "id": "pipeline-1-scanner",
+            "run_id": "pipeline-1",
+            "environment": "development",
+            "step_key": "scanner",
+            "step_order": 2,
+            "label": "Find candidates",
+            "status": "completed",
+            "started_at": observed,
+            "completed_at": observed,
+            "message": "Scanner accepted 1 and rejected 1 candidate.",
+            "metrics": {
+                "candidateCount": 2,
+                "acceptedCount": 1,
+                "rejectedCount": 1,
+                "rejectionBreakdown": [
+                    {
+                        "venue": "alpaca",
+                        "reason": "symbol outside universe",
+                        "count": 1,
+                    }
+                ],
+            },
+            "record_ids": [run["id"]],
+            "created_at": observed,
+        },
+    )
 
     assert shared.scanner_runs(environment=Environment.DEVELOPMENT)[0]["id"] == run["id"]
     assert shared.latest_scanner_run(environment=Environment.DEVELOPMENT)["id"] == run["id"]
@@ -717,7 +746,7 @@ def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
     )[0]["id"] == accepted["id"]
     assert shared.scanner_rejection_breakdown(
         environment=Environment.DEVELOPMENT,
-        scanner_run_id=run["id"],
+        pipeline_run_id="pipeline-1",
     ) == [{"venue": "alpaca", "reason": "symbol outside universe", "count": 1}]
 
 

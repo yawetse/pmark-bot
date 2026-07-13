@@ -1925,7 +1925,7 @@ class RuntimeStatusService:
             rejection_breakdown = (
                 shared.scanner_rejection_breakdown(
                     environment=environment,
-                    scanner_run_id=latest["id"],
+                    pipeline_run_id=latest["pipeline_run_id"],
                 )
                 if latest is not None
                 else []

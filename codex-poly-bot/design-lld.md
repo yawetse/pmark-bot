@@ -2748,7 +2748,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | 8 | Scanner rejections point to configurable blockers | Show targeted config changes and save them through the audited per-user config flow | REQ-UI-012, REQ-UI-005, REQ-UI-006, REQ-UI-007 |
 | 9 | A venue refresh fails or has never succeeded | Keep the last confirmed values with stale status, or show unavailable rather than zero | REQ-UI-013, REQ-CMP-005 |
 | 10 | A recommendation changes an integer-only cap while the market-data total spans venues | Submit a JSON number and show each venue's candidate count beside the total | REQ-UI-012, REQ-UI-005 |
-| 11 | Scanner candidate details are deferred from the default dashboard response | Query and render the latest persisted accepted and rejected totals plus grouped rejection reasons; do not infer scanner results from the market-data total | REQ-UI-004, REQ-OBS-005 |
+| 11 | Scanner candidate details are deferred from the default dashboard response | Read the latest scanner-run totals and its single persisted pipeline-step rejection breakdown; do not query candidate history or infer scanner results from the market-data total | REQ-UI-004, REQ-OBS-005 |
 
 ### 22.5 Error Handling
 

@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
@@ -141,28 +141,6 @@ class DatabaseState:
         if limit is not None:
             selected_rows = selected_rows[: max(1, int(limit))]
         return selected_rows
-
-    def grouped_counts(
-        self,
-        table_name: str,
-        *,
-        group_by: tuple[str, ...],
-        filters: dict[str, Any] | None = None,
-    ) -> list[dict]:
-        """Return grouped row counts for bounded dashboard summaries."""
-
-        if not group_by:
-            raise SchemaViolationError("grouped counts require at least one column")
-        rows = self.rows(table_name, filters=filters)
-        counts: dict[tuple[Any, ...], int] = {}
-        for row in rows:
-            key = tuple(row.get(column) for column in group_by)
-            counts[key] = counts.get(key, 0) + 1
-        return [
-            {**dict(zip(group_by, key, strict=True)), "count": count}
-            for key, count in counts.items()
-        ]
-
 
 @dataclass(frozen=True)
 class _SqlAlchemyTransaction:
@@ -378,45 +356,6 @@ class PersistentDatabaseState(DatabaseState):
         finally:
             if owns_session:
                 session.close()
-
-    def grouped_counts(
-        self,
-        table_name: str,
-        *,
-        group_by: tuple[str, ...],
-        filters: dict[str, Any] | None = None,
-    ) -> list[dict]:
-        """Return grouped counts without loading matching rows into application memory."""
-
-        if not self.available:
-            raise PersistenceUnavailableError("Postgres persistence is unavailable")
-        if table_name in self.fail_on_read_tables:
-            raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
-        if not group_by:
-            raise SchemaViolationError("grouped counts require at least one column")
-        table = _table_for_name(table_name)
-        for column in (*group_by, *(filters or {}).keys()):
-            if column not in table.c:
-                raise SchemaViolationError(f"unknown repository column: {table_name}.{column}")
-        group_columns = [table.c[column] for column in group_by]
-        statement = select(*group_columns, func.count().label("count"))
-        for key, value in (filters or {}).items():
-            statement = statement.where(table.c[key] == value)
-        statement = statement.group_by(*group_columns)
-        session = self._active_session.get()
-        owns_session = session is None
-        if owns_session:
-            session = self.session_factory()
-        try:
-            return [dict(row) for row in session.execute(statement).mappings().all()]
-        except SQLAlchemyError as exc:
-            raise PersistenceUnavailableError(
-                f"Postgres persistence is unavailable for {table_name}"
-            ) from exc
-        finally:
-            if owns_session:
-                session.close()
-
 
 def _table_for_name(table_name: str):
     table = metadata.tables.get(table_name)
@@ -1709,26 +1648,30 @@ class SharedRepositories:
         self,
         *,
         environment: Environment,
-        scanner_run_id: str,
+        pipeline_run_id: str,
         limit: int = 12,
     ) -> list[dict]:
         self.ensure_schema(SHARED_SCHEMA)
-        rows = self.state.grouped_counts(
-            f"{SHARED_SCHEMA}.scanner_candidates",
-            group_by=("venue", "refusal_reason"),
+        rows = self.state.rows(
+            f"{SHARED_SCHEMA}.pipeline_steps",
             filters={
                 "environment": environment.value,
-                "scanner_run_id": scanner_run_id,
-                "status": "rejected",
+                "run_id": pipeline_run_id,
+                "step_key": "scanner",
             },
+            newest_first=True,
+            limit=1,
         )
+        metrics = rows[0].get("metrics") if rows else None
+        persisted = metrics.get("rejectionBreakdown") if isinstance(metrics, dict) else None
         breakdown = [
             {
                 "venue": str(row.get("venue") or "unknown"),
-                "reason": str(row.get("refusal_reason") or "not recorded"),
+                "reason": str(row.get("reason") or "not recorded"),
                 "count": int(row.get("count") or 0),
             }
-            for row in rows
+            for row in persisted or []
+            if isinstance(row, dict) and int(row.get("count") or 0) > 0
         ]
         breakdown.sort(
             key=lambda row: (-row["count"], row["venue"], row["reason"])
