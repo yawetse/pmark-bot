@@ -17,8 +17,8 @@
 | 1 | Foundation and safety kernel | Local development, Codex setup, Domain models, Database, Migrations, Audit service, Config service, Auth service, Observability skeleton, CI baseline | Approved requirements, HLD, LLD | Local app dependencies install, Postgres migrates, safe default config seeds `default_selected_venue=polymarket_us`, `LIVE_ENABLED=false`, all venues disabled, Polymarket slippage `0.02`, and Alpaca slippage `0.005` |
 | 2 | Adapter contracts and credential boundaries | Venue ports, LLM ports, AWS adapters, Secrets adapter, S3 adapter, SES adapter, Polymarket adapters, Alpaca adapter, Wallet service, Wallet CLI | Phase 1 | Mocked adapter contract tests pass; wallet/account status works without exposing secrets |
 | 3 | Core dry-run trading engine | Ingestion service, Scoring service, Strategy engine, Arbitrage strategy, Convergence strategy, Whale-copy strategy, Alpaca stock strategy, Risk engine, Execution service, Exit monitor, Notification service skeleton, Comparison service, Worker scheduler | Phases 1-2 | One local dry-run trading loop runs with mocked venues/models and persists decisions, refusals, simulated orders, positions, metrics, worker heartbeats, and no-op notification job status |
-| 4 | Backend API and dashboard | Backend app, API routers, Frontend app, Auth UI, Dashboard UI, Frontend API client | Phases 1-3 | Local dashboard signs in, shows status, loads user-scoped database preferences, edits config, triggers kill switch, and displays Claude/OpenAI dry-run comparison |
-| 5 | External integration and notification logic | Official Polymarket integration, Alpaca paper/live account validation, OpenAI adapter, Claude adapter, notification flows, local/file-backed S3 storage, mocked or existing SES sandbox delivery | Phases 2-4 | Development mode can run full dry-run against configured external APIs without live venue submission; AWS-managed S3/SES is still provisioned in Phase 6 |
+| 4 | Backend API and dashboard | Backend app, API routers, Frontend app, Auth UI, Dashboard UI, Frontend API client, venue portfolio read model | Phases 1-3 | Local dashboard signs in, shows status and venue-confirmed portfolio performance, loads user-scoped database preferences, edits config, triggers kill switch, and displays Claude/OpenAI dry-run comparison |
+| 5 | External integration and notification logic | Official Polymarket integration, Alpaca paper/live account validation, venue balance/position/fill reconciliation, OpenAI adapter, Claude adapter, notification flows, local/file-backed S3 storage, mocked or existing SES sandbox delivery | Phases 2-4 | Development mode can read confirmed portfolio data and run full dry-run against configured external APIs without live venue submission; AWS-managed S3/SES is still provisioned in Phase 6 |
 | 6 | AWS deployment and CI/CD | Infrastructure, CloudFormation templates, GitHub Actions, ECR image build, ECS service, RDS, S3, Secrets Manager, CloudWatch, SES, migration safety | Phases 1-5 | Merge to `develop` deploys the development stack in dry-run mode with health checks passing |
 | 7 | Production readiness and runbooks | Documentation, source references, live-trading checklist, operations runbook, rollback runbook, final traceability checks | Phases 1-6 | Merge to `main` deploys production automatically in dry-run mode; live enablement is controlled by checklist and dashboard config |
 
@@ -43,6 +43,11 @@ Database + Config + Audit
   -> Execution service
   -> Worker scheduler
   -> API routers
+
+Venue adapters + Database
+  -> Venue portfolio reconciliation
+  -> Portfolio API
+  -> Main dashboard actual portfolio
 
 Phase 1 explicit suborder:
   Domain models -> Database + Migrations -> Audit service -> Config service -> Auth service -> Observability skeleton -> CI baseline

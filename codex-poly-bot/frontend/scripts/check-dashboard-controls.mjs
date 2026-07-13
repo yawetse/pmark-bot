@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-// REQ: REQ-UI-004, REQ-UI-005, REQ-UI-007, REQ-UI-009, REQ-OBS-005
+// REQ: REQ-UI-004, REQ-UI-005, REQ-UI-007, REQ-UI-009, REQ-UI-013,
+// REQ-CMP-005, REQ-OBS-005
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -169,11 +170,11 @@ const consumerDashboard = read("components/dashboard/consumer-dashboard.tsx");
 for (const token of [
   "config/current",
   "operations/summary",
-  "economics/summary",
+  "portfolio",
   "market-data/latest",
   "notifications/settings",
   "operations/tick-summary",
-  "P&L over time",
+  "VenuePortfolioPanel",
   "One trading cycle, five checks",
   "Emergency stop",
   "Simulation only",
@@ -200,6 +201,22 @@ for (const token of [
   "finalizeConfigSave",
 ]) {
   assert.match(consumerDashboard, new RegExp(token.replaceAll("?", "\\?")));
+}
+assert.doesNotMatch(consumerDashboard, /economics\/summary/);
+
+const venuePortfolio = read("components/dashboard/venue-portfolio-panel.tsx");
+for (const token of [
+  "Actual portfolio",
+  "Are my trades making money?",
+  "Venue-confirmed balances, positions, and fills only",
+  "Performance by venue",
+  "Open holdings",
+  "Recent confirmed fills",
+  "Shared accounts are counted once",
+  "Unavailable",
+  "/dashboard/operations",
+]) {
+  assert.match(venuePortfolio, new RegExp(token.replaceAll("?", "\\?")));
 }
 
 const manualRunControl = read("components/dashboard/manual-run-control.tsx");

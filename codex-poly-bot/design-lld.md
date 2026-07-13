@@ -357,6 +357,9 @@
 | `position_events` | Provider schema table | Position transition history | Prior and new state are both recorded |
 | `alpaca_account_snapshots` | Provider schema table | Broker account state | Account ID must match configured provider/environment |
 | `comparison_metric_snapshots` | Shared table | Materialized dashboard metrics | Missing metrics store unavailable reason |
+| `venue_portfolio_snapshots` | Shared table | Sanitized venue account balances and P&L by environment, provider, and account | Credential material is never stored |
+| `venue_position_snapshots` | Shared table | Open positions tied to a confirmed portfolio snapshot | Snapshot and account references are required |
+| `venue_confirmed_fills` | Shared table | Deduplicated venue-confirmed executions | Simulated and unfilled orders are excluded |
 
 ### 2.4 Edge Cases & Boundary Conditions
 
@@ -2318,6 +2321,18 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 |---|---------------------|-----------------|--------|
 | 1 | Sharpe-like metric is represented as return-to-risk in v1. | Later may add true Sharpe with regular return series. | DESIGN CHOICE |
 
+### 19.9 Venue Portfolio Reconciliation
+
+**File:** `backend/app/services/venue_portfolio_service.py`
+**Responsibility:** Poll authenticated Polymarket US and Alpaca account APIs, normalize confirmed balances, positions, fills, and P&L, persist sanitized snapshots, and return a deduplicated dashboard read model.
+**Requirements Covered:** REQ-DB-008, REQ-UI-013, REQ-CMP-005
+
+`ProviderBackedVenuePortfolioSource.fetch_accounts(environment)` reads each venue and model-provider credential pair. Polymarket uses account identity, balances, decimal positions, fully paginated cleared-trade activity, and position resolutions. Alpaca uses account, open-position, `FILL` activity, and account portfolio-history endpoints. Alpaca realized P&L is the venue-reported total P&L less current venue-reported unrealized P&L; it is not reconstructed from a bounded local fill window. The source never returns or persists keys or secrets.
+
+`VenuePortfolioService.refresh(environment)` runs independently from the trading tick every 60 seconds. Each account reconciliation uses one database transaction. Confirmed fills are serialized by deterministic fill ID and upserted by environment, venue, account reference, and venue trade ID before immutable account and position snapshots are committed. Failed refresh records do not replace the last confirmed values.
+
+`VenuePortfolioService.summary(environment)` groups shared credentials by resolved venue account reference, maps credential-scoped refresh failures back to the last successful account, sums each account once, separates Polymarket US and Alpaca, exposes provider-account attribution, and returns unavailable values as null. History carries the last confirmed value for accounts that refresh in adjacent minute buckets. Freshness is based only on successful venue snapshots. Internal order intents, submitted orders, and simulations are not inputs to this read model. Realized and unrealized P&L use fixed-precision decimals; fees are included when supplied by the venue.
+
 ---
 
 ## 20. Worker Scheduler
@@ -2450,7 +2465,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 
 **File:** `backend/app/main.py`, `backend/app/api/`  
 **Responsibility:** Bootstrap FastAPI, wire dependencies, expose authenticated dashboard APIs, and keep read/write paths separated from worker loops.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-VEN-002, REQ-VEN-003, REQ-VEN-006, REQ-WAL-002, REQ-WAL-005, REQ-STR-002, REQ-STR-009, REQ-LLM-006, REQ-EXE-003, REQ-EXE-007, REQ-EXE-011, REQ-EXE-012, REQ-EXE-014, REQ-EXE-016, REQ-ALP-007, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-014, REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006  
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-013, REQ-CMP-005, REQ-DB-008, REQ-VEN-002, REQ-VEN-003, REQ-VEN-006, REQ-WAL-002, REQ-WAL-005, REQ-STR-002, REQ-STR-009, REQ-LLM-006, REQ-EXE-003, REQ-EXE-007, REQ-EXE-011, REQ-EXE-012, REQ-EXE-014, REQ-EXE-016, REQ-ALP-007, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-014, REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 **Dependencies:** Auth service, config service, audit service, wallet service, comparison service, worker repositories, order/position repositories, notification service, execution service  
 **Depended On By:** Next.js dashboard, local development, CI smoke tests
 
@@ -2468,6 +2483,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 |--------|--------------------------|---------|-----------|
 | `health.py` | `GET /health`, `GET /api/health` | Liveness/readiness and degraded component status | REQ-OBS-005, REQ-OBS-006 |
 | `dashboard.py` | `GET /api/dashboard/summary` | Combined overview for venues, models, loops, notifications | REQ-UI-004 |
+| `dashboard.py` | `GET /api/portfolio` | Venue-confirmed account value, P&L, holdings, fills, and freshness | REQ-UI-013, REQ-CMP-005 |
 | `config.py` | `GET /api/config/current`, `PUT /api/config` | Versioned config read/update | REQ-UI-005, REQ-UI-006, REQ-UI-007 |
 | `dashboard.py` | `GET /api/preferences`, `PUT /api/preferences` | Per-user dashboard display preferences | REQ-UI-004, REQ-OBS-004 |
 | `live_control.py` | `POST /api/live-mode`, `POST /api/kill-switch` | Dry-run/live toggle and immediate kill switch | REQ-EXE-003, REQ-EXE-014, REQ-UI-008 |
@@ -2485,6 +2501,7 @@ All `/api/*` endpoints require a valid FastAPI authorization dependency. Mutatio
 | Method | Endpoint | Request Schema | Response Schema | Status Codes | REQ Trace |
 |--------|----------|----------------|-----------------|--------------|-----------|
 | `GET` | `/api/dashboard/summary` | `DashboardSummaryQuery` | `DashboardSummaryResponse` | 200 with `degraded_sections`, 401, 403, 503 | REQ-UI-004 |
+| `GET` | `/api/portfolio` | Authenticated environment context | `VenuePortfolioResponse` | 200 with unavailable or stale account states, 401, 403, 503 | REQ-UI-013, REQ-CMP-005 |
 | `GET` | `/api/preferences` | `DashboardPreferencesQuery` | `DashboardPreferencesResponse` | 200, 401, 403, 503 | REQ-UI-004 |
 | `PUT` | `/api/preferences` | `DashboardPreferencesRequest` | `DashboardPreferencesResponse` | 200, 401, 403, 422, 503 | REQ-UI-004, REQ-OBS-004 |
 | `GET` | `/api/config/current` | `ConfigReadQuery` | `ConfigSnapshotResponse` | 200, 401, 403, 503 | REQ-UI-005 |
@@ -2656,7 +2673,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 **File:** `frontend/`  
 **Responsibility:** Provide the Next.js React dashboard, GitHub OAuth flow, configuration editor, model comparison views, and operational controls.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
 **Dependencies:** Backend API routers, GitHub OAuth app, signed session secret, browser fetch API  
 **Depended On By:** Operators, local testing, Playwright tests
 
@@ -2667,7 +2684,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 | Route | Purpose | REQ Trace |
 |-------|---------|-----------|
 | `/login` | GitHub OAuth sign-in entry | REQ-UI-002 |
-| `/dashboard` | Combined overview with targeted scanner blocker recommendations | REQ-UI-004, REQ-UI-012 |
+| `/dashboard` | Combined overview with actual venue portfolio and targeted scanner blocker recommendations | REQ-UI-004, REQ-UI-012, REQ-UI-013, REQ-CMP-005 |
 | `/dashboard/models/claude` | Claude-specific positions, decisions, budget, P&L | REQ-UI-010 |
 | `/dashboard/models/openai` | OpenAI-specific positions, decisions, budget, P&L | REQ-UI-010 |
 | `/dashboard/comparison` | Claude vs OpenAI across Polymarket and Alpaca | REQ-UI-011 |
@@ -2729,6 +2746,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | 6 | Backend section degraded | Render degraded section with timestamp and retry affordance | REQ-OBS-005 |
 | 7 | Backend token creation module imported by client component | Build/test fails because module is marked server-only | REQ-UI-002 |
 | 8 | Scanner rejections point to configurable blockers | Show targeted config changes and save them through the audited per-user config flow | REQ-UI-012, REQ-UI-005, REQ-UI-006, REQ-UI-007 |
+| 9 | A venue refresh fails or has never succeeded | Keep the last confirmed values with stale status, or show unavailable rather than zero | REQ-UI-013, REQ-CMP-005 |
 
 ### 22.5 Error Handling
 
@@ -2762,7 +2780,7 @@ The backend token signing secret is only available to Next.js server runtime and
 
 | # | Question/Assumption | Impact if Wrong | Status |
 |---|---------------------|-----------------|--------|
-| 1 | Polling every 10 seconds is enough for v1 status refresh. | Later may add websocket/SSE for faster order updates. | DESIGN CHOICE |
+| 1 | Polling every 10 seconds is enough for cycle status; venue portfolio refreshes every 60 seconds. | Later may add websocket/SSE for faster updates. | DESIGN CHOICE |
 
 ---
 
