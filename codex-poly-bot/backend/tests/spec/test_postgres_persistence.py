@@ -707,6 +707,7 @@ def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
     )
 
     assert shared.scanner_runs(environment=Environment.DEVELOPMENT)[0]["id"] == run["id"]
+    assert shared.latest_scanner_run(environment=Environment.DEVELOPMENT)["id"] == run["id"]
     candidates = shared.scanner_candidates(environment=Environment.DEVELOPMENT)
     assert len(candidates) == 2
     assert shared.scanner_candidates(
@@ -714,6 +715,10 @@ def test_req_db_003_06_shared_scanner_records_persist_for_phase_two() -> None:
         scanner_run_id=run["id"],
         status="accepted",
     )[0]["id"] == accepted["id"]
+    assert shared.scanner_rejection_breakdown(
+        environment=Environment.DEVELOPMENT,
+        scanner_run_id=run["id"],
+    ) == [{"venue": "alpaca", "reason": "symbol outside universe", "count": 1}]
 
 
 def test_req_db_003_07_shared_reasoning_records_persist_for_phase_three() -> None:

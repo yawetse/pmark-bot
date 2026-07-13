@@ -169,7 +169,13 @@ export type ScannerSummaryView = {
   candidateCount: number;
   acceptedCount: number;
   rejectedCount: number;
+  rejectionBreakdown?: Array<{
+    venue: string;
+    reason: string;
+    count: number;
+  }>;
   candidates: ScannerCandidateView[];
+  detailsDeferred?: boolean;
 };
 
 export type ReasoningOutputView = {

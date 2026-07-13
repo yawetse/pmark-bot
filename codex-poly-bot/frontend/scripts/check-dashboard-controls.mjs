@@ -200,6 +200,7 @@ for (const token of [
   'method: "POST"',
   "finalizeConfigSave",
   "marketDataVenueBreakdown",
+  "rejectionBreakdown",
   "Polymarket US",
 ]) {
   assert.match(consumerDashboard, new RegExp(token.replaceAll("?", "\\?")));
@@ -217,6 +218,10 @@ assert.doesNotMatch(
   /function next(?:MarketDataLimit|PromptCap)[\s\S]{0,240}return trimNumber/,
 );
 assert.doesNotMatch(consumerDashboard, /economics\/summary/);
+
+const operationsView = read("components/dashboard/operations-view.tsx");
+assert.match(operationsView, /rejectionBreakdown/);
+assert.match(operationsView, /detailsDeferred/);
 
 const venuePortfolio = read("components/dashboard/venue-portfolio-panel.tsx");
 for (const token of [
