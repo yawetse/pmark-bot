@@ -1755,7 +1755,7 @@ class RuntimeStatusService:
             "scanner": (
                 self.scanner_summary(environment)
                 if include_details
-                else self._deferred_scanner_summary()
+                else self.scanner_overview(environment)
             ),
             "reasoning": (
                 self.reasoning_summary(environment)
@@ -1787,17 +1787,6 @@ class RuntimeStatusService:
                 if include_history
                 else self._deferred_broker_history_summary()
             ),
-        }
-
-    def _deferred_scanner_summary(self) -> dict[str, Any]:
-        return {
-            "status": "deferred",
-            "message": "Scanner details are deferred from the default operations summary.",
-            "latestRun": None,
-            "candidateCount": 0,
-            "acceptedCount": 0,
-            "rejectedCount": 0,
-            "candidates": [],
         }
 
     def _deferred_reasoning_summary(self) -> dict[str, Any]:
@@ -1922,6 +1911,64 @@ class RuntimeStatusService:
             "rejectedCount": payload["rejectedCount"],
             "rejectionBreakdown": rejection_breakdown,
             "candidates": payload["candidates"],
+        }
+
+    def scanner_overview(self, environment: Environment) -> dict[str, Any]:
+        """Return persisted scanner aggregates without loading candidate detail rows.
+
+        REQ: REQ-UI-004, REQ-OBS-005
+        """
+
+        try:
+            shared = self.registry.shared()
+            latest = shared.latest_scanner_run(environment=environment)
+            rejection_breakdown = (
+                shared.scanner_rejection_breakdown(
+                    environment=environment,
+                    scanner_run_id=latest["id"],
+                )
+                if latest is not None
+                else []
+            )
+        except PersistenceUnavailableError:
+            return {
+                "status": "unavailable",
+                "message": "Scanner status is unavailable because persistence is offline.",
+                "latestRun": None,
+                "candidateCount": 0,
+                "acceptedCount": 0,
+                "rejectedCount": 0,
+                "rejectionBreakdown": [],
+                "candidates": [],
+                "detailsDeferred": True,
+            }
+        if latest is None:
+            return {
+                "status": "idle",
+                "message": "No scanner run has been recorded yet.",
+                "latestRun": None,
+                "candidateCount": 0,
+                "acceptedCount": 0,
+                "rejectedCount": 0,
+                "rejectionBreakdown": [],
+                "candidates": [],
+                "detailsDeferred": True,
+            }
+        payload = scanner_run_payload(latest, [])
+        candidate_count = payload["acceptedCount"] + payload["rejectedCount"]
+        payload["candidateCount"] = candidate_count
+        return {
+            "status": payload["status"],
+            "message": _scanner_summary_message(
+                {**payload, "rejectionBreakdown": rejection_breakdown}
+            ),
+            "latestRun": payload,
+            "candidateCount": candidate_count,
+            "acceptedCount": payload["acceptedCount"],
+            "rejectedCount": payload["rejectedCount"],
+            "rejectionBreakdown": rejection_breakdown,
+            "candidates": [],
+            "detailsDeferred": True,
         }
 
     def reasoning_summary(self, environment: Environment) -> dict[str, Any]:

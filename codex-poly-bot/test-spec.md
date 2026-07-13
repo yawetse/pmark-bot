@@ -273,6 +273,7 @@
 | TST-REQ-UI-004-03 | Focus | REQ-UI-004 | Given an authenticated allowlisted user, When dashboard summary data is requested, Then dashboard sections are returned without secrets. |
 | TST-REQ-UI-004-04 | Focus | REQ-UI-004 | Given frontend dashboard controls exist, When dashboard control checks run, Then venue, wallet, ingestion, trading loop, notification, audit, and health sections are present. |
 | TST-REQ-UI-004-05 | Focus | REQ-UI-004 | Given multiple authorized dashboard users save display preferences, When preferences and dashboard summary are requested, Then each response loads the authenticated user's database preferences. |
+| TST-REQ-UI-004-06 | Regression | REQ-UI-004 | Given scanner candidate details are deferred, When the default dashboard summary loads, Then it reports the latest persisted scanner totals and grouped venue-specific rejection reasons without loading candidate rows. |
 | TST-REQ-UI-005-01 | Happy | REQ-UI-005 | Given an authorized user changes supported config fields, When the dashboard saves them, Then venue flags, dry-run/live, loop, strategy, budget, risk, slippage, and notification settings persist. |
 | TST-REQ-UI-005-02 | Edge | REQ-UI-005 | Given invalid or unauthorized config changes, When the dashboard saves them, Then the changes are rejected and existing config remains. |
 | TST-REQ-UI-005-03 | Focus | REQ-UI-005 | Given frontend config controls exist, When dashboard control checks run, Then saves are limited to allowlisted config paths. |
@@ -485,7 +486,7 @@
 | REQ-UI-001 | TST-REQ-UI-001-01, TST-REQ-UI-001-02, TST-REQ-UI-001-03, TST-REQ-UI-001-04 |
 | REQ-UI-002 | TST-REQ-UI-002-01, TST-REQ-UI-002-02, TST-REQ-UI-002-03 |
 | REQ-UI-003 | TST-REQ-UI-003-01, TST-REQ-UI-003-02, TST-REQ-UI-003-03, TST-REQ-UI-003-04 |
-| REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03, TST-REQ-UI-004-04, TST-REQ-UI-004-05 |
+| REQ-UI-004 | TST-REQ-UI-004-01, TST-REQ-UI-004-02, TST-REQ-UI-004-03, TST-REQ-UI-004-04, TST-REQ-UI-004-05, TST-REQ-UI-004-06 |
 | REQ-UI-005 | TST-REQ-UI-005-01, TST-REQ-UI-005-02, TST-REQ-UI-005-03 |
 | REQ-UI-006 | TST-REQ-UI-006-01, TST-REQ-UI-006-02, TST-REQ-UI-006-03, TST-REQ-UI-006-04 |
 | REQ-UI-007 | TST-REQ-UI-007-01, TST-REQ-UI-007-02, TST-REQ-UI-007-03, TST-REQ-UI-007-04, TST-REQ-UI-007-05 |

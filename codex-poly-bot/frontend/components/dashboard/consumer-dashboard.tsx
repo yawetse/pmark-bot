@@ -1447,7 +1447,20 @@ function lastTickFunnelStages(
   const scannerEntered = Math.max(scanner?.candidateCount ?? 0, marketCandidates);
   const scannerPassed = scanner?.acceptedCount ?? 0;
   const scannerBlocked = Math.max(scanner?.rejectedCount ?? 0, scannerEntered - scannerPassed);
-  const scannerReason = mostCommonReason(scanner?.candidates.map((candidate) => candidate.refusalReason));
+  const detailedScannerReason = mostCommonReason(
+    scanner?.candidates.map((candidate) => candidate.refusalReason),
+  );
+  const topScannerRejection = scanner?.rejectionBreakdown?.[0];
+  const scannerReason = topScannerRejection
+    ? {
+        reason: topScannerRejection.reason,
+        count: topScannerRejection.count,
+        venue: topScannerRejection.venue,
+      }
+    : { ...detailedScannerReason, venue: undefined };
+  const scannerReasonPrefix = scannerReason.venue
+    ? `${marketDataVenueLabel(scannerReason.venue)}: `
+    : "";
 
   const reasoningEntered = Math.max(reasoning?.promptCount ?? 0, scannerPassed);
   const reasoningPassed = reasoning?.scoredCount ?? 0;
@@ -1529,11 +1542,16 @@ function lastTickFunnelStages(
           : "No scanner rejection is visible in the latest tick.",
       detail:
         scannerReason.count > 0
-          ? `Main reason: ${scannerReason.reason}.`
+          ? `Main reason: ${scannerReasonPrefix}${scannerReason.reason} (${formatWhole(scannerReason.count)}).`
           : scanner?.message ?? "Scanner output has not been recorded yet.",
       action:
         scannerEntered > 0 && scannerBlocked > 0
-          ? scannerFilterAction(settings, scannerReason.reason, scanner?.candidates ?? [])
+          ? scannerFilterAction(
+              settings,
+              scannerReason.reason,
+              scanner?.candidates ?? [],
+              scannerReason.venue,
+            )
           : linkFunnelAction(
               "/dashboard/operations",
               scannerPassed > 0 ? "Review candidates" : "Run cycle",
@@ -1725,11 +1743,13 @@ function scannerFilterAction(
   settings: Record<string, unknown>,
   reason: string,
   candidates: ScannerCandidateView[],
+  topVenue?: string,
 ): LastTickFunnelAction {
   const lowerReason = reason.toLowerCase();
   const mostlyAlpaca =
-    candidates.some((candidate) => candidate.venue.toLowerCase().includes("alpaca")) &&
-    !candidates.some((candidate) => candidate.venue.toLowerCase().includes("polymarket"));
+    topVenue?.toLowerCase().includes("alpaca") ||
+    (candidates.some((candidate) => candidate.venue.toLowerCase().includes("alpaca")) &&
+      !candidates.some((candidate) => candidate.venue.toLowerCase().includes("polymarket")));
 
   if (mostlyAlpaca || lowerReason.includes("quote")) {
     return patchFunnelAction(
