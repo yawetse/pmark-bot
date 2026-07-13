@@ -69,6 +69,14 @@ for (const token of [
   "No pending orders",
   "No trade or order history",
   "No simulated or live order events",
+  "Instrument",
+  "Side",
+  "Order type",
+  "Notional",
+  "Venue order",
+  "Fill not confirmed",
+  "Load older orders",
+  "next_cursor",
   "Activate emergency stop",
   "Cancel progress",
   "Degraded venue status",
@@ -80,9 +88,12 @@ for (const token of [
 }
 assert.doesNotMatch(operationsView, /order-submitted/);
 assert.doesNotMatch(operationsView, /FALLBACK_ORDER_EVENTS/);
+assert.match(operationsView, /mergeOrderEvents\(currentEvents, result\.data\.items\)/);
 
 const operationsPage = read("app/dashboard/operations/page.tsx");
 assert.match(operationsPage, /Promise\.all/);
+assert.ok(operationsPage.includes('serverDashboardApi<OrderHistoryView>(\n      "orders"'));
+assert.match(operationsPage, /orderHistory=/);
 assert.doesNotMatch(operationsPage, /DashboardNav/);
 
 const nav = read("components/dashboard/dashboard-nav.tsx");
