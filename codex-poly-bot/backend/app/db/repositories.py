@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
@@ -81,6 +82,7 @@ class DatabaseState:
         table_name: str,
         *,
         limit: int | None = None,
+        before: tuple[datetime, str] | None = None,
         newest_first: bool = False,
         filters: dict[str, Any] | None = None,
     ) -> list[dict]:
@@ -89,15 +91,25 @@ class DatabaseState:
         if table_name in self.fail_on_read_tables:
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
         rows = self.tables.setdefault(table_name, [])
-        if filters is None and limit is None and not newest_first:
+        if filters is None and limit is None and not newest_first and before is None:
             return rows
         selected_rows = [
             row
             for row in rows
             if all(row.get(key) == value for key, value in (filters or {}).items())
         ]
+        if before is not None:
+            before_key = (before[0].isoformat(), before[1])
+            selected_rows = [
+                row
+                for row in selected_rows
+                if (_row_order_value(row), str(row.get("id", ""))) < before_key
+            ]
         if newest_first:
-            selected_rows.sort(key=_row_order_value, reverse=True)
+            selected_rows.sort(
+                key=lambda row: (_row_order_value(row), str(row.get("id", ""))),
+                reverse=True,
+            )
         if limit is not None:
             selected_rows = selected_rows[: max(1, int(limit))]
         return selected_rows
@@ -216,6 +228,7 @@ class PersistentDatabaseState(DatabaseState):
         table_name: str,
         *,
         limit: int | None = None,
+        before: tuple[datetime, str] | None = None,
         newest_first: bool = False,
         filters: dict[str, Any] | None = None,
     ) -> list[dict]:
@@ -229,9 +242,21 @@ class PersistentDatabaseState(DatabaseState):
             if key not in table.c:
                 raise SchemaViolationError(f"unknown repository column: {table_name}.{key}")
             statement = statement.where(table.c[key] == value)
+        if before is not None:
+            if "created_at" not in table.c or "id" not in table.c:
+                raise SchemaViolationError(f"cursor pagination is unavailable for {table_name}")
+            statement = statement.where(
+                or_(
+                    table.c.created_at < before[0],
+                    and_(table.c.created_at == before[0], table.c.id < before[1]),
+                )
+            )
         if "created_at" in table.c:
             column = table.c.created_at
-            statement = statement.order_by(column.desc() if newest_first else column.asc())
+            order_columns = [column.desc() if newest_first else column.asc()]
+            if "id" in table.c:
+                order_columns.append(table.c.id.desc() if newest_first else table.c.id.asc())
+            statement = statement.order_by(*order_columns)
         elif "updated_at" in table.c:
             column = table.c.updated_at
             statement = statement.order_by(column.desc() if newest_first else column.asc())

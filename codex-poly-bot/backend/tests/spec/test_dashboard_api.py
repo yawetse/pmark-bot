@@ -680,6 +680,209 @@ def test_req_obs_005_04_operations_summary_defers_heavy_history_by_default(monke
     assert payload["brokerHistory"]["status"] == "deferred"
 
 
+def test_req_exe_016_11_orders_endpoint_reads_durable_environment_history() -> None:
+    """TST-REQ-EXE-016-11: Validates REQ-EXE-016
+
+    Given: durable order intents exist across environments and states
+    When: an authenticated user requests development order history
+    Then: the endpoint returns only development records newest first with execution details
+    """
+
+    client, token = _client()
+    state = client.app.state.services.registry.state
+    older = datetime(2026, 7, 12, 14, 0, tzinfo=UTC)
+    newer = older + timedelta(minutes=1)
+    rows = [
+        {
+            "id": "intent-submitted",
+            "execution_run_id": "execution-1",
+            "pipeline_run_id": "pipeline-1",
+            "strategy_consensus_output_id": "consensus-1",
+            "environment": "development",
+            "venue": "polymarket_us",
+            "instrument_id": "polymarket_us:market-1",
+            "model_provider": "openai",
+            "side": "sell",
+            "order_type": "market",
+            "status": "submitted",
+            "notional_usd": Decimal("12.50"),
+            "size_multiplier": Decimal("0.50"),
+            "idempotency_key": "private-idempotency-value",
+            "refusal_reason": None,
+            "venue_order_id": "venue-order-1",
+            "risk_payload": {"private": "risk-details"},
+            "source_payload": {"private": "source-details"},
+            "created_at": older,
+            "updated_at": older,
+        },
+        {
+            "id": "intent-refused",
+            "execution_run_id": "execution-2",
+            "pipeline_run_id": "pipeline-2",
+            "strategy_consensus_output_id": "consensus-2",
+            "environment": "development",
+            "venue": "alpaca",
+            "instrument_id": "SPY",
+            "model_provider": "claude",
+            "side": "buy",
+            "order_type": "limit",
+            "status": "refused",
+            "notional_usd": Decimal("25.00"),
+            "size_multiplier": Decimal("1.00"),
+            "idempotency_key": "second-private-idempotency-value",
+            "refusal_reason": "SLIPPAGE_LIMIT",
+            "venue_order_id": None,
+            "risk_payload": {},
+            "source_payload": {},
+            "created_at": newer,
+            "updated_at": newer,
+        },
+        {
+            "id": "intent-simulated",
+            "execution_run_id": "execution-4",
+            "pipeline_run_id": "pipeline-4",
+            "strategy_consensus_output_id": "consensus-4",
+            "environment": "development",
+            "venue": "alpaca",
+            "instrument_id": "IWM",
+            "model_provider": "openai",
+            "side": "buy",
+            "order_type": "market",
+            "status": "simulated",
+            "notional_usd": Decimal("10.00"),
+            "size_multiplier": Decimal("0.40"),
+            "idempotency_key": "simulated-private-idempotency-value",
+            "refusal_reason": None,
+            "venue_order_id": None,
+            "risk_payload": {},
+            "source_payload": {},
+            "created_at": older,
+            "updated_at": older,
+        },
+        {
+            "id": "intent-production",
+            "execution_run_id": "execution-3",
+            "pipeline_run_id": "pipeline-3",
+            "strategy_consensus_output_id": "consensus-3",
+            "environment": "production",
+            "venue": "alpaca",
+            "instrument_id": "QQQ",
+            "model_provider": "openai",
+            "side": "buy",
+            "order_type": "market",
+            "status": "filled",
+            "notional_usd": Decimal("20.00"),
+            "size_multiplier": Decimal("0.80"),
+            "idempotency_key": "production-private-idempotency-value",
+            "refusal_reason": None,
+            "venue_order_id": "production-order-1",
+            "risk_payload": {},
+            "source_payload": {},
+            "created_at": newer,
+            "updated_at": newer,
+        },
+    ]
+    for row in rows:
+        state.insert("shared.order_intents", row)
+
+    response = client.get(
+        "/api/orders",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["environment"] == "development"
+    assert payload["next_cursor"] is None
+    assert [item["id"] for item in payload["items"]] == [
+        "intent-refused",
+        "intent-submitted",
+        "intent-simulated",
+    ]
+    assert payload["items"][0] == {
+        "id": "intent-refused",
+        "state": "refused",
+        "venue": "alpaca",
+        "provider": "claude",
+        "side": "buy",
+        "instrumentId": "SPY",
+        "orderType": "limit",
+        "notionalUsd": "25.00000000",
+        "venueOrderId": None,
+        "message": "SLIPPAGE_LIMIT",
+        "createdAt": newer.isoformat(),
+        "updatedAt": newer.isoformat(),
+    }
+    assert payload["items"][1]["message"] == "Submitted to venue; fill not yet confirmed."
+    assert "private-idempotency-value" not in str(payload)
+    assert "risk-details" not in str(payload)
+    assert "source-details" not in str(payload)
+
+    first_page = client.get(
+        "/api/orders?limit=1",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    ).json()
+    state.insert(
+        "shared.order_intents",
+        {
+            **rows[0],
+            "id": "intent-newest",
+            "execution_run_id": "execution-newest",
+            "pipeline_run_id": "pipeline-newest",
+            "idempotency_key": "newest-private-idempotency-value",
+            "created_at": newer + timedelta(minutes=1),
+            "updated_at": newer + timedelta(minutes=1),
+        },
+    )
+    second_page_response = client.get(
+        "/api/orders",
+        params={"limit": 1, "cursor": first_page["next_cursor"]},
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    second_page = second_page_response.json()
+    third_page_response = client.get(
+        "/api/orders",
+        params={"limit": 1, "cursor": second_page["next_cursor"]},
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    third_page = third_page_response.json()
+
+    assert second_page_response.status_code == 200
+    assert third_page_response.status_code == 200
+    assert [item["id"] for item in first_page["items"]] == ["intent-refused"]
+    assert first_page["next_cursor"]
+    assert [item["id"] for item in second_page["items"]] == ["intent-submitted"]
+    assert [item["id"] for item in third_page["items"]] == ["intent-simulated"]
+    assert third_page["next_cursor"] is None
+
+    invalid_cursor = client.get(
+        "/api/orders?cursor=not-a-cursor",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+    assert invalid_cursor.status_code == 400
+    assert invalid_cursor.json()["detail"]["error_code"] == "invalid_order_history_cursor"
+
+
+def test_req_exe_016_12_orders_endpoint_reports_persistence_failure() -> None:
+    """TST-REQ-EXE-016-12: Validates REQ-EXE-016
+
+    Given: durable order history cannot be read
+    When: an authenticated user requests order history
+    Then: the endpoint reports a service failure instead of an empty history
+    """
+
+    client, token = _client()
+    client.app.state.services.registry.state.fail_on_read_tables.add("shared.order_intents")
+
+    response = client.get(
+        "/api/orders",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["error_code"] == "order_history_unavailable"
+
+
 def test_req_ui_004_05_dashboard_preferences_persist_theme_timezone_and_costs() -> None:
     """TST-REQ-UI-004-05: Validates REQ-UI-004 and REQ-OBS-004
 

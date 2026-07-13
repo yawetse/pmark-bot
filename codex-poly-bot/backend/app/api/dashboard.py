@@ -384,6 +384,8 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
     @router.get("/api/orders")
     def orders(
+        limit: int = Query(default=100, ge=1, le=500),
+        cursor: str | None = Query(default=None),
         context: DashboardRequestContext = Depends(require_dashboard_access),
     ) -> dict[str, Any]:
         """Return a paginated order-event view.
@@ -391,10 +393,32 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         REQ: REQ-EXE-016
         """
 
+        try:
+            items, next_cursor = services.runtime_status.order_history(
+                context.environment,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": "invalid_order_history_cursor",
+                    "message": "Order history cursor is invalid.",
+                },
+            ) from exc
+        except PersistenceUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error_code": "order_history_unavailable",
+                    "message": "Order history is unavailable. Check database health and try again.",
+                },
+            ) from exc
         return {
             "environment": context.environment.value,
-            "items": services.runtime_status.order_events(),
-            "next_cursor": None,
+            "items": items,
+            "next_cursor": next_cursor,
         }
 
     @router.get("/api/models/{provider}/summary")

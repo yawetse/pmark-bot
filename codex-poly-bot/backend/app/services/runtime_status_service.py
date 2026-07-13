@@ -107,6 +107,8 @@ DASHBOARD_ECONOMICS_SNAPSHOT_ROW_LIMIT = 400
 DASHBOARD_ECONOMICS_SNAPSHOT_MIN_INTERVAL_SECONDS = 300
 DASHBOARD_PNL_POSITION_ROW_LIMIT = 500
 DASHBOARD_ORDER_EVENT_ROW_LIMIT = 50
+DASHBOARD_ORDER_HISTORY_PAGE_SIZE = 100
+DASHBOARD_ORDER_HISTORY_ROW_LIMIT = 500
 CURRENT_WORKER_HEARTBEAT_STATUSES = {
     "ok",
     "accepted",
@@ -4130,6 +4132,54 @@ class RuntimeStatusService:
         items.sort(key=lambda item: item["createdAt"], reverse=True)
         return items
 
+    # REQ: REQ-EXE-016
+    def order_history(
+        self,
+        environment: Environment,
+        *,
+        limit: int = DASHBOARD_ORDER_HISTORY_PAGE_SIZE,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Return durable order intents for the selected environment.
+
+        Traces: REQ-EXE-016
+        Tests: TST-REQ-EXE-016-11, TST-REQ-EXE-016-12
+        """
+
+        bounded_limit = min(max(1, int(limit)), DASHBOARD_ORDER_HISTORY_ROW_LIMIT)
+        before = _decode_order_history_cursor(cursor)
+        rows = self.registry.state.rows(
+            f"{SHARED_SCHEMA}.order_intents",
+            filters={"environment": environment.value},
+            limit=bounded_limit + 1,
+            before=before,
+            newest_first=True,
+        )
+        has_more = len(rows) > bounded_limit
+        items = [
+            {
+                "id": str(row.get("id", "")),
+                "state": str(row.get("status", "unknown")),
+                "venue": str(row.get("venue", "")),
+                "provider": str(row.get("model_provider", "")),
+                "side": str(row.get("side", "")),
+                "instrumentId": str(row.get("instrument_id", "")),
+                "orderType": str(row.get("order_type", "")),
+                "notionalUsd": _fixed_decimal_or_none(row.get("notional_usd")),
+                "venueOrderId": row.get("venue_order_id"),
+                "message": _order_history_message(row),
+                "createdAt": _isoformat_or_none(row.get("created_at")),
+                "updatedAt": _isoformat_or_none(row.get("updated_at")),
+            }
+            for row in rows[:bounded_limit]
+        ]
+        next_cursor = (
+            _encode_order_history_cursor(rows[bounded_limit - 1])
+            if has_more
+            else None
+        )
+        return items, next_cursor
+
     def model_summary(
         self,
         *,
@@ -6403,6 +6453,57 @@ def _exit_summary_message(exit_run: dict[str, Any]) -> str:
     if status == "idle":
         return "No exit run has been recorded yet."
     return _pipeline_exit_message(exit_run)
+
+
+def _order_history_message(row: dict[str, Any]) -> str:
+    refusal_reason = str(row.get("refusal_reason") or "").strip()
+    if refusal_reason:
+        return refusal_reason
+    state = str(row.get("status") or "unknown").strip().lower()
+    return {
+        "submitted": "Submitted to venue; fill not yet confirmed.",
+        "filled": "Venue fill confirmed.",
+        "simulated": "Simulation only; no venue order submitted.",
+        "canceled": "Order canceled.",
+        "cancelled": "Order canceled.",
+        "failed": "Order failed.",
+        "reconcile_first": "Reconciliation required before retry.",
+    }.get(state, "Current order state is unknown.")
+
+
+def _decode_order_history_cursor(value: str | None) -> tuple[datetime, str] | None:
+    if value is None:
+        return None
+    timestamp_text, separator, row_id = value.rpartition("|")
+    if not separator or not timestamp_text or not row_id:
+        raise ValueError("invalid order history cursor")
+    try:
+        created_at = datetime.fromisoformat(timestamp_text)
+    except ValueError as exc:
+        raise ValueError("invalid order history cursor") from exc
+    if created_at.tzinfo is None:
+        raise ValueError("invalid order history cursor")
+    return created_at, row_id
+
+
+def _encode_order_history_cursor(row: dict[str, Any]) -> str:
+    created_at = row.get("created_at")
+    row_id = str(row.get("id") or "")
+    if not isinstance(created_at, datetime) or created_at.tzinfo is None or not row_id:
+        raise ValueError("order history row cannot be paginated")
+    return f"{created_at.isoformat()}|{row_id}"
+
+
+def _fixed_decimal_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if not parsed.is_finite():
+        return None
+    return format(parsed, ".8f")
 
 
 def _as_money(value: Any) -> Decimal:

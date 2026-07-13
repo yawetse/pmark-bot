@@ -40,21 +40,49 @@ import { useDashboardRealtime } from "@/lib/use-dashboard-realtime";
 
 // REQ: REQ-UI-008, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
 
-const ORDER_STATES = ["refused", "submitted", "filled", "canceled", "failed", "unknown"] as const;
+const ORDER_STATES = [
+  "refused",
+  "submitted",
+  "filled",
+  "canceled",
+  "failed",
+  "simulated",
+  "reconcile_first",
+  "unknown",
+] as const;
 const PIPELINE_STEP_LABELS = ["Collect prices", "Find candidates", "Score trade", "Handle order", "Monitor exits"] as const;
 const DAILY_TICK_SUMMARY_WINDOW_MINUTES = 24 * 60;
+const USD_FORMATTER = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 type OrderState = (typeof ORDER_STATES)[number];
 
-const TERMINAL_ORDER_STATES = new Set<OrderState>(["filled", "canceled", "failed", "refused"]);
+const TERMINAL_ORDER_STATES = new Set<OrderState>([
+  "filled",
+  "canceled",
+  "failed",
+  "refused",
+  "simulated",
+]);
 
 export type OrderEventView = {
   id: string;
   state: OrderState;
   venue: string;
   provider: string;
+  side?: string | null;
+  instrumentId?: string | null;
+  orderType?: string | null;
+  notionalUsd?: string | null;
+  venueOrderId?: string | null;
   createdAt?: string | null;
+  updatedAt?: string | null;
   message?: string | null;
+};
+
+export type OrderHistoryView = {
+  environment: string;
+  items: OrderEventView[];
+  next_cursor?: string | null;
 };
 
 export type HistoricalImportCheckpointView = {
@@ -479,12 +507,16 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
 
 export function OperationsView({
   summary = FALLBACK_OPERATIONS,
+  orderHistory,
+  orderHistoryError: initialOrderHistoryError,
   marketData,
   economics,
   loadError,
   timeZone = "system",
 }: {
   summary?: OperationsSummaryView;
+  orderHistory?: OrderHistoryView;
+  orderHistoryError?: string;
   marketData?: MarketDataPullView;
   economics?: EconomicsSummaryView;
   loadError?: string;
@@ -502,15 +534,49 @@ export function OperationsView({
   );
   const [execution, setExecution] = useState(summary.execution ?? FALLBACK_EXECUTION);
   const [exit, setExit] = useState(summary.exit ?? FALLBACK_EXIT);
+  const [orderEvents, setOrderEvents] = useState(orderHistory?.items ?? summary.orderEvents ?? []);
+  const [orderHistoryError, setOrderHistoryError] = useState(initialOrderHistoryError);
+  const [nextOrderCursor, setNextOrderCursor] = useState(orderHistory?.next_cursor ?? null);
+  const [loadingOlderOrders, setLoadingOlderOrders] = useState(false);
   const displayTimeZone = useResolvedTimeZone(timeZone);
   const pendingEvents = useMemo(
-    () => currentSummary.orderEvents.filter((event) => !TERMINAL_ORDER_STATES.has(event.state)),
-    [currentSummary.orderEvents],
+    () => orderEvents.filter((event) => !TERMINAL_ORDER_STATES.has(event.state)),
+    [orderEvents],
   );
   const terminalEvents = useMemo(
-    () => currentSummary.orderEvents.filter((event) => TERMINAL_ORDER_STATES.has(event.state)),
-    [currentSummary.orderEvents],
+    () => orderEvents.filter((event) => TERMINAL_ORDER_STATES.has(event.state)),
+    [orderEvents],
   );
+
+  const refreshOrderHistory = useCallback(async () => {
+    const result = await dashboardApi<OrderHistoryView>("orders");
+    if (!result.ok) {
+      setOrderHistoryError(result.message);
+      return;
+    }
+    setOrderEvents((currentEvents) => mergeOrderEvents(currentEvents, result.data.items));
+    setNextOrderCursor((currentCursor) => currentCursor ?? result.data.next_cursor ?? null);
+    setOrderHistoryError(undefined);
+  }, []);
+
+  const loadOlderOrders = useCallback(async () => {
+    if (!nextOrderCursor || loadingOlderOrders) {
+      return;
+    }
+    setLoadingOlderOrders(true);
+    const result = await dashboardApi<OrderHistoryView>(
+      `orders?limit=100&cursor=${encodeURIComponent(nextOrderCursor)}`,
+    );
+    if (!result.ok) {
+      setOrderHistoryError(result.message);
+      setLoadingOlderOrders(false);
+      return;
+    }
+    setOrderEvents((currentEvents) => mergeOrderEvents(currentEvents, result.data.items));
+    setNextOrderCursor(result.data.next_cursor ?? null);
+    setOrderHistoryError(undefined);
+    setLoadingOlderOrders(false);
+  }, [loadingOlderOrders, nextOrderCursor]);
 
   const onRealtimeSnapshot = useCallback((snapshot: { operations: OperationsSummaryView; marketData: MarketDataPullView }) => {
     setCurrentSummary(snapshot.operations);
@@ -521,7 +587,8 @@ export function OperationsView({
     setStrategyConsensus(snapshot.operations.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS);
     setExecution(snapshot.operations.execution ?? FALLBACK_EXECUTION);
     setExit(snapshot.operations.exit ?? FALLBACK_EXIT);
-  }, []);
+    void refreshOrderHistory();
+  }, [refreshOrderHistory]);
   const realtime = useDashboardRealtime({ onSnapshot: onRealtimeSnapshot });
 
   useEffect(() => {
@@ -550,7 +617,7 @@ export function OperationsView({
         </p>
         {loadError ? <Message>{loadError}</Message> : null}
         <MetricGrid>
-          <MetricCard label="Open orders" value={String(currentSummary.openOrders)} />
+          <MetricCard label="Open orders" value={String(pendingEvents.length)} />
           <MetricCard label="Pending events" value={String(pendingEvents.length)} />
           <MetricCard label="Cancel progress" value={currentSummary.cancelProgress} />
           <MetricCard label="Manual review" value={currentSummary.manualReview} />
@@ -591,7 +658,7 @@ export function OperationsView({
           <WorkflowLink href="#execution-title" label="Orders" value={String(execution.intentCount)} detail="Plans" />
           <WorkflowLink href="#exit-title" label="Exit checks" value={String(exit.triggeredCount)} detail="Triggered" />
           <WorkflowLink href="#historical-import-title" label="Imports" value={String(currentSummary.historicalImport?.counts.checkpoints ?? 0)} detail="Checkpoints" />
-          <WorkflowLink href="#pending-orders-title" label="Orders" value={String(currentSummary.openOrders)} detail="Open orders" />
+          <WorkflowLink href="#pending-orders-title" label="Orders" value={String(pendingEvents.length)} detail="Open orders" />
           <WorkflowLink href="#kill-switch-title" label="Emergency stop" value={currentSummary.killSwitch} detail="Live order control" />
         </div>
       </Panel>
@@ -633,10 +700,12 @@ export function OperationsView({
 
       <section className="panel wide-panel">
         <h2 id="pending-orders-title">Pending Orders</h2>
+        {orderHistoryError ? <Message>{orderHistoryError}</Message> : null}
         <OrderTable
           emptyTitle="No pending orders"
           emptyBody="No orders are waiting for fill, cancellation, reconciliation, or manual review."
           events={pendingEvents}
+          timeZone={displayTimeZone}
         />
       </section>
 
@@ -646,7 +715,20 @@ export function OperationsView({
           emptyTitle="No trade or order history"
           emptyBody="No simulated or live order events have been recorded yet."
           events={terminalEvents}
+          timeZone={displayTimeZone}
         />
+        {nextOrderCursor ? (
+          <div className="manual-run-actions">
+            <button
+              className="button"
+              disabled={loadingOlderOrders}
+              type="button"
+              onClick={() => void loadOlderOrders()}
+            >
+              {loadingOlderOrders ? "Loading older orders" : "Load older orders"}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel wide-panel">
@@ -657,6 +739,7 @@ export function OperationsView({
 
   function onManualRunAccepted(result: ManualRunResult) {
     setLatestMarketData(result.marketDataPull);
+    void refreshOrderHistory();
     if (result.pipelineRun) {
       setPipelineRuns((currentRuns) => [
         result.pipelineRun as PipelineRunView,
@@ -767,18 +850,40 @@ function OrderTable({
   events,
   emptyTitle,
   emptyBody,
+  timeZone,
 }: {
   events: OrderEventView[];
   emptyTitle: string;
   emptyBody: string;
+  timeZone: string;
 }) {
   const columns: DashboardGridColumn<OrderEventView>[] = [
-    { field: "id", headerName: "Order", minWidth: 180 },
+    { field: "id", headerName: "Record ID", minWidth: 180 },
     { field: "state", headerName: "State", minWidth: 130 },
     { field: "venue", headerName: "Venue", minWidth: 150 },
     { field: "provider", headerName: "Provider", minWidth: 130 },
-    { field: "message", headerName: "Message", minWidth: 240 },
-    { field: "createdAt", headerName: "Created", minWidth: 190 },
+    { field: "instrumentId", headerName: "Instrument", minWidth: 260 },
+    { field: "side", headerName: "Side", minWidth: 100 },
+    { field: "orderType", headerName: "Order type", minWidth: 120 },
+    {
+      field: "notionalUsd",
+      headerName: "Notional",
+      minWidth: 120,
+      valueFormatter: (params) => formatUsd(params.value),
+    },
+    { field: "venueOrderId", headerName: "Venue order", minWidth: 190 },
+    {
+      field: "message",
+      headerName: "Status detail",
+      minWidth: 260,
+      valueGetter: (params) => params.data?.message ?? orderStateMessage(params.data?.state),
+    },
+    {
+      field: "updatedAt",
+      headerName: "Updated",
+      minWidth: 190,
+      valueFormatter: (params) => formatDateTime(params.value, timeZone),
+    },
   ];
 
   return (
@@ -790,9 +895,46 @@ function OrderTable({
         emptyBody={emptyBody}
         getRowId={(event) => event.id}
         searchPlaceholder="Filter orders"
+        pageSize={25}
       />
     </Disclosure>
   );
+}
+
+function orderStateMessage(state: OrderState | undefined): string {
+  return {
+    submitted: "Fill not confirmed",
+    filled: "Venue fill confirmed",
+    simulated: "Simulation only",
+    canceled: "Order canceled",
+    failed: "Order failed",
+    refused: "Order refused",
+    reconcile_first: "Reconciliation required",
+    unknown: "State unknown",
+  }[state ?? "unknown"];
+}
+
+function mergeOrderEvents(...eventGroups: OrderEventView[][]): OrderEventView[] {
+  const eventsById = new Map<string, OrderEventView>();
+  for (const event of eventGroups.flat()) {
+    eventsById.set(event.id, event);
+  }
+  return Array.from(eventsById.values()).sort((left, right) =>
+    String(right.updatedAt ?? right.createdAt ?? "").localeCompare(
+      String(left.updatedAt ?? left.createdAt ?? ""),
+    ),
+  );
+}
+
+function formatUsd(value: string | null | undefined): string {
+  if (!value) {
+    return "not recorded";
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return value;
+  }
+  return USD_FORMATTER.format(parsed);
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
