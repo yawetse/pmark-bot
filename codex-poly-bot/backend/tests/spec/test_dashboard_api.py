@@ -734,6 +734,33 @@ def test_req_ui_004_06_default_summary_reports_scanner_aggregates_without_detail
             source_payload={"symbol": symbol},
             created_at=observed,
         )
+    state = client.app.state.services.registry.state
+    state.insert(
+        "shared.pipeline_steps",
+        {
+            "id": "pipeline-reporting-scanner",
+            "run_id": "pipeline-reporting",
+            "environment": "development",
+            "step_key": "scanner",
+            "step_order": 2,
+            "label": "Find candidates",
+            "status": "completed",
+            "started_at": observed,
+            "completed_at": observed,
+            "message": "Scanner accepted 1 and rejected 2 candidates.",
+            "metrics": {
+                "candidateCount": 3,
+                "acceptedCount": 1,
+                "rejectedCount": 2,
+                "rejectionBreakdown": [
+                    {"venue": "alpaca", "reason": "spread too wide", "count": 2}
+                ],
+            },
+            "record_ids": [run["id"]],
+            "created_at": observed,
+        },
+    )
+    state.fail_on_read_tables.add("shared.scanner_candidates")
 
     def fail_if_loaded(*_: object, **__: object) -> dict[str, object]:
         raise AssertionError("scanner candidate details should remain deferred")
