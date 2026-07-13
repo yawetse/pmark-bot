@@ -296,6 +296,7 @@
 | TST-REQ-UI-011-02 | Edge | REQ-UI-011 | Given one model or venue has insufficient comparison data, When comparison views render, Then unavailable metrics are labeled without showing misleading zero values. |
 | TST-REQ-UI-011-03 | Focus | REQ-UI-011 | Given frontend comparison routes exist, When dashboard operations checks run, Then unavailable comparison metrics show caveats rather than zero values. |
 | TST-REQ-UI-012-01 | Focus | REQ-UI-012 | Given recent scanner rejections point to configurable thresholds, When dashboard control checks run, Then the dashboard exposes a targeted recommendation that can save the suggested config through the existing audited config flow. |
+| TST-REQ-UI-012-02 | Edge | REQ-UI-012 | Given a recommendation changes an integer-only cap and the latest market-data total includes multiple venues, When dashboard control checks run, Then the patch value remains a number and the funnel shows each venue's candidate count. |
 | TST-REQ-UI-013-01 | Happy | REQ-UI-013 | Given current Polymarket US and Alpaca account snapshots, When the authenticated portfolio API is read, Then account value, realized P&L, unrealized P&L, open positions, and confirmed fills are returned by venue and model-provider account. |
 | TST-REQ-UI-013-02 | Edge | REQ-UI-013 | Given a venue refresh fails after a successful snapshot, When the main dashboard reads portfolio data, Then the last confirmed values remain visible with stale status and the refresh failure is explained. |
 | TST-REQ-UI-013-03 | Focus | REQ-UI-013 | Given the main dashboard frontend is checked, When dashboard contract tests run, Then the actual portfolio, venue breakdown, open holdings, confirmed fills, freshness, and unavailable states are present. |
@@ -492,7 +493,7 @@
 | REQ-UI-009 | TST-REQ-UI-009-01, TST-REQ-UI-009-02 |
 | REQ-UI-010 | TST-REQ-UI-010-01, TST-REQ-UI-010-02 |
 | REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02, TST-REQ-UI-011-03 |
-| REQ-UI-012 | TST-REQ-UI-012-01 |
+| REQ-UI-012 | TST-REQ-UI-012-01, TST-REQ-UI-012-02 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |
