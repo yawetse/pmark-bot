@@ -2,9 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 // REQ: REQ-UI-008, REQ-UI-010, REQ-UI-011, REQ-CMP-002, REQ-CMP-003,
-// REQ-CMP-004, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005
+// REQ-CMP-004, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-OBS-005,
+// REQ-UI-014
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+const realtimeHook = read("lib/use-dashboard-realtime.ts");
+assert.doesNotMatch(realtimeHook, /setInterval/);
+for (const token of [
+  "AbortController",
+  "setTimeout",
+  "pollingStarted",
+  "pollFailureCount",
+  "MAX_POLL_DELAY_MS",
+]) {
+  assert.match(realtimeHook, new RegExp(token));
+}
 
 const modelSummary = read("components/dashboard/model-summary.tsx");
 for (const token of [

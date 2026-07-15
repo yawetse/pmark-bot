@@ -123,6 +123,8 @@
 | TST-REQ-DB-006-01 | Focus | REQ-DB-006 | Given no later archive policy is configured, When retention settings are validated, Then audit, trade, and position history have no automatic deletion. |
 | TST-REQ-DB-007-01 | Happy | REQ-DB-007 | Given Postgres is available, When live order checks require persistence, Then persistence health passes. |
 | TST-REQ-DB-007-02 | Edge | REQ-DB-007 | Given Postgres is unavailable, When live order placement is requested, Then the order is blocked and logs plus dashboard status surface the failure. |
+| TST-REQ-DB-009-01 | Regression | REQ-DB-009 | Given a scanner run with many candidates, When persistence succeeds, Then the run and all candidate rows commit through one database transaction. |
+| TST-REQ-DB-009-02 | Edge | REQ-DB-009 | Given one scanner candidate write fails, When the batch is persisted, Then the transaction rolls back the scanner run and every candidate row. |
 | TST-REQ-DB-007-03 | Edge | REQ-DB-007 | Given a deployed bare Postgres DSN, When the SQLAlchemy session factory initializes, Then the installed psycopg driver is selected instead of psycopg2. |
 | TST-REQ-DB-008-01 | Happy | REQ-DB-008 | Given confirmed venue account, position, and fill data, When reconciliation persists a snapshot, Then rows retain environment, venue, provider, and account attribution without credential material. |
 | TST-REQ-DB-008-02 | Edge | REQ-DB-008 | Given a position or fill write fails during account reconciliation, When the database transaction rolls back, Then no partial account snapshot, position, or fill rows remain. |
@@ -274,6 +276,8 @@
 | TST-REQ-UI-004-04 | Focus | REQ-UI-004 | Given frontend dashboard controls exist, When dashboard control checks run, Then venue, wallet, ingestion, trading loop, notification, audit, and health sections are present. |
 | TST-REQ-UI-004-05 | Focus | REQ-UI-004 | Given multiple authorized dashboard users save display preferences, When preferences and dashboard summary are requested, Then each response loads the authenticated user's database preferences. |
 | TST-REQ-UI-004-06 | Regression | REQ-UI-004 | Given scanner candidate details are deferred, When the default dashboard summary loads, Then it reports the latest persisted scanner totals and venue-specific rejection reasons from the scanner pipeline step without reading candidate history. |
+| TST-REQ-UI-014-01 | Regression | REQ-UI-014 | Given realtime WebSocket setup fails and snapshot latency exceeds the polling interval, When polling continues, Then only one snapshot request is active and the next retry starts after bounded backoff. |
+| TST-REQ-UI-014-02 | Regression | REQ-UI-014 | Given multiple enabled venues and persisted market-data history, When the dashboard snapshot loads, Then it reads only the latest indexed market-data row for each enabled venue and reuses worker and tick-schedule state. |
 | TST-REQ-UI-005-01 | Happy | REQ-UI-005 | Given an authorized user changes supported config fields, When the dashboard saves them, Then venue flags, dry-run/live, loop, strategy, budget, risk, slippage, and notification settings persist. |
 | TST-REQ-UI-005-02 | Edge | REQ-UI-005 | Given invalid or unauthorized config changes, When the dashboard saves them, Then the changes are rejected and existing config remains. |
 | TST-REQ-UI-005-03 | Focus | REQ-UI-005 | Given frontend config controls exist, When dashboard control checks run, Then saves are limited to allowlisted config paths. |
@@ -375,6 +379,7 @@
 | TST-REQ-DEP-009-01 | Happy | REQ-DEP-009 | Given a Codex web environment without production trading secrets, When dependencies install, tests run, or code is inspected, Then those actions succeed. |
 | TST-REQ-DEP-009-02 | Edge | REQ-DEP-009 | Given code tries to require production secrets during import or tests, When CI or Codex setup runs, Then the test fails. |
 | TST-REQ-DEP-010-01 | Focus | REQ-DEP-010 | Given development and production deployments, When infrastructure and secret names are validated, Then resources, secrets, wallets, and config are separated by environment. |
+| TST-REQ-DEP-011-01 | Regression | REQ-DEP-011 | Given the CloudFormation RDS resource, When infrastructure validation runs, Then the database uses gp3 storage instead of gp2 burst storage. |
 
 ### Observability and Audit Logging
 
@@ -437,6 +442,7 @@
 | REQ-DB-005 | TST-REQ-DB-005-01, TST-REQ-DB-005-02 |
 | REQ-DB-006 | TST-REQ-DB-006-01 |
 | REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02, TST-REQ-DB-007-03 |
+| REQ-DB-009 | TST-REQ-DB-009-01, TST-REQ-DB-009-02 |
 | REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02, TST-REQ-EXE-016-07, TST-REQ-EXE-016-08 |
 | REQ-WAL-002 | TST-REQ-WAL-002-01, TST-REQ-WAL-002-02 |
 | REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03, TST-REQ-WAL-003-04 |
@@ -495,6 +501,7 @@
 | REQ-UI-010 | TST-REQ-UI-010-01, TST-REQ-UI-010-02 |
 | REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02, TST-REQ-UI-011-03 |
 | REQ-UI-012 | TST-REQ-UI-012-01, TST-REQ-UI-012-02 |
+| REQ-UI-014 | TST-REQ-UI-014-01, TST-REQ-UI-014-02 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |
@@ -516,6 +523,7 @@
 | REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02, TST-REQ-DEP-008-03 |
 | REQ-DEP-009 | TST-REQ-DEP-009-01, TST-REQ-DEP-009-02 |
 | REQ-DEP-010 | TST-REQ-DEP-010-01 |
+| REQ-DEP-011 | TST-REQ-DEP-011-01 |
 | REQ-OBS-001 | TST-REQ-OBS-001-01, TST-REQ-OBS-001-02 |
 | REQ-OBS-002 | TST-REQ-OBS-002-01, TST-REQ-OBS-002-02 |
 | REQ-OBS-003 | TST-REQ-OBS-003-01, TST-REQ-OBS-003-02 |

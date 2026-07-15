@@ -2,7 +2,7 @@
 
 REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
 REQ-DB-007, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016,
-REQ-OBS-003, REQ-OBS-004, REQ-DB-008
+REQ-OBS-003, REQ-OBS-004, REQ-DB-008, REQ-UI-014
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import and_, or_, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
@@ -141,6 +141,22 @@ class DatabaseState:
         if limit is not None:
             selected_rows = selected_rows[: max(1, int(limit))]
         return selected_rows
+
+    def count(self, table_name: str, *, filters: dict[str, Any] | None = None) -> int:
+        """Count matching in-memory rows without copying row payloads."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_read_tables:
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            )
+        return sum(
+            1
+            for row in self.tables.setdefault(table_name, [])
+            if all(row.get(key) == value for key, value in (filters or {}).items())
+        )
+
 
 @dataclass(frozen=True)
 class _SqlAlchemyTransaction:
@@ -353,6 +369,37 @@ class PersistentDatabaseState(DatabaseState):
             return [dict(row) for row in session.execute(statement).mappings().all()]
         except SQLAlchemyError as exc:
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}") from exc
+        finally:
+            if owns_session:
+                session.close()
+
+    def count(self, table_name: str, *, filters: dict[str, Any] | None = None) -> int:
+        """Count matching Postgres rows without loading their JSON payloads."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_read_tables:
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            )
+        table = _table_for_name(table_name)
+        statement = select(func.count()).select_from(table)
+        for key, value in (filters or {}).items():
+            if key not in table.c:
+                raise SchemaViolationError(f"unknown repository column: {table_name}.{key}")
+            statement = statement.where(table.c[key] == value)
+        session = self._active_session.get()
+        owns_session = session is None
+        if owns_session:
+            session = self.session_factory()
+        try:
+            return int(session.execute(statement).scalar_one())
+        except SQLAlchemyError as exc:
+            if owns_session:
+                session.rollback()
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            ) from exc
         finally:
             if owns_session:
                 session.close()

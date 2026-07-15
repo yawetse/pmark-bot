@@ -13,7 +13,6 @@ from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
 from app.services.runtime_status_service import (
     DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
-    DASHBOARD_MARKET_DATA_ROW_LIMIT,
     DASHBOARD_PIPELINE_RECORD_ROW_LIMIT,
     DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
     DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
@@ -188,9 +187,10 @@ def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch)
     )
     assert any(
         table_name == service.MARKET_DATA_PULLS_TABLE
-        and kwargs.get("limit") == DASHBOARD_MARKET_DATA_ROW_LIMIT
+        and kwargs.get("limit") == 1
         and kwargs.get("newest_first") is True
-        and kwargs.get("filters") == environment_filter
+        and kwargs.get("filters", {}).get("environment") == Environment.DEVELOPMENT.value
+        and kwargs.get("filters", {}).get("venue")
         for table_name, kwargs in calls
     )
     assert any(
@@ -1433,6 +1433,127 @@ def test_req_ui_008_07_dashboard_exposes_tick_schedule_data_scenario_and_realtim
     )
     assert realtime.json()["operations"]["scanner"]["candidateCount"] == 1
     assert realtime.json()["operations"]["scanner"]["detailsDeferred"] is True
+
+
+def test_req_ui_014_02_dashboard_reads_latest_venue_rows_and_reuses_snapshot_state(
+    monkeypatch,
+) -> None:
+    """TST-REQ-UI-014-02: Validates REQ-UI-014."""
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        environment=Environment.DEVELOPMENT,
+        polymarket_us_enabled=True,
+        alpaca_enabled=True,
+    )
+    app = create_app(settings)
+    runtime = app.state.services.runtime_status
+    state = app.state.services.registry.state
+    now = datetime.now(UTC)
+    for venue in (Venue.POLYMARKET_US.value, Venue.ALPACA.value):
+        for age_minutes in (2, 1):
+            state.insert(
+                "shared.dashboard_market_data_pulls",
+                {
+                    "id": f"{venue}-{age_minutes}",
+                    "environment": Environment.DEVELOPMENT.value,
+                    "venue": venue,
+                    "status": "pulled",
+                    "trigger": "scheduled",
+                    "source": "fixture",
+                    "candidates": [{"id": f"{venue}-candidate-{age_minutes}"}],
+                    "message": "fixture pull",
+                    "error_code": None,
+                    "run_id": f"run-{age_minutes}",
+                    "created_at": now - timedelta(minutes=age_minutes),
+                },
+            )
+
+    original_rows = state.rows
+    original_count = state.count
+    market_reads: list[dict] = []
+    pipeline_reads: list[dict] = []
+    audit_row_reads = 0
+    count_reads: list[tuple[str, dict]] = []
+
+    def tracked_rows(table_name: str, **kwargs):
+        nonlocal audit_row_reads
+        if table_name == "shared.dashboard_market_data_pulls":
+            market_reads.append(kwargs)
+        if table_name == "shared.pipeline_runs":
+            pipeline_reads.append(kwargs)
+        if table_name == "shared.audit_events":
+            audit_row_reads += 1
+        return original_rows(table_name, **kwargs)
+
+    def tracked_count(table_name: str, **kwargs):
+        count_reads.append((table_name, kwargs))
+        return original_count(table_name, **kwargs)
+
+    monkeypatch.setattr(state, "rows", tracked_rows)
+    monkeypatch.setattr(state, "count", tracked_count)
+    config_payload = {
+        "default_selected_venue": Venue.POLYMARKET_US.value,
+        "venues": {
+            Venue.POLYMARKET_US.value: {"enabled": True},
+            Venue.ALPACA.value: {"enabled": True},
+        },
+    }
+
+    market_data = runtime.market_data_pull(
+        environment=Environment.DEVELOPMENT,
+        config_payload=config_payload,
+    )
+
+    assert market_data["candidateCount"] == 2
+    assert len(market_reads) == 2
+    assert all(read["limit"] == 1 for read in market_reads)
+    assert {read["filters"]["venue"] for read in market_reads} == {
+        Venue.POLYMARKET_US.value,
+        Venue.ALPACA.value,
+    }
+
+    worker_calls = 0
+    schedule_calls = 0
+    original_worker_status = runtime.worker_status
+    original_tick_schedule = runtime.tick_schedule
+
+    def tracked_worker_status():
+        nonlocal worker_calls
+        worker_calls += 1
+        return original_worker_status()
+
+    def tracked_tick_schedule(**kwargs):
+        nonlocal schedule_calls
+        schedule_calls += 1
+        return original_tick_schedule(**kwargs)
+
+    monkeypatch.setattr(runtime, "worker_status", tracked_worker_status)
+    monkeypatch.setattr(runtime, "tick_schedule", tracked_tick_schedule)
+    token = app.state.services.auth.create_session_token(username="yaw")
+    response = TestClient(app).get(
+        "/api/dashboard/realtime-snapshot",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Environment": Environment.DEVELOPMENT.value,
+        },
+    )
+
+    assert response.status_code == 200
+    assert worker_calls == 1
+    assert schedule_calls == 1
+    assert audit_row_reads == 0
+    assert (
+        "shared.audit_events",
+        {"filters": {"environment": Environment.DEVELOPMENT.value}},
+    ) in count_reads
+    assert any(
+        read.get("limit") == 1
+        and read.get("newest_first") is True
+        and read.get("filters") == {"environment": Environment.DEVELOPMENT.value}
+        for read in pipeline_reads
+    )
 
 
 def test_req_ui_008_05_manual_run_modes_stop_at_requested_pipeline_stage() -> None:
