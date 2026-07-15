@@ -2,7 +2,7 @@
 
 REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005,
 REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010,
-REQ-UI-011, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
+REQ-UI-011, REQ-UI-015, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 """
 
 from __future__ import annotations
@@ -30,6 +30,10 @@ from app.domain import Environment, Venue
 from app.observability import configure_observability
 from app.services import AuthService, ConfigService, KillSwitchService
 from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
+from app.services.dashboard_event_service import (
+    DashboardEventBroker,
+    postgres_dashboard_event_dsn,
+)
 from app.services.stock_universe import (
     DEFAULT_ALPACA_SYMBOL_PRESETS,
     normalize_symbol_list,
@@ -143,6 +147,7 @@ class DashboardApiServices:
     config: ConfigService
     kill_switch: KillSwitchService
     runtime_status: RuntimeStatusService
+    dashboard_events: DashboardEventBroker
 
 
 def build_dashboard_api_services(
@@ -171,6 +176,9 @@ def build_dashboard_api_services(
         ),
         kill_switch=KillSwitchService(shared_registry),
         runtime_status=runtime_status,
+        dashboard_events=DashboardEventBroker(
+            postgres_dsn=postgres_dashboard_event_dsn(shared_registry.state),
+        ),
     )
 
 
@@ -192,6 +200,14 @@ def create_app(
     app.state.portfolio_refresh_task = None
     resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
     configure_observability(app, settings=resolved_settings)
+
+    @app.on_event("startup")
+    async def _start_dashboard_events() -> None:
+        await resolved_services.dashboard_events.start()
+
+    @app.on_event("shutdown")
+    async def _stop_dashboard_events() -> None:
+        await resolved_services.dashboard_events.stop()
 
     if resolved_settings.background_worker_enabled:
 

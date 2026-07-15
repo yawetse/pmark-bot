@@ -15,9 +15,19 @@ for (const token of [
   "pollingStarted",
   "pollFailureCount",
   "MAX_POLL_DELAY_MS",
+  "scheduleReconnect",
+  "SOCKET_RECONNECT_INTERVAL_MS",
+  "MAX_SOCKET_RECONNECT_DELAY_MS",
+  "stopPolling",
+  'payload.type === "heartbeat"',
 ]) {
   assert.match(realtimeHook, new RegExp(token));
 }
+assert.match(realtimeHook, /portfolio\?: VenuePortfolioView/);
+
+const consumerDashboard = read("components/dashboard/consumer-dashboard.tsx");
+assert.match(consumerDashboard, /snapshot\.portfolio/);
+assert.doesNotMatch(consumerDashboard, /portfolioInterval/);
 
 const modelSummary = read("components/dashboard/model-summary.tsx");
 for (const token of [

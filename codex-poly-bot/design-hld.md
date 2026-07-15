@@ -52,7 +52,7 @@ The system uses a modular monolith with ports and adapters. Domain modules own t
 GitHub OAuth
      |
      v
-+--------------------+        REST/SSE        +----------------------+
++--------------------+    REST/WebSocket      +----------------------+
 | Next.js Dashboard  | <--------------------> | FastAPI Backend      |
 | frontend container |                        | backend container    |
 +--------------------+                        +----------+-----------+
@@ -181,6 +181,7 @@ Configuration flow:
 | DD-039 | Alpaca market-hours policy | Regular market hours only, no extended-hours trading in v1 | Extended-hours trading allowed | Fewer opportunities, lower execution ambiguity | Avoids thinner-liquidity and special-session behavior. |
 | DD-040 | Comparison metric windows | Dashboard supports all-time, daily, trailing 7-day, and trailing 30-day windows | One all-time view only | More query work, better experiment readout | Makes Claude/OpenAI and venue comparison usable. |
 | DD-041 | Main portfolio source of truth | Reconcile balances, positions, fills, and P&L from authenticated venue account APIs | Derive portfolio totals from internal order intents and simulated positions | Adds bounded venue polling and snapshots, prevents unfilled or simulated orders from appearing as actual performance | The main dashboard must answer whether confirmed venue trades are making money. |
+| DD-042 | Dashboard change delivery | PostgreSQL commit notifications feed one listener per backend task, which fans out scoped WebSocket invalidations and retains polling only as recovery | Rebuild every connected user's snapshot on a fixed timer, add Redis, or remove polling fallback | Removes steady-state read amplification without adding infrastructure; notifications are non-durable, so reconnects require a full snapshot | PostgreSQL is already the source of truth and delivers `NOTIFY` only after commit. |
 
 ## 5. Cross-Cutting Concerns
 
@@ -580,13 +581,13 @@ Fees are included when captured from the venue or broker. If fees are unavailabl
 | REQ-VEN-001, REQ-VEN-002, REQ-VEN-003, REQ-VEN-004, REQ-VEN-005, REQ-VEN-006 | Venue adapters, venue flags, risk refusals |
 | REQ-ALP-001, REQ-ALP-002, REQ-ALP-003, REQ-ALP-004, REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-008, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-014, REQ-ALP-015, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018 | Alpaca adapter, stock/ETF scope, account isolation, global dry-run, Alpaca risk defaults, reconciliation |
 | REQ-DAT-001, REQ-DAT-002, REQ-DAT-003, REQ-DAT-004, REQ-DAT-005, REQ-DAT-006, REQ-DAT-007, REQ-DAT-008 | Ingestion service, S3 adapter, retention policy |
-| REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007 | Postgres repositories, schemas, migrations |
+| REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-008, REQ-DB-009, REQ-DB-010 | Postgres repositories, schemas, migrations, venue portfolio records, scanner transactions, commit notifications |
 | REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006, REQ-WAL-007 | Wallet service, wallet CLI, Secrets Manager |
 | REQ-LLM-001, REQ-LLM-002, REQ-LLM-003, REQ-LLM-004, REQ-LLM-005, REQ-LLM-006, REQ-LLM-007 | LLM ports, provider adapters, scoring service |
 | REQ-STR-001, REQ-STR-002, REQ-STR-003, REQ-STR-004, REQ-STR-005, REQ-STR-006, REQ-STR-007, REQ-STR-008, REQ-STR-009 | Strategy engine and strategy modules |
 | REQ-EXE-001, REQ-EXE-002, REQ-EXE-003, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-007, REQ-EXE-008, REQ-EXE-009, REQ-EXE-010, REQ-EXE-011, REQ-EXE-012, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-EXE-017 | Risk engine, execution service, global dry-run, kill switch |
 | REQ-EXT-001, REQ-EXT-002, REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006 | Exit monitor and execution integration |
-| REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011 | Next.js dashboard, GitHub OAuth, API routers, comparison views |
+| REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015 | Next.js dashboard, GitHub OAuth, API routers, recommendations, confirmed portfolio, event-driven WebSocket updates, bounded polling recovery |
 | REQ-CMP-001, REQ-CMP-002, REQ-CMP-003, REQ-CMP-004 | Comparison service and dashboard model/venue analytics |
 | REQ-NOT-001, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-NOT-007 | Notification service and SES adapter |
 | REQ-DEP-001, REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006, REQ-DEP-007, REQ-DEP-008, REQ-DEP-009, REQ-DEP-010 | CloudFormation, GitHub Actions, Docker, Codex setup |
