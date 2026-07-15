@@ -6,7 +6,10 @@ import type { MarketDataPullView } from "@/components/dashboard/market-data-pane
 import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
 import type { LoopObservabilityView } from "@/components/dashboard/loop-monitor";
 
-// REQ: REQ-UI-004, REQ-UI-008, REQ-OBS-005
+// REQ: REQ-UI-004, REQ-UI-008, REQ-UI-014, REQ-OBS-005
+
+const POLL_INTERVAL_MS = 10_000;
+const MAX_POLL_DELAY_MS = 60_000;
 
 export type TickScheduleView = {
   environment: string;
@@ -57,7 +60,10 @@ export function useDashboardRealtime({
     }
     let closed = false;
     let socket: WebSocket | null = null;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollAbortController: AbortController | null = null;
+    let pollingStarted = false;
+    let pollFailureCount = 0;
 
     async function connect() {
       setStatus("connecting");
@@ -116,27 +122,51 @@ export function useDashboardRealtime({
     }
 
     function startPolling() {
-      if (pollTimer || closed) {
+      if (pollingStarted || closed) {
         return;
       }
+      pollingStarted = true;
       setStatus("polling");
       setMessage("Realtime socket unavailable. Polling dashboard snapshots.");
       void pollSnapshot();
-      pollTimer = setInterval(() => void pollSnapshot(), 10000);
     }
 
     async function pollSnapshot() {
+      if (closed || pollAbortController) {
+        return;
+      }
+      pollAbortController = new AbortController();
       try {
         const response = await fetch("/dashboard-api/dashboard/realtime-snapshot", {
           cache: "no-store",
+          signal: pollAbortController.signal,
         });
         if (!response.ok) {
           throw new Error(`snapshot request failed with status ${response.status}`);
         }
         onSnapshotRef.current((await response.json()) as DashboardRealtimeSnapshot);
+        pollFailureCount = 0;
+        setStatus("polling");
+        setMessage("Realtime socket unavailable. Polling dashboard snapshots.");
       } catch (error) {
+        if (closed || pollAbortController.signal.aborted) {
+          return;
+        }
+        pollFailureCount += 1;
         setStatus("offline");
         setMessage(error instanceof Error ? error.message : "Realtime polling failed.");
+      } finally {
+        pollAbortController = null;
+        if (!closed) {
+          const delay = Math.min(
+            POLL_INTERVAL_MS * 2 ** pollFailureCount,
+            MAX_POLL_DELAY_MS,
+          );
+          pollTimer = setTimeout(() => {
+            pollTimer = null;
+            void pollSnapshot();
+          }, delay);
+        }
       }
     }
 
@@ -145,8 +175,9 @@ export function useDashboardRealtime({
     return () => {
       closed = true;
       if (pollTimer) {
-        clearInterval(pollTimer);
+        clearTimeout(pollTimer);
       }
+      pollAbortController?.abort();
       if (socket && socket.readyState <= WebSocket.OPEN) {
         socket.close(1000, "component unmounted");
       }

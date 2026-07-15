@@ -5,9 +5,112 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.db import RepositoryRegistry
+from app.db import DatabaseState, RepositoryRegistry
 from app.domain import Environment, Venue
 from app.services.scanner_service import ScannerService
+
+
+class TrackingDatabaseState(DatabaseState):
+    def __init__(self) -> None:
+        super().__init__()
+        self.begin_count = 0
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    def begin_transaction(self) -> dict[str, list[dict]]:
+        self.begin_count += 1
+        return super().begin_transaction()
+
+    def commit_transaction(self, transaction: dict[str, list[dict]]) -> None:
+        self.commit_count += 1
+        super().commit_transaction(transaction)
+
+    def rollback_transaction(self, transaction: dict[str, list[dict]]) -> None:
+        self.rollback_count += 1
+        super().rollback_transaction(transaction)
+
+
+def _scanner_batch_pull(now: datetime) -> list[dict]:
+    return [
+        {
+            "id": "pull-batch",
+            "venue": Venue.POLYMARKET_US.value,
+            "status": "pulled",
+            "candidates": [
+                {
+                    "id": f"polymarket_us:condition-{index}:yes-token-{index}",
+                    "venue": Venue.POLYMARKET_US.value,
+                    "market": f"Batch market {index} - Yes",
+                    "marketId": f"condition-{index}",
+                    "tokenId": f"yes-token-{index}",
+                    "state": "priced",
+                    "price": "0.45",
+                    "bestBid": "0.44",
+                    "bestAsk": "0.46",
+                    "bidDepth": "600",
+                    "askDepth": "650",
+                    "liquidity": "1250",
+                    "spread": "0.02",
+                    "volume": "10000",
+                    "endDate": (now + timedelta(hours=24)).isoformat(),
+                    "active": True,
+                    "closed": False,
+                }
+                for index in range(3)
+            ],
+        }
+    ]
+
+
+def test_req_db_009_01_scanner_batch_commits_once() -> None:
+    """TST-REQ-DB-009-01: Validates REQ-DB-009."""
+
+    state = TrackingDatabaseState()
+    registry = RepositoryRegistry(state)
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
+
+    result = ScannerService(registry).run(
+        environment=Environment.PRODUCTION,
+        pipeline_run_id="batch-run",
+        trigger="scheduled",
+        market_data_pulls=_scanner_batch_pull(now),
+        config_payload={},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["candidateCount"] == 3
+    assert state.begin_count == 1
+    assert state.commit_count == 1
+    assert state.rollback_count == 0
+    assert len(state.rows("shared.scanner_runs")) == 1
+    assert len(state.rows("shared.scanner_candidates")) == 3
+
+
+def test_req_db_009_02_scanner_batch_rolls_back_on_candidate_failure() -> None:
+    """TST-REQ-DB-009-02: Validates REQ-DB-009."""
+
+    state = TrackingDatabaseState()
+    state.fail_on_tables.add("shared.scanner_candidates")
+    registry = RepositoryRegistry(state)
+    now = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
+
+    result = ScannerService(registry).run(
+        environment=Environment.PRODUCTION,
+        pipeline_run_id="failed-batch-run",
+        trigger="scheduled",
+        market_data_pulls=_scanner_batch_pull(now),
+        config_payload={},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.row is None
+    assert state.begin_count == 1
+    assert state.commit_count == 0
+    assert state.rollback_count == 1
+    assert state.rows("shared.scanner_runs") == []
+    assert state.rows("shared.scanner_candidates") == []
 
 
 def test_req_str_003_03_polymarket_scanner_persists_acceptance_rejection_and_wallet_overlap() -> None:

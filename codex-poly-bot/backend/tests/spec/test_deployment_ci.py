@@ -97,6 +97,16 @@ def test_req_dep_002_02_non_us_east_1_deployment_target_deployment_validation() 
     assert override.ok
     assert override.override_required
 
+
+def test_req_dep_011_01_rds_uses_gp3_storage() -> None:
+    """TST-REQ-DEP-011-01: Validates REQ-DEP-011."""
+
+    template = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+
+    assert "StorageType: gp3" in template
+    assert "StorageType: gp2" not in template
+
+
 def test_req_dat_006_02_cloudformation_s3_raw_lifecycle_retains_365_days() -> None:
     """TST-REQ-DAT-006-02: Validates REQ-DAT-006
 

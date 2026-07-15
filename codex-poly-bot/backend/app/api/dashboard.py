@@ -2,7 +2,7 @@
 
 REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005,
 REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010,
-REQ-UI-011, REQ-WAL-005, REQ-EXE-003, REQ-EXE-014, REQ-EXE-016,
+REQ-UI-011, REQ-UI-014, REQ-WAL-005, REQ-EXE-003, REQ-EXE-014, REQ-EXE-016,
 REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 """
 
@@ -876,6 +876,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     def _realtime_snapshot(context: DashboardRequestContext) -> dict[str, Any]:
         config_snapshot = _current_config(context.environment, context.actor.username)
         settings_payload = config_snapshot["settings"]
+        worker_status = services.runtime_status.worker_status()
         operations = services.runtime_status.operations_summary(
             context.environment,
             include_history=False,
@@ -886,15 +887,17 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             environment=context.environment,
             config_payload=settings_payload,
         )
+        tick_schedule = services.runtime_status.tick_schedule(
+            environment=context.environment,
+            config_payload=settings_payload,
+            worker_status=worker_status,
+        )
         return {
             "environment": context.environment.value,
             "generatedAt": _now(),
             "operations": operations,
             "marketData": market_data,
-            "tickSchedule": services.runtime_status.tick_schedule(
-                environment=context.environment,
-                config_payload=settings_payload,
-            ),
+            "tickSchedule": tick_schedule,
             "loop": services.runtime_status.loop_observability(
                 environment=context.environment,
                 config_payload=settings_payload,
@@ -902,6 +905,8 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 kill_switch_active=kill_switch_active,
                 market_data=market_data,
                 order_events=operations["orderEvents"],
+                worker_status=worker_status,
+                tick_schedule=tick_schedule,
             ),
         }
 

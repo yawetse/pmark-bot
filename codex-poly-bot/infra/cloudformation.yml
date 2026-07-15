@@ -1,4 +1,4 @@
-# REQ: REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-WAL-003,
+# REQ: REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-DEP-011, REQ-WAL-003,
 # REQ-DAT-003, REQ-DAT-006, REQ-DAT-007, REQ-NOT-001,
 # REQ-OBS-002, REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006
 AWSTemplateFormatVersion: "2010-09-09"
@@ -400,6 +400,7 @@ Resources:
       DBName: codexbot
       DBInstanceClass: db.t4g.micro
       AllocatedStorage: 20
+      StorageType: gp3
       StorageEncrypted: true
       PubliclyAccessible: false
       DBSubnetGroupName: !Ref DatabaseSubnetGroup

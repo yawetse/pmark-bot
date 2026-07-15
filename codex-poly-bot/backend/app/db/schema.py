@@ -2,7 +2,7 @@
 
 REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
 REQ-DB-006, REQ-DB-008, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003,
-REQ-OBS-004
+REQ-OBS-004, REQ-UI-014
 """
 
 from __future__ import annotations
@@ -1048,6 +1048,45 @@ Index(
     "ix_tick_summaries_environment_created_at",
     metadata.tables["shared.tick_summaries"].c.environment,
     metadata.tables["shared.tick_summaries"].c.created_at,
+)
+
+Index(
+    "ix_job_runs_job_name_created_at",
+    metadata.tables["shared.job_runs"].c.job_name,
+    metadata.tables["shared.job_runs"].c.created_at,
+)
+
+Index(
+    "ix_dashboard_market_data_pulls_environment_venue_created_at",
+    metadata.tables["shared.dashboard_market_data_pulls"].c.environment,
+    metadata.tables["shared.dashboard_market_data_pulls"].c.venue,
+    metadata.tables["shared.dashboard_market_data_pulls"].c.created_at,
+)
+
+Index(
+    "ix_pipeline_runs_environment_created_at",
+    metadata.tables["shared.pipeline_runs"].c.environment,
+    metadata.tables["shared.pipeline_runs"].c.created_at,
+)
+
+Index(
+    "ix_pipeline_steps_environment_created_at",
+    metadata.tables["shared.pipeline_steps"].c.environment,
+    metadata.tables["shared.pipeline_steps"].c.created_at,
+)
+
+Index(
+    "ix_pipeline_steps_environment_run_step_created_at",
+    metadata.tables["shared.pipeline_steps"].c.environment,
+    metadata.tables["shared.pipeline_steps"].c.run_id,
+    metadata.tables["shared.pipeline_steps"].c.step_key,
+    metadata.tables["shared.pipeline_steps"].c.created_at,
+)
+
+Index(
+    "ix_scanner_runs_environment_created_at",
+    metadata.tables["shared.scanner_runs"].c.environment,
+    metadata.tables["shared.scanner_runs"].c.created_at,
 )
 
 Index(
