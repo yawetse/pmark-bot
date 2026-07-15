@@ -1315,3 +1315,34 @@
 - [x] Portfolio, migration, API, and frontend contract tests pass
 - [x] Code and design artifacts include REQ-* traceability
 - [x] Development and production deployment health checks pass
+
+---
+
+### TASK-034: Remove Dashboard I/O Timeout Feedback Loop
+
+**Story:** As an operator, I want dashboard reads and scanner persistence to stay responsive during scheduled ticks, so that status remains available without creating additional database load.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 7 - Production reliability
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `phase-7-readiness`
+**Dependencies:** TASK-023, TASK-029, TASK-030
+
+**Requirements Covered:**
+- REQ-DB-009
+- REQ-UI-014
+- REQ-DEP-011
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-034-01 | When a scanner run persists hundreds of candidates, the system shall commit the run and candidates in one transaction and roll back the complete batch on failure. |
+| AC-034-02 | If realtime WebSocket setup fails, then dashboard polling shall keep at most one snapshot request active and retry after bounded backoff. |
+| AC-034-03 | When the dashboard reads market data, the backend shall load only the latest indexed row for each enabled venue and reuse snapshot state instead of repeating schedule queries. |
+| AC-034-04 | When CloudFormation deploys RDS, the database shall use gp3 storage. |
+
+**Definition of Done:**
+- [ ] Backend, frontend, migration, and infrastructure tests pass
+- [ ] Code and design artifacts include REQ-* traceability
+- [ ] Development and production deployments pass live latency and health checks

@@ -277,7 +277,7 @@
 
 **File:** `backend/app/db/`  
 **Responsibility:** Manage SQLAlchemy sessions, transactions, model-provider schemas, migrations, repositories, and unit-of-work boundaries.  
-**Requirements Covered:** REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003, REQ-OBS-004  
+**Requirements Covered:** REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-009, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003, REQ-OBS-004
 **Dependencies:** SQLAlchemy, Alembic, Postgres  
 **Depended On By:** Services, adapters that persist state, workers, API routers
 
@@ -343,6 +343,13 @@
   2. Handle conflict as expected refusal or existing intent lookup.
   3. Release reservations only through terminal state transition.
 
+#### Scanner Batch Persistence
+
+- **What it does:** Persists one scanner run and all accepted and rejected candidates inside one `UnitOfWork` transaction.
+- **Why this approach:** A scanner tick can produce hundreds of rows. One commit preserves atomicity and avoids a synchronous disk flush for every candidate.
+- **Complexity:** O(candidate count) inserts with O(1) transaction commits.
+- **Key steps:** Begin the transaction, insert the scanner run, insert candidate rows through the active session, commit once, and roll back the complete batch on any persistence error.
+
 ### 2.3 Data Structures
 
 | Structure | Type | Description | Invariants |
@@ -370,6 +377,7 @@
 | 3 | Claude and OpenAI Alpaca credentials resolve to same account ID | Block duplicated account live trading | REQ-ALP-016 |
 | 4 | Broker position and Postgres position mismatch | Persist mismatch and block affected Alpaca live orders | REQ-ALP-018 |
 | 5 | Audit event correction needed | Write new corrective audit event, do not mutate original | REQ-OBS-004 |
+| 6 | One candidate insert fails during scanner persistence | Roll back the scanner run and every candidate in the batch | REQ-DB-009 |
 
 ### 2.5 Error Handling
 
@@ -388,6 +396,7 @@
 | Concurrency | Multiple workers must not overlap unsafe work | Advisory locks, job rows, unique reservations |
 | Auditability | History retained indefinitely | No TTL/archive/delete job in v1 |
 | Testability | Repositories testable with local Postgres | Docker Compose Postgres and migrations |
+| Storage I/O | Scanner batches do not issue one commit per candidate | One transaction owns the run and candidate writes |
 
 ### 2.7 Dependencies & Integration Points
 
@@ -2673,7 +2682,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 **File:** `frontend/`  
 **Responsibility:** Provide the Next.js React dashboard, GitHub OAuth flow, configuration editor, model comparison views, and operational controls.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
 **Dependencies:** Backend API routers, GitHub OAuth app, signed session secret, browser fetch API  
 **Depended On By:** Operators, local testing, Playwright tests
 
@@ -2717,6 +2726,13 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 The backend token signing secret is only available to Next.js server runtime and FastAPI. It is never exposed through `NEXT_PUBLIC_*`, client components, serialized props, logs, or browser storage.
 
+#### Realtime Fallback Flow
+
+- **What it does:** Falls back from WebSocket updates to bounded snapshot polling.
+- **Why this approach:** A slow backend request must not cause overlapping retries that add more database load.
+- **Complexity:** O(1) active requests per browser session.
+- **Key steps:** Start one snapshot request, wait for completion, schedule the next request, increase the delay after failures up to a fixed cap, and abort the active request on unmount.
+
 #### Config Editing Flow
 
 - **What it does:** Lets authorized users edit runtime config without process restart.
@@ -2749,6 +2765,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | 9 | A venue refresh fails or has never succeeded | Keep the last confirmed values with stale status, or show unavailable rather than zero | REQ-UI-013, REQ-CMP-005 |
 | 10 | A recommendation changes an integer-only cap while the market-data total spans venues | Submit a JSON number and show each venue's candidate count beside the total | REQ-UI-012, REQ-UI-005 |
 | 11 | Scanner candidate details are deferred from the default dashboard response | Read the latest scanner-run totals and its single persisted pipeline-step rejection breakdown; do not query candidate history or infer scanner results from the market-data total | REQ-UI-004, REQ-OBS-005 |
+| 12 | WebSocket setup fails while a snapshot request is slow | Keep one request in flight and schedule the next poll only after completion with bounded backoff | REQ-UI-014 |
 
 ### 22.5 Error Handling
 
@@ -2768,6 +2785,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | Security | Session cookies are protected | HttpOnly, Secure, SameSite cookie settings |
 | Security | Backend token secret is server-only | Browser calls Next.js BFF route; server-only module mints FastAPI token |
 | Reliability | UI handles degraded sections | Typed API errors and unavailable states |
+| Reliability | Realtime fallback cannot create a retry storm | One in-flight poll, completion-based scheduling, bounded backoff, and cleanup abort |
 | Testability | Critical flows covered | Playwright tests for auth gates, config save, kill switch, comparison view |
 
 ### 22.7 Dependencies & Integration Points
@@ -2920,7 +2938,7 @@ The backend token signing secret is only available to Next.js server runtime and
 
 **File:** `infra/cloudformation/`  
 **Responsibility:** Define AWS resources for development and production in `us-east-1`: ECS Fargate, ECR, RDS Postgres, S3, Secrets Manager, CloudWatch, SES, IAM, networking, and load balancing.  
-**Requirements Covered:** REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-WAL-003, REQ-DAT-003, REQ-DAT-006, REQ-DAT-007, REQ-NOT-001, REQ-OBS-002, REQ-DB-001, REQ-DB-002, REQ-DB-003  
+**Requirements Covered:** REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-DEP-011, REQ-WAL-003, REQ-DAT-003, REQ-DAT-006, REQ-DAT-007, REQ-NOT-001, REQ-OBS-002, REQ-DB-001, REQ-DB-002, REQ-DB-003
 **Dependencies:** GitHub Actions deploy workflow, Docker images, AWS account, SES identity verification  
 **Depended On By:** CI/CD, production deployment, development deployment
 
@@ -2954,6 +2972,13 @@ The backend token signing secret is only available to Next.js server runtime and
 - **Why this approach:** Branch-based deploys should not share data, secrets, buckets, or wallets.
 - **Complexity:** Two stack parameter sets.
 - **Key steps:** Prefix all resource names with environment, use separate KMS keys/buckets/RDS/secrets/log groups, and restrict IAM by environment.
+
+#### RDS Storage
+
+- **What it does:** Provisions encrypted gp3 storage for each Postgres instance.
+- **Why this approach:** Scheduled scanner writes and dashboard reads must not depend on gp2 burst-credit recovery.
+- **Complexity:** One managed storage setting per environment.
+- **Key steps:** Set `StorageType` to `gp3`, retain the existing encrypted volume and database identifier, and let CloudFormation perform the in-place storage modification.
 
 ### 24.3 Data Structures
 

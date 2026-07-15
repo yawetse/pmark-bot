@@ -1,6 +1,6 @@
 """Deterministic scanner persistence for Polymarket and stock candidates.
 
-REQ: REQ-STR-003, REQ-DAT-008, REQ-OBS-005, REQ-UI-004
+REQ: REQ-STR-003, REQ-DAT-008, REQ-DB-009, REQ-OBS-005, REQ-UI-004
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.db import PersistenceUnavailableError, RepositoryRegistry
+from app.db import PersistenceUnavailableError, RepositoryRegistry, UnitOfWork
 from app.domain import Environment, Venue
 from app.services.stock_universe import resolve_alpaca_symbol_universe
 
@@ -94,41 +94,46 @@ class ScannerService:
         )
 
         try:
-            run_row = self.registry.shared().record_scanner_run(
-                environment=environment,
-                pipeline_run_id=pipeline_run_id,
-                trigger=trigger,
-                status=status,
-                config=scanner_config,
-                source_pull_ids=source_pull_ids,
-                accepted_count=accepted_count,
-                rejected_count=rejected_count,
-                started_at=started_at,
-                completed_at=finished_at,
-            )
-            persisted_candidates = tuple(
-                self.registry.shared().record_scanner_candidate(
+            # Persist the run and its candidate rows in one transaction. Production
+            # ticks can contain hundreds of candidates, so per-row commits exhaust
+            # small RDS volume I/O credits and delay dashboard reads.
+            with UnitOfWork(self.registry.state) as unit:
+                run_row = self.registry.shared().record_scanner_run(
                     environment=environment,
-                    scanner_run_id=run_row["id"],
-                    venue=candidate["venue"],
-                    instrument_id=candidate["instrument_id"],
-                    display_name=candidate["display_name"],
-                    status=candidate["status"],
-                    refusal_reason=candidate.get("refusal_reason"),
-                    strategy_names=candidate.get("strategy_names", []),
-                    price=candidate.get("price"),
-                    liquidity=candidate.get("liquidity"),
-                    spread=candidate.get("spread"),
-                    hours_to_resolution=candidate.get("hours_to_resolution"),
-                    metrics=candidate.get("metrics", {}),
-                    source_payload=candidate.get("source_payload", {}),
-                    symbol=candidate.get("symbol"),
-                    market_id=candidate.get("market_id"),
-                    outcome_id=candidate.get("outcome_id"),
-                    created_at=finished_at,
+                    pipeline_run_id=pipeline_run_id,
+                    trigger=trigger,
+                    status=status,
+                    config=scanner_config,
+                    source_pull_ids=source_pull_ids,
+                    accepted_count=accepted_count,
+                    rejected_count=rejected_count,
+                    started_at=started_at,
+                    completed_at=finished_at,
                 )
-                for candidate in candidate_results
-            )
+                persisted_candidates = tuple(
+                    self.registry.shared().record_scanner_candidate(
+                        environment=environment,
+                        scanner_run_id=run_row["id"],
+                        venue=candidate["venue"],
+                        instrument_id=candidate["instrument_id"],
+                        display_name=candidate["display_name"],
+                        status=candidate["status"],
+                        refusal_reason=candidate.get("refusal_reason"),
+                        strategy_names=candidate.get("strategy_names", []),
+                        price=candidate.get("price"),
+                        liquidity=candidate.get("liquidity"),
+                        spread=candidate.get("spread"),
+                        hours_to_resolution=candidate.get("hours_to_resolution"),
+                        metrics=candidate.get("metrics", {}),
+                        source_payload=candidate.get("source_payload", {}),
+                        symbol=candidate.get("symbol"),
+                        market_id=candidate.get("market_id"),
+                        outcome_id=candidate.get("outcome_id"),
+                        created_at=finished_at,
+                    )
+                    for candidate in candidate_results
+                )
+                unit.commit()
         except PersistenceUnavailableError:
             run_row = None
             persisted_candidates = tuple(candidate_results)

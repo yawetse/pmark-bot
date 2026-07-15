@@ -2,7 +2,7 @@
 
 REQ: REQ-UI-004, REQ-UI-009, REQ-NOT-006, REQ-DAT-008,
 REQ-WAL-005, REQ-WAL-006, REQ-OBS-005, REQ-DB-008, REQ-UI-013,
-REQ-CMP-005
+REQ-UI-014, REQ-CMP-005
 """
 
 from __future__ import annotations
@@ -100,8 +100,6 @@ PLACEHOLDER_VALUES = {"", "change-me", "set-locally", "optional-in-dry-run"}
 TRADING_MODEL_PROVIDERS = (ModelProvider.OPENAI, ModelProvider.CLAUDE)
 MANUAL_NON_LIVE_POLYMARKET_MARKET_DATA_LIMIT = 10
 MANUAL_NON_LIVE_ALPACA_SYMBOL_LIMIT = 20
-DASHBOARD_RECENT_JOB_ROW_LIMIT = 250
-DASHBOARD_MARKET_DATA_ROW_LIMIT = 250
 DASHBOARD_DATA_EXPLORER_ROW_LIMIT = 500
 DASHBOARD_PIPELINE_RUN_ROW_LIMIT = 250
 DASHBOARD_PIPELINE_STEP_ROW_LIMIT = 1_250
@@ -1234,15 +1232,12 @@ class RuntimeStatusService:
         """
 
         try:
-            rows = [
-                row
-                for row in self.registry.state.rows(
-                    f"{SHARED_SCHEMA}.job_runs",
-                    limit=DASHBOARD_RECENT_JOB_ROW_LIMIT,
-                    newest_first=True,
-                )
-                if row["job_name"] == self.WORKER_JOB_NAME
-            ]
+            rows = self.registry.state.rows(
+                f"{SHARED_SCHEMA}.job_runs",
+                limit=1,
+                newest_first=True,
+                filters={"job_name": self.WORKER_JOB_NAME},
+            )
         except PersistenceUnavailableError:
             return {
                 "state": "blocked",
@@ -1500,6 +1495,7 @@ class RuntimeStatusService:
         *,
         environment: Environment,
         config_payload: dict[str, Any],
+        worker_status: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return the latest completed tick and the next expected tick time."""
 
@@ -1508,13 +1504,22 @@ class RuntimeStatusService:
             config_payload.get("trading_loop_interval_seconds"),
             default=60,
         )
-        worker = self.worker_status()
-        latest_run = next(iter(self.pipeline_runs(environment, limit=1)), None)
+        worker = worker_status or self.worker_status()
+        try:
+            latest_rows = self.registry.state.rows(
+                self.PIPELINE_RUNS_TABLE,
+                limit=1,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
+        except PersistenceUnavailableError:
+            latest_rows = []
+        latest_run = latest_rows[0] if latest_rows else None
         run_time = None
         if latest_run is not None:
             run_time = (
-                _parse_datetime(latest_run.get("completedAt"))
-                or _parse_datetime(latest_run.get("startedAt"))
+                _parse_datetime(latest_run.get("completed_at"))
+                or _parse_datetime(latest_run.get("started_at"))
             )
         heartbeat_time = _parse_datetime(worker.get("lastHeartbeatAt"))
         last_tick_at = run_time or heartbeat_time
@@ -2469,7 +2474,10 @@ class RuntimeStatusService:
 
         selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
         try:
-            rows = self._market_data_rows(environment)
+            rows = self._market_data_rows(
+                environment,
+                venues=self._market_data_venues(config_payload),
+            )
         except PersistenceUnavailableError:
             rows = []
         return self._market_data_summary_payload(
@@ -2623,6 +2631,8 @@ class RuntimeStatusService:
         kill_switch_active: bool = False,
         market_data: dict[str, Any] | None = None,
         order_events: list[dict[str, Any]] | None = None,
+        worker_status: dict[str, Any] | None = None,
+        tick_schedule: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return a dashboard-safe view of loop timing, inputs, gates, and logic.
 
@@ -2630,17 +2640,18 @@ class RuntimeStatusService:
         """
 
         now = datetime.now(UTC)
-        worker = self.worker_status()
+        worker = worker_status or self.worker_status()
         interval_seconds = _positive_int(
             config_payload.get("trading_loop_interval_seconds"),
             default=60,
         )
-        tick_schedule = self.tick_schedule(
+        resolved_tick_schedule = tick_schedule or self.tick_schedule(
             environment=environment,
             config_payload=config_payload,
+            worker_status=worker,
         )
-        next_run_at = _parse_datetime(tick_schedule.get("nextTickAt")) or now
-        seconds_until_next_run = _as_int(tick_schedule.get("secondsUntilNextTick"))
+        next_run_at = _parse_datetime(resolved_tick_schedule.get("nextTickAt")) or now
+        seconds_until_next_run = _as_int(resolved_tick_schedule.get("secondsUntilNextTick"))
         selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
         venues = config_payload.get("venues", {})
         enabled_venues = self._enabled_config_venues(config_payload)
@@ -2686,15 +2697,15 @@ class RuntimeStatusService:
                 "intervalSeconds": interval_seconds,
                 "lastHeartbeatAt": worker.get("lastHeartbeatAt"),
                 "ageSeconds": worker.get("ageSeconds"),
-                "lastTickAt": tick_schedule.get("lastTickAt"),
-                "lastTickStatus": tick_schedule.get("lastTickStatus"),
-                "lastTickRunId": tick_schedule.get("lastTickRunId"),
-                "lastTickSource": tick_schedule.get("lastTickSource"),
+                "lastTickAt": resolved_tick_schedule.get("lastTickAt"),
+                "lastTickStatus": resolved_tick_schedule.get("lastTickStatus"),
+                "lastTickRunId": resolved_tick_schedule.get("lastTickRunId"),
+                "lastTickSource": resolved_tick_schedule.get("lastTickSource"),
                 "nextRunAt": next_run_at.isoformat(),
-                "nextTickAt": tick_schedule.get("nextTickAt"),
+                "nextTickAt": resolved_tick_schedule.get("nextTickAt"),
                 "secondsUntilNextRun": seconds_until_next_run,
                 "secondsUntilNextTick": seconds_until_next_run,
-                "due": tick_schedule.get("due", False),
+                "due": resolved_tick_schedule.get("due", False),
                 "source": worker.get("value"),
             },
             "currentPhase": self._current_loop_phase(
@@ -2866,7 +2877,7 @@ class RuntimeStatusService:
             "records": {
                 "orderEvents": len(order_events),
                 "openOrders": len(open_orders),
-                "auditEvents": self._audit_event_count(),
+                "auditEvents": self._audit_event_count(environment),
             },
         }
 
@@ -3070,9 +3081,12 @@ class RuntimeStatusService:
     def _gate(self, label: str, passed: bool, value: str) -> dict[str, str]:
         return {"label": label, "state": "ok" if passed else "blocked", "value": value}
 
-    def _audit_event_count(self) -> int:
+    def _audit_event_count(self, environment: Environment) -> int:
         try:
-            return len(self.registry.state.rows(f"{SHARED_SCHEMA}.audit_events"))
+            return self.registry.state.count(
+                f"{SHARED_SCHEMA}.audit_events",
+                filters={"environment": environment.value},
+            )
         except PersistenceUnavailableError:
             return 0
 
@@ -3652,29 +3666,36 @@ class RuntimeStatusService:
         )
         return self._market_data_payload(row)
 
-    def _market_data_rows(self, environment: Environment) -> list[dict[str, Any]]:
-        rows = [
-            row
-            for row in self.registry.state.rows(
+    def _market_data_rows(
+        self,
+        environment: Environment,
+        *,
+        venues: list[str],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        missing_venues: list[str] = []
+        for venue in venues:
+            venue_rows = self.registry.state.rows(
                 self.MARKET_DATA_PULLS_TABLE,
-                limit=DASHBOARD_MARKET_DATA_ROW_LIMIT,
+                limit=1,
                 newest_first=True,
-                filters={"environment": environment.value},
+                filters={"environment": environment.value, "venue": venue},
             )
-            if row["environment"] == environment.value
-        ]
-        if rows:
-            return rows
-        return [
-            row
-            for row in self.registry.state.rows(
-                self.LEGACY_MARKET_DATA_PULLS_TABLE,
-                limit=DASHBOARD_MARKET_DATA_ROW_LIMIT,
-                newest_first=True,
-                filters={"environment": environment.value},
+            if venue_rows:
+                rows.extend(venue_rows)
+            else:
+                missing_venues.append(venue)
+
+        for venue in missing_venues:
+            rows.extend(
+                self.registry.state.rows(
+                    self.LEGACY_MARKET_DATA_PULLS_TABLE,
+                    limit=1,
+                    newest_first=True,
+                    filters={"environment": environment.value, "venue": venue},
+                )
             )
-            if row["environment"] == environment.value
-        ]
+        return rows
 
     def _data_explorer_rows(
         self,
