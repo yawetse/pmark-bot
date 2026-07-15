@@ -90,6 +90,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-DB-007 | P0 | If Postgres is configured, then the system shall initialize SQLAlchemy with the packaged Postgres driver; if Postgres is unavailable, then the system shall block live order placement and surface the persistence failure in logs and dashboard status. |
 | REQ-DB-008 | P0 | When an enabled venue account is reconciled, the system shall persist sanitized account, position, and confirmed-fill snapshots by environment, venue, model provider, and account reference without storing credential material. |
 | REQ-DB-009 | P0 | When a scanner run persists a candidate batch, the system shall commit the run and its candidates in one database transaction rather than committing each candidate separately. |
+| REQ-DB-010 | P0 | When a dashboard-relevant Postgres transaction commits, the database shall publish one coalescible invalidation event scoped to its environment and, for user-owned configuration or preferences, its authenticated username. |
 
 ### Wallet and Secrets Management
 
@@ -180,6 +181,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-UI-012 | P0 | When recent scanner output identifies a settings-based blocker, the dashboard shall show an actionable config recommendation that preserves the setting's required value type, saves user-owned database settings through the audited config endpoint, shows venue-specific input counts when a total spans venues, and explains that model, credential, market-hours, and risk gates still apply. |
 | REQ-UI-013 | P0 | When an authorized user opens the main dashboard, the system shall show venue-confirmed account value, realized P&L, unrealized P&L, open positions, and confirmed fills for Polymarket US and Alpaca, separated by model-provider account and marked unavailable when venue data is missing or stale. |
 | REQ-UI-014 | P0 | If the realtime dashboard connection is unavailable, then polling shall keep at most one snapshot request in flight, retry with bounded backoff, and read only the latest persisted dashboard rows required for the response. |
+| REQ-UI-015 | P0 | While an authorized dashboard WebSocket is connected, the system shall send one complete user-scoped snapshot on connection, send lightweight heartbeats while state is unchanged, and send updated operations, market, schedule, and portfolio data only after a relevant committed database change; if the event stream fails, the browser shall reconnect with bounded backoff while retaining polling as a recovery path. |
 
 ### Cross-Market Comparison Analytics
 

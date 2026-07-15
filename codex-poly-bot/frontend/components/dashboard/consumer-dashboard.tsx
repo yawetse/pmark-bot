@@ -23,9 +23,13 @@ import {
 } from "@/components/dashboard/venue-portfolio-panel";
 import { dashboardApi, type ApiClientResult } from "@/lib/api";
 import { CONFIG_PATH_DETAILS, type AllowedConfigPath } from "@/lib/config-paths";
-import { useDashboardRealtime, type TickScheduleView } from "@/lib/use-dashboard-realtime";
+import {
+  useDashboardRealtime,
+  type DashboardRealtimeSnapshot,
+  type TickScheduleView,
+} from "@/lib/use-dashboard-realtime";
 
-// REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-UI-012, REQ-NOT-006, REQ-OBS-005
+// REQ: REQ-UI-004, REQ-UI-005, REQ-UI-008, REQ-UI-012, REQ-UI-015, REQ-NOT-006, REQ-OBS-005
 
 type ConfigValue = string | boolean | number | string[] | Record<string, unknown>;
 
@@ -236,13 +240,8 @@ export function ConsumerDashboard() {
       }
     });
 
-    const portfolioInterval = window.setInterval(() => {
-      void loadPanel("portfolio", setPortfolioState, () => active);
-    }, 60_000);
-
     return () => {
       active = false;
-      window.clearInterval(portfolioInterval);
     };
   }, []);
 
@@ -251,12 +250,11 @@ export function ConsumerDashboard() {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const handleRealtimeSnapshot = useCallback((snapshot: {
-    operations: OperationsSummaryView;
-    marketData: MarketDataPullView;
-    tickSchedule: TickScheduleView;
-  }) => {
+  const handleRealtimeSnapshot = useCallback((snapshot: DashboardRealtimeSnapshot) => {
     setOperationsState({ status: "ready", data: snapshot.operations });
+    if (snapshot.portfolio) {
+      setPortfolioState({ status: "ready", data: snapshot.portfolio });
+    }
     setMarketDataState({ status: "ready", data: snapshot.marketData });
     setTickScheduleState({ status: "ready", data: snapshot.tickSchedule });
   }, []);
