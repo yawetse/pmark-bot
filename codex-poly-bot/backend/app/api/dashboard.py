@@ -2,13 +2,14 @@
 
 REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005,
 REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010,
-REQ-UI-011, REQ-UI-014, REQ-WAL-005, REQ-EXE-003, REQ-EXE-014, REQ-EXE-016,
+REQ-UI-011, REQ-UI-014, REQ-UI-015, REQ-WAL-005, REQ-EXE-003, REQ-EXE-014, REQ-EXE-016,
 REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -37,6 +38,10 @@ from app.services import (
     ConfigValidationError,
     DashboardAccessResult,
 )
+
+
+DASHBOARD_WEBSOCKET_HEARTBEAT_SECONDS = 30
+DASHBOARD_EVENT_READY_TIMEOUT_SECONDS = 2
 
 
 @dataclass(frozen=True)
@@ -639,31 +644,65 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         token: str | None = None,
         environment: str | None = None,
     ) -> None:
-        """Stream tick-focused dashboard snapshots over WebSocket."""
+        """Stream committed dashboard changes and idle heartbeats."""
 
         context = _websocket_context(websocket, token, environment)
         if not context.access.authorized:
             await websocket.close(code=4403 if context.access.authenticated else 4401)
             return
-        await websocket.accept()
-        refresh_seconds = 5
-        try:
-            while True:
-                await websocket.send_json(
-                    {
-                        "type": "dashboard_snapshot",
-                        "data": _realtime_snapshot(context),
-                    }
-                )
-                try:
-                    message = await asyncio.wait_for(websocket.receive_text(), timeout=refresh_seconds)
-                except TimeoutError:
-                    continue
-                if message.strip().lower() == "close":
-                    await websocket.close(code=1000)
-                    return
-        except WebSocketDisconnect:
+        if not await services.dashboard_events.wait_until_ready(
+            timeout=DASHBOARD_EVENT_READY_TIMEOUT_SECONDS
+        ):
+            await websocket.close(code=1013)
             return
+        async with services.dashboard_events.subscribe(
+            environment=context.environment.value,
+            username=context.actor.username,
+        ) as subscription:
+            await websocket.accept()
+            receive_task: asyncio.Task[str] | None = None
+            event_task: asyncio.Task[Any] | None = None
+            try:
+                await _send_realtime_snapshot(websocket, context)
+                receive_task = asyncio.create_task(websocket.receive_text())
+                while True:
+                    event_task = asyncio.create_task(subscription.get())
+                    done, _ = await asyncio.wait(
+                        {receive_task, event_task},
+                        timeout=DASHBOARD_WEBSOCKET_HEARTBEAT_SECONDS,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if receive_task in done:
+                        message = receive_task.result()
+                        if message.strip().lower() == "close":
+                            await websocket.close(code=1000)
+                            return
+                        receive_task = asyncio.create_task(websocket.receive_text())
+                    if event_task in done:
+                        change = event_task.result()
+                        if not change.source_available:
+                            await websocket.close(code=1013)
+                            return
+                        await _send_realtime_snapshot(websocket, context)
+                        event_task = None
+                    else:
+                        event_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await event_task
+                        event_task = None
+                    if not done:
+                        await websocket.send_json(
+                            {"type": "heartbeat", "generatedAt": _now()}
+                        )
+            except WebSocketDisconnect:
+                return
+            finally:
+                for task in (receive_task, event_task):
+                    if task is None or task.done():
+                        continue
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
 
     @router.get("/api/operations/runs")
     def operations_runs(
@@ -898,6 +937,9 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             "operations": operations,
             "marketData": market_data,
             "tickSchedule": tick_schedule,
+            "portfolio": services.runtime_status.venue_portfolio_summary(
+                context.environment
+            ),
             "loop": services.runtime_status.loop_observability(
                 environment=context.environment,
                 config_payload=settings_payload,
@@ -909,6 +951,15 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                 tick_schedule=tick_schedule,
             ),
         }
+
+    async def _send_realtime_snapshot(
+        websocket: WebSocket,
+        context: DashboardRequestContext,
+    ) -> None:
+        snapshot = await asyncio.to_thread(_realtime_snapshot, context)
+        await websocket.send_json(
+            {"type": "dashboard_snapshot", "data": snapshot}
+        )
 
     def _websocket_context(
         websocket: WebSocket,

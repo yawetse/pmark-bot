@@ -125,6 +125,8 @@
 | TST-REQ-DB-007-02 | Edge | REQ-DB-007 | Given Postgres is unavailable, When live order placement is requested, Then the order is blocked and logs plus dashboard status surface the failure. |
 | TST-REQ-DB-009-01 | Regression | REQ-DB-009 | Given a scanner run with many candidates, When persistence succeeds, Then the run and all candidate rows commit through one database transaction. |
 | TST-REQ-DB-009-02 | Edge | REQ-DB-009 | Given one scanner candidate write fails, When the batch is persisted, Then the transaction rolls back the scanner run and every candidate row. |
+| TST-REQ-DB-010-01 | Regression | REQ-DB-010 | Given dashboard-relevant Postgres tables, When migrations run, Then commit-scoped notification triggers publish coalescible environment and optional username invalidations without attaching high-volume candidate or bar detail tables. |
+| TST-REQ-DB-010-02 | Edge | REQ-DB-010 | Given dashboard subscribers for multiple environments and users, When an invalidation is published, Then only matching subscribers receive it and a slow subscriber retains at most one pending refresh. |
 | TST-REQ-DB-007-03 | Edge | REQ-DB-007 | Given a deployed bare Postgres DSN, When the SQLAlchemy session factory initializes, Then the installed psycopg driver is selected instead of psycopg2. |
 | TST-REQ-DB-008-01 | Happy | REQ-DB-008 | Given confirmed venue account, position, and fill data, When reconciliation persists a snapshot, Then rows retain environment, venue, provider, and account attribution without credential material. |
 | TST-REQ-DB-008-02 | Edge | REQ-DB-008 | Given a position or fill write fails during account reconciliation, When the database transaction rolls back, Then no partial account snapshot, position, or fill rows remain. |
@@ -278,6 +280,8 @@
 | TST-REQ-UI-004-06 | Regression | REQ-UI-004 | Given scanner candidate details are deferred, When the default dashboard summary loads, Then it reports the latest persisted scanner totals and venue-specific rejection reasons from the scanner pipeline step without reading candidate history. |
 | TST-REQ-UI-014-01 | Regression | REQ-UI-014 | Given realtime WebSocket setup fails and snapshot latency exceeds the polling interval, When polling continues, Then only one snapshot request is active and the next retry starts after bounded backoff. |
 | TST-REQ-UI-014-02 | Regression | REQ-UI-014 | Given multiple enabled venues and persisted market-data history, When the dashboard snapshot loads, Then it reads only the latest indexed market-data row for each enabled venue and reuses worker and tick-schedule state. |
+| TST-REQ-UI-015-01 | Happy | REQ-UI-015 | Given an authorized WebSocket connection, When the connection opens and a matching committed-state invalidation arrives, Then it receives one initial snapshot, idle heartbeats without snapshot queries, and one updated snapshot containing portfolio data. |
+| TST-REQ-UI-015-02 | Edge | REQ-UI-015 | Given the WebSocket closes or its database event source is unavailable, When recovery starts, Then the browser uses single-flight polling and retries the WebSocket with bounded backoff. |
 | TST-REQ-UI-005-01 | Happy | REQ-UI-005 | Given an authorized user changes supported config fields, When the dashboard saves them, Then venue flags, dry-run/live, loop, strategy, budget, risk, slippage, and notification settings persist. |
 | TST-REQ-UI-005-02 | Edge | REQ-UI-005 | Given invalid or unauthorized config changes, When the dashboard saves them, Then the changes are rejected and existing config remains. |
 | TST-REQ-UI-005-03 | Focus | REQ-UI-005 | Given frontend config controls exist, When dashboard control checks run, Then saves are limited to allowlisted config paths. |
@@ -443,6 +447,7 @@
 | REQ-DB-006 | TST-REQ-DB-006-01 |
 | REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02, TST-REQ-DB-007-03 |
 | REQ-DB-009 | TST-REQ-DB-009-01, TST-REQ-DB-009-02 |
+| REQ-DB-010 | TST-REQ-DB-010-01, TST-REQ-DB-010-02 |
 | REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02, TST-REQ-EXE-016-07, TST-REQ-EXE-016-08 |
 | REQ-WAL-002 | TST-REQ-WAL-002-01, TST-REQ-WAL-002-02 |
 | REQ-WAL-003 | TST-REQ-WAL-003-01, TST-REQ-WAL-003-02, TST-REQ-WAL-003-03, TST-REQ-WAL-003-04 |
@@ -502,6 +507,7 @@
 | REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02, TST-REQ-UI-011-03 |
 | REQ-UI-012 | TST-REQ-UI-012-01, TST-REQ-UI-012-02 |
 | REQ-UI-014 | TST-REQ-UI-014-01, TST-REQ-UI-014-02 |
+| REQ-UI-015 | TST-REQ-UI-015-01, TST-REQ-UI-015-02 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |

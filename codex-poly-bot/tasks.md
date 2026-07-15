@@ -1346,3 +1346,35 @@
 - [ ] Backend, frontend, migration, and infrastructure tests pass
 - [ ] Code and design artifacts include REQ-* traceability
 - [ ] Development and production deployments pass live latency and health checks
+
+---
+
+### TASK-035: Deliver Event-Driven Dashboard Updates
+
+**Story:** As an operator, I want live dashboard and portfolio changes delivered after committed state changes, so that the browser stays current without recurring database reads for every connected user.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 7 - Production reliability
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `phase-7-readiness`
+**Dependencies:** TASK-005, TASK-033, TASK-034
+
+**Requirements Covered:**
+- REQ-DB-010
+- REQ-UI-014
+- REQ-UI-015
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-035-01 | When a dashboard-relevant Postgres transaction commits, the database shall publish a coalescible environment invalidation and scope user-owned config or preference invalidations to that username. |
+| AC-035-02 | When an authorized WebSocket connects, the backend shall send one complete snapshot and shall not rebuild it again until a matching invalidation arrives. |
+| AC-035-03 | While no dashboard state changes, the backend shall send lightweight heartbeats that do not query dashboard repositories. |
+| AC-035-04 | When venue-confirmed portfolio data changes, the WebSocket snapshot shall update the main dashboard without a separate portfolio polling interval. |
+| AC-035-05 | If the WebSocket or Postgres listener is unavailable, the browser shall use single-flight polling and retry the WebSocket with bounded backoff. |
+
+**Definition of Done:**
+- [x] Event broker, migration, WebSocket, and frontend recovery tests pass
+- [x] Full backend and frontend checks pass
+- [x] Code and design artifacts include REQ-* traceability

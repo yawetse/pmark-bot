@@ -2,7 +2,7 @@
 
 REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
 REQ-DB-006, REQ-DB-008, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003,
-REQ-OBS-004, REQ-UI-014
+REQ-OBS-004, REQ-UI-014, REQ-DB-010
 """
 
 from __future__ import annotations
@@ -1228,11 +1228,94 @@ def _ddl(statement) -> str:
     return f"{str(statement.compile(dialect=_POSTGRES_DIALECT)).strip()};"
 
 
+_DASHBOARD_EVENT_TABLE_NAMES = (
+    "shared.config_versions",
+    "shared.user_preferences",
+    "shared.audit_events",
+    "shared.system_health",
+    "shared.job_runs",
+    "shared.dashboard_market_data_pulls",
+    "shared.scanner_runs",
+    "shared.reasoning_runs",
+    "shared.strategy_consensus_runs",
+    "shared.execution_runs",
+    "shared.order_intents",
+    "shared.exit_runs",
+    "shared.exit_intents",
+    "shared.pipeline_runs",
+    "shared.pipeline_steps",
+    "shared.venue_portfolio_snapshots",
+    "shared.venue_position_snapshots",
+    "shared.venue_confirmed_fills",
+)
+
+_DASHBOARD_EVENT_FUNCTION_SQL = """
+CREATE OR REPLACE FUNCTION shared.notify_dashboard_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $dashboard_event$
+DECLARE
+    row_data jsonb;
+    event_environment text;
+    event_username text;
+BEGIN
+    row_data := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+    event_environment := COALESCE(
+        row_data ->> 'environment',
+        row_data #>> '{metadata,environment}'
+    );
+    IF event_environment IS NULL OR event_environment = '' THEN
+        RETURN NULL;
+    END IF;
+
+    event_username := NULL;
+    IF TG_TABLE_NAME IN ('config_versions', 'user_preferences') THEN
+        event_username := NULLIF(row_data ->> 'username', '__shared__');
+    ELSIF TG_TABLE_NAME = 'audit_events'
+        AND COALESCE(row_data ->> 'action', '') <> 'kill_switch.activate' THEN
+        event_username := NULLIF(row_data ->> 'actor', 'scheduler');
+        event_username := NULLIF(event_username, 'system');
+    END IF;
+
+    PERFORM pg_notify(
+        'codex_dashboard_events',
+        json_build_object(
+            'environment', event_environment,
+            'username', event_username
+        )::text
+    );
+    RETURN NULL;
+END;
+$dashboard_event$;
+""".strip()
+
+
+def _dashboard_event_trigger_sql(table_name: str) -> str:
+    trigger_name = "notify_dashboard_change"
+    return f"""
+DO $dashboard_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = '{trigger_name}'
+          AND tgrelid = '{table_name}'::regclass
+    ) THEN
+        CREATE TRIGGER {trigger_name}
+        AFTER INSERT OR UPDATE OR DELETE ON {table_name}
+        FOR EACH ROW
+        EXECUTE FUNCTION shared.notify_dashboard_change();
+    END IF;
+END;
+$dashboard_trigger$;
+""".strip()
+
+
 def migration_plan() -> MigrationPlan:
     """Build SQL statements that create v1 schemas and tables.
 
     REQ: REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005,
-    REQ-DB-008
+    REQ-DB-008, REQ-DB-010
     """
 
     schema_sql = tuple(
@@ -1248,10 +1331,17 @@ def migration_plan() -> MigrationPlan:
         for table in _ALL_TABLES
         for index in sorted(table.indexes, key=lambda current: current.name or "")
     )
+    dashboard_event_sql = (
+        _DASHBOARD_EVENT_FUNCTION_SQL,
+        *(
+            _dashboard_event_trigger_sql(table_name)
+            for table_name in _DASHBOARD_EVENT_TABLE_NAMES
+        ),
+    )
     return MigrationPlan(
         schema_names=REQUIRED_SCHEMAS,
         table_names=tuple(f"{table.schema}.{table.name}" for table in _ALL_TABLES),
-        sql=schema_sql + table_sql + index_sql,
+        sql=schema_sql + table_sql + index_sql + dashboard_event_sql,
     )
 
 

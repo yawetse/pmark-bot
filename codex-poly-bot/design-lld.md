@@ -277,7 +277,7 @@
 
 **File:** `backend/app/db/`  
 **Responsibility:** Manage SQLAlchemy sessions, transactions, model-provider schemas, migrations, repositories, and unit-of-work boundaries.  
-**Requirements Covered:** REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-009, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003, REQ-OBS-004
+**Requirements Covered:** REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-009, REQ-DB-010, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003, REQ-OBS-004
 **Dependencies:** SQLAlchemy, Alembic, Postgres  
 **Depended On By:** Services, adapters that persist state, workers, API routers
 
@@ -350,6 +350,13 @@
 - **Complexity:** O(candidate count) inserts with O(1) transaction commits.
 - **Key steps:** Begin the transaction, insert the scanner run, insert candidate rows through the active session, commit once, and roll back the complete batch on any persistence error.
 
+#### Dashboard Commit Notifications
+
+- **What it does:** Adds idempotent Postgres triggers to dashboard summary tables and publishes a data-free `codex_dashboard_events` notification after a relevant transaction commits.
+- **Why this approach:** PostgreSQL remains the source of truth and already provides cross-task notifications without another service. PostgreSQL delivers notifications only after commit and coalesces identical channel and payload pairs within one transaction.
+- **Complexity:** O(changed summary rows) trigger calls with O(1) delivered invalidations for identical environment and username payloads in one transaction.
+- **Key steps:** Extract environment from the row or job metadata, scope config and preference changes to the stored username, publish no credential or row payload, and omit high-volume scanner-candidate and stock-bar detail tables.
+
 ### 2.3 Data Structures
 
 | Structure | Type | Description | Invariants |
@@ -378,6 +385,7 @@
 | 4 | Broker position and Postgres position mismatch | Persist mismatch and block affected Alpaca live orders | REQ-ALP-018 |
 | 5 | Audit event correction needed | Write new corrective audit event, do not mutate original | REQ-OBS-004 |
 | 6 | One candidate insert fails during scanner persistence | Roll back the scanner run and every candidate in the batch | REQ-DB-009 |
+| 7 | A transaction changes hundreds of rows with the same environment scope | PostgreSQL coalesces the identical invalidation payload before delivery | REQ-DB-010 |
 
 ### 2.5 Error Handling
 
@@ -397,6 +405,7 @@
 | Auditability | History retained indefinitely | No TTL/archive/delete job in v1 |
 | Testability | Repositories testable with local Postgres | Docker Compose Postgres and migrations |
 | Storage I/O | Scanner batches do not issue one commit per candidate | One transaction owns the run and candidate writes |
+| Realtime fan-out | Committed changes do not require fixed-interval reads per connected user | Postgres notifications feed one listener per backend task and data-free local fan-out |
 
 ### 2.7 Dependencies & Integration Points
 
@@ -2474,7 +2483,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 
 **File:** `backend/app/main.py`, `backend/app/api/`  
 **Responsibility:** Bootstrap FastAPI, wire dependencies, expose authenticated dashboard APIs, and keep read/write paths separated from worker loops.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-013, REQ-CMP-005, REQ-DB-008, REQ-VEN-002, REQ-VEN-003, REQ-VEN-006, REQ-WAL-002, REQ-WAL-005, REQ-STR-002, REQ-STR-009, REQ-LLM-006, REQ-EXE-003, REQ-EXE-007, REQ-EXE-011, REQ-EXE-012, REQ-EXE-014, REQ-EXE-016, REQ-ALP-007, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-014, REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-013, REQ-UI-015, REQ-CMP-005, REQ-DB-008, REQ-DB-010, REQ-VEN-002, REQ-VEN-003, REQ-VEN-006, REQ-WAL-002, REQ-WAL-005, REQ-STR-002, REQ-STR-009, REQ-LLM-006, REQ-EXE-003, REQ-EXE-007, REQ-EXE-011, REQ-EXE-012, REQ-EXE-014, REQ-EXE-016, REQ-ALP-007, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-014, REQ-NOT-001, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 **Dependencies:** Auth service, config service, audit service, wallet service, comparison service, worker repositories, order/position repositories, notification service, execution service  
 **Depended On By:** Next.js dashboard, local development, CI smoke tests
 
@@ -2615,6 +2624,13 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 - **Complexity:** O(page size) with indexed repository reads.
 - **Key steps:** Resolve auth, read user-scoped config and preferences by actor/environment, read repositories, map to response schemas, include degraded/unavailable markers instead of failing whole summary when one section is unavailable.
 
+#### Event-Driven Dashboard Flow
+
+- **What it does:** Maintains one PostgreSQL listener per backend task and fans commit invalidations out to matching authorized WebSocket subscriptions.
+- **Why this approach:** It removes the five-second full-snapshot query loop while retaining a complete resynchronization point.
+- **Complexity:** O(local subscribers) fan-out per coalesced invalidation and O(1) snapshot query per matching subscriber change.
+- **Key steps:** Start the listener with the app, subscribe before the initial snapshot, match environment and optional username, send a lightweight heartbeat while idle, rebuild operations, market data, tick schedule, loop status, and venue portfolio after a matching event, and close with a retryable code if the listener disconnects.
+
 ### 21.3 Data Structures
 
 | Structure | Type | Description | Invariants |
@@ -2674,7 +2690,7 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 | # | Question/Assumption | Impact if Wrong | Status |
 |---|---------------------|-----------------|--------|
-| 1 | REST endpoints are enough for v1 dashboard status, without websockets. | Dashboard refresh is polling-based. | DESIGN CHOICE |
+| 1 | PostgreSQL notifications are non-durable. | Every WebSocket connection and reconnection receives a complete user-scoped snapshot before incremental invalidations. | DESIGN CHOICE |
 
 ---
 
@@ -2682,8 +2698,8 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 **File:** `frontend/`  
 **Responsibility:** Provide the Next.js React dashboard, GitHub OAuth flow, configuration editor, model comparison views, and operational controls.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
-**Dependencies:** Backend API routers, GitHub OAuth app, signed session secret, browser fetch API  
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
+**Dependencies:** Backend API routers, GitHub OAuth app, signed session secret, browser fetch and WebSocket APIs
 **Depended On By:** Operators, local testing, Playwright tests
 
 ### 22.1 Public Interface
@@ -2726,12 +2742,12 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 
 The backend token signing secret is only available to Next.js server runtime and FastAPI. It is never exposed through `NEXT_PUBLIC_*`, client components, serialized props, logs, or browser storage.
 
-#### Realtime Fallback Flow
+#### Realtime WebSocket and Fallback Flow
 
-- **What it does:** Falls back from WebSocket updates to bounded snapshot polling.
-- **Why this approach:** A slow backend request must not cause overlapping retries that add more database load.
+- **What it does:** Applies event-driven WebSocket snapshots and falls back to bounded snapshot polling while reconnecting.
+- **Why this approach:** Steady-state clients should not poll, but a socket or listener failure must not leave the dashboard stale or create overlapping requests.
 - **Complexity:** O(1) active requests per browser session.
-- **Key steps:** Start one snapshot request, wait for completion, schedule the next request, increase the delay after failures up to a fixed cap, and abort the active request on unmount.
+- **Key steps:** Open the authorized socket, apply initial and changed snapshots including portfolio state, accept lightweight heartbeats, start one snapshot request only after socket failure, wait for completion before scheduling the next poll, retry both paths with bounded backoff, stop polling after the socket reconnects, and abort timers and requests on unmount.
 
 #### Config Editing Flow
 
@@ -2766,6 +2782,8 @@ The backend token signing secret is only available to Next.js server runtime and
 | 10 | A recommendation changes an integer-only cap while the market-data total spans venues | Submit a JSON number and show each venue's candidate count beside the total | REQ-UI-012, REQ-UI-005 |
 | 11 | Scanner candidate details are deferred from the default dashboard response | Read the latest scanner-run totals and its single persisted pipeline-step rejection breakdown; do not query candidate history or infer scanner results from the market-data total | REQ-UI-004, REQ-OBS-005 |
 | 12 | WebSocket setup fails while a snapshot request is slow | Keep one request in flight and schedule the next poll only after completion with bounded backoff | REQ-UI-014 |
+| 13 | WebSocket remains connected while no database state changes | Receive heartbeats without replacing dashboard state or issuing snapshot reads | REQ-UI-015 |
+| 14 | Portfolio reconciliation commits new confirmed positions or fills | Apply the portfolio from the next event snapshot without a separate polling interval | REQ-UI-015, REQ-UI-013 |
 
 ### 22.5 Error Handling
 
@@ -2786,6 +2804,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | Security | Backend token secret is server-only | Browser calls Next.js BFF route; server-only module mints FastAPI token |
 | Reliability | UI handles degraded sections | Typed API errors and unavailable states |
 | Reliability | Realtime fallback cannot create a retry storm | One in-flight poll, completion-based scheduling, bounded backoff, and cleanup abort |
+| Efficiency | Connected dashboards do not issue fixed-interval snapshot reads | Commit-driven WebSocket invalidations, idle heartbeats, and portfolio delivery on the same stream |
 | Testability | Critical flows covered | Playwright tests for auth gates, config save, kill switch, comparison view |
 
 ### 22.7 Dependencies & Integration Points
@@ -2800,7 +2819,7 @@ The backend token signing secret is only available to Next.js server runtime and
 
 | # | Question/Assumption | Impact if Wrong | Status |
 |---|---------------------|-----------------|--------|
-| 1 | Polling every 10 seconds is enough for cycle status; venue portfolio refreshes every 60 seconds. | Later may add websocket/SSE for faster updates. | DESIGN CHOICE |
+| 1 | Browser polling remains necessary only when the socket or database listener is unavailable. | Polling stays single-flight and the socket reconnects with bounded backoff. | DESIGN CHOICE |
 
 ---
 

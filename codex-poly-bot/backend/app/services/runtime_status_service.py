@@ -580,6 +580,7 @@ class RuntimeStatusService:
                     "metadata": {
                         "message": message or "scheduler heartbeat",
                         "scheduled": True,
+                        "environment": self.settings.environment.value,
                     },
                     "created_at": now,
                 },
@@ -822,6 +823,7 @@ class RuntimeStatusService:
                 "metadata": {
                     "message": "manual loop request accepted",
                     "scheduled": False,
+                    "environment": environment.value,
                     "requested_mode": requested_mode,
                     "triggered_by": username,
                     "market_data_pull_id": market_data_pull_ids[0] if market_data_pull_ids else None,
@@ -860,6 +862,7 @@ class RuntimeStatusService:
                 "metadata": {
                     "message": "manual dashboard run heartbeat",
                     "scheduled": False,
+                    "environment": environment.value,
                     "requested_mode": requested_mode,
                     "triggered_by": username,
                     "manual_run_id": run_id,
@@ -1163,6 +1166,7 @@ class RuntimeStatusService:
                     "metadata": {
                         "message": "scheduled provider market data ingestion",
                         "scheduled": True,
+                        "environment": environment.value,
                         "stock_universe_refresh": stock_universe_refresh.payload,
                         "market_data_pull_ids": [pull["id"] for pull in market_data_pulls],
                         "venues": [pull["venue"] for pull in market_data_pulls],
