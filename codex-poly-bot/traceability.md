@@ -23,11 +23,11 @@
 | REQ-UI-024 | Responsive header rules in `globals.css` | 390-pixel and 820-pixel browser review; 390-pixel page width equals scroll width | Pass |
 | REQ-UI-025 | Explicit unavailable states, consolidated errors, and realtime recovery in Overview, Activity, and Performance | Overview and redesign behavior tests; backend restart recovery review | Pass |
 | REQ-UI-026 | Exact-path recommendation planning, versioned writes, confirmation, local snapshot reconciliation, and undo | Static checks, Overview behavior tests, typecheck, and independent code review | Pass |
-| REQ-DEP-002 | Existing `develop` deployment workflow | GitHub Actions and development health evidence | Pending release |
-| REQ-DEP-003 | Existing `main` production workflow | GitHub Actions and production health evidence | Pending release |
-| REQ-DEP-004 | CloudFormation and deployment script contract | Shell validation and 40 deployment tests pass; CloudFormation validation pending CI or renewed local AWS session | Partial |
-| REQ-DEP-005 | Development ECS and HTTPS runtime | Development ECS, HTTPS, and browser checks | Pending release |
-| REQ-DEP-006 | Production ECS and HTTPS runtime | Production ECS, HTTPS, and browser checks | Pending release |
+| REQ-DEP-002 | Existing `develop` deployment workflow | [Run 29836817504](https://github.com/yawetse/pmark-bot/actions/runs/29836817504) passed all jobs and deployed development | Pass |
+| REQ-DEP-003 | Existing `main` production workflow | [Run 29837587362](https://github.com/yawetse/pmark-bot/actions/runs/29837587362) passed all jobs and deployed production | Pass |
+| REQ-DEP-004 | CloudFormation and deployment script contract | Shell validation and 40 deployment tests passed locally; both CloudFormation jobs passed and reported current stacks | Pass |
+| REQ-DEP-005 | Development ECS and HTTPS runtime | Development backend and frontend ECS services deployed; health returned HTTP 200; TLS and OAuth boundary passed | Pass |
+| REQ-DEP-006 | Production ECS and HTTPS runtime | Production backend and frontend ECS services reached steady state; health returned HTTP 200; TLS and OAuth boundary passed | Pass |
 
 ## Local Gate Results
 
@@ -42,10 +42,21 @@
 | Deployment shell syntax | Pass |
 | Deployment CI specification tests | 40 passed |
 | Full backend specification suite | 419 passed |
-| CloudFormation local validation | Blocked by expired AWS CLI session; CI validation remains required before merge |
+| CloudFormation validation | Pass in development and production GitHub Actions jobs; local AWS CLI session was expired |
 | Responsive browser review | Pass at desktop, 820 by 700, and 390 by 844 |
 | Live DOM accessibility sweep | Pass for headings, interactive names, duplicate IDs, keyboard focus outline, and overflow; Accesslint runtime unavailable |
 
 ## Release Audit
 
-This file records implementation evidence before publication. Development and production rows must be updated with GitHub Actions, ECS, HTTPS, certificate, SES, and browser evidence before issue `#194` is closed.
+| Evidence | Development | Production |
+|----------|-------------|------------|
+| Pull request | [#195](https://github.com/yawetse/pmark-bot/pull/195) | [#196](https://github.com/yawetse/pmark-bot/pull/196) |
+| GitHub Actions | [Run 29836817504](https://github.com/yawetse/pmark-bot/actions/runs/29836817504) passed | [Run 29837587362](https://github.com/yawetse/pmark-bot/actions/runs/29837587362) passed |
+| CloudFormation | `codex-poly-bot-development` current | `codex-poly-bot-production` current |
+| ECS | Backend and frontend deployment passed | Backend and frontend deployment passed and reached steady state |
+| HTTPS health | `https://dev-codex-poly-bot.repetere.net/health` returned HTTP 200 and `{"status":"ok"}` | `https://codex-poly-bot.repetere.net/health` returned HTTP 200 and `{"status":"ok"}` |
+| Browser | Dashboard rendered the GitHub OAuth boundary | Dashboard rendered the GitHub OAuth boundary |
+| Certificate | Expected ACM ARN; Amazon certificate for `*.repetere.net` valid through 2026-10-27 | Expected ACM ARN; Amazon certificate for `*.repetere.net` valid through 2026-10-27 |
+| SES | Deployment input used `asyncdoc.net` | Deployment input used `asyncdoc.net` |
+
+The verification browser did not have an authenticated GitHub session. Authenticated dashboard routes were verified locally against the release build. The deployed checks verified health, TLS, page rendering, and the OAuth boundary. All mapped UI and deployment requirements pass.

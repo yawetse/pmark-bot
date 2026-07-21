@@ -87,10 +87,10 @@ No external UI package is added. The redesign uses the installed React, Next.js,
 - [x] Pass code review and reconcile every finding.
 - [x] Pass live DOM accessibility and keyboard-focus checks. The Accesslint runtime was not available, so the local sweep checked one H1, named interactive controls, duplicate IDs, focus outline, and page overflow on each primary route.
 - [x] Verify 390-pixel mobile, 820-pixel tablet, and desktop layouts without page overflow.
-- [ ] Validate CloudFormation, deployment shell scripts, and required deployment tests. Shell validation and 40 deployment tests pass; local CloudFormation validation awaits a renewed AWS CLI session and remains covered by CI.
-- [ ] Merge implementation to `develop` and verify the development deployment, ECS service, HTTPS health, and browser UI.
-- [ ] Merge `develop` to `main` and verify the production deployment, ECS service, HTTPS health, and browser UI.
-- [ ] Complete the requirement-to-code-to-test traceability matrix and close issue #194.
+- [x] Validate CloudFormation, deployment shell scripts, and required deployment tests. Shell validation and 40 deployment tests passed locally; development and production CloudFormation jobs passed in GitHub Actions.
+- [x] Merge implementation to `develop` and verify the development deployment, ECS services, HTTPS health, TLS certificate, and OAuth boundary.
+- [x] Merge `develop` to `main` and verify the production deployment, ECS services, HTTPS health, TLS certificate, and OAuth boundary.
+- [x] Complete the requirement-to-code-to-test traceability matrix and attach the release evidence to issue #194.
 
 ## Local Verification Evidence
 
@@ -105,3 +105,21 @@ No external UI package is added. The redesign uses the installed React, Next.js,
 - `backend/.venv/bin/python -m pytest backend/tests/spec` with 419 passing tests
 - Browser review at desktop, 820 by 700, and 390 by 844 with labeled navigation and 390-pixel `scrollWidth === clientWidth`
 - Automated live DOM sweep across all five routes with one H1, zero unnamed native interactive controls, and zero duplicate IDs
+
+## Release Verification Evidence
+
+- Implementation PR: [#195](https://github.com/yawetse/pmark-bot/pull/195)
+- Development deployment: [GitHub Actions run 29836817504](https://github.com/yawetse/pmark-bot/actions/runs/29836817504)
+  - CloudFormation stack `codex-poly-bot-development` was current.
+  - ECS services `codex-poly-bot-development-backend` and `codex-poly-bot-development-frontend` deployed successfully.
+  - `https://dev-codex-poly-bot.repetere.net/health` returned HTTP 200 with `{"status":"ok"}`.
+  - `/dashboard` redirected to the GitHub OAuth sign-in boundary.
+- Production promotion PR: [#196](https://github.com/yawetse/pmark-bot/pull/196)
+- Production deployment: [GitHub Actions run 29837587362](https://github.com/yawetse/pmark-bot/actions/runs/29837587362)
+  - CloudFormation stack `codex-poly-bot-production` was current.
+  - ECS services `codex-poly-bot-production-backend` and `codex-poly-bot-production-frontend` deployed successfully and reached steady state.
+  - `https://codex-poly-bot.repetere.net/health` returned HTTP 200 with `{"status":"ok"}`.
+  - `/dashboard` redirected to the browser-rendered GitHub OAuth sign-in boundary.
+- Both stacks reported the expected ACM certificate ARN. Public TLS checks reported `CN=*.repetere.net`, issued by Amazon RSA 2048 M04, valid through October 27, 2026.
+- Both deployment jobs used the configured SES identity `asyncdoc.net` in `us-east-1`.
+- The verification browser did not have a GitHub session. Authenticated dashboard content was verified locally against the same build; deployed checks covered HTTPS, health, TLS, page rendering, and the OAuth boundary.

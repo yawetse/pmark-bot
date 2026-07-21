@@ -1518,6 +1518,6 @@
 | AC-039-04 | When development evidence passes, the promotion pull request shall merge to `main`, production shall deploy, and production health and dashboard browser evidence shall pass. |
 
 **Definition of Done:**
-- [ ] Traceability matrix maps every redesign requirement to code and evidence
-- [ ] Development and production deployment evidence is attached to issue #194
-- [ ] Issue #194 is closed only after the production requirement audit passes
+- [x] Traceability matrix maps every redesign requirement to code and evidence
+- [x] Development and production deployment evidence is attached to issue #194
+- [x] Issue #194 is closed only after the production requirement audit passes
