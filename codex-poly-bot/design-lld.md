@@ -1,9 +1,9 @@
 # codex-poly-bot Low-Level Design
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.0  
-**Date:** 2026-04-24  
-**Status:** DRAFT  
+**Version:** 1.1
+**Date:** 2026-07-21
+**Status:** APPROVED
 **Requirements Source:** `requirements.md`  
 **HLD Source:** `design-hld.md`  
 
@@ -2697,8 +2697,8 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 ## 22. Frontend App, Auth UI, and Dashboard
 
 **File:** `frontend/`  
-**Responsibility:** Provide the Next.js React dashboard, GitHub OAuth flow, configuration editor, model comparison views, and operational controls.  
-**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
+**Responsibility:** Provide the Next.js React dashboard, GitHub OAuth flow, five-page operator information architecture, configuration editor, model comparison views, and operational controls.
+**Requirements Covered:** REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-016, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026, REQ-CMP-005, REQ-ALP-014, REQ-NOT-006, REQ-OBS-005
 **Dependencies:** Backend API routers, GitHub OAuth app, signed session secret, browser fetch and WebSocket APIs
 **Depended On By:** Operators, local testing, Playwright tests
 
@@ -2709,11 +2709,15 @@ Expected component-level degradation returns HTTP 200 with `degraded_sections` w
 | Route | Purpose | REQ Trace |
 |-------|---------|-----------|
 | `/login` | GitHub OAuth sign-in entry | REQ-UI-002 |
-| `/dashboard` | Combined overview with actual venue portfolio and targeted scanner blocker recommendations | REQ-UI-004, REQ-UI-012, REQ-UI-013, REQ-CMP-005 |
+| `/dashboard` | One data-derived current state, four runtime facts, latest result, and contextual links | REQ-UI-004, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-025, REQ-UI-026 |
+| `/dashboard/activity` | Latest scan funnel and recent check log | REQ-UI-020, REQ-UI-025 |
+| `/dashboard/performance` | Venue-confirmed aggregate metrics, by-market summary, and specialist comparison links | REQ-UI-013, REQ-UI-021, REQ-CMP-005 |
+| `/dashboard/config` | Plain-language common settings followed by the complete advanced runtime config editor | REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-022, REQ-ALP-014, REQ-NOT-006 |
+| `/dashboard/help` | Five-step process and common operating questions | REQ-UI-023 |
+| `/dashboard/operations` | Retained detailed operations, manual run, order history, and emergency-stop control linked from Activity and Settings | REQ-UI-008, REQ-UI-016 |
 | `/dashboard/models/claude` | Claude-specific positions, decisions, budget, P&L | REQ-UI-010 |
 | `/dashboard/models/openai` | OpenAI-specific positions, decisions, budget, P&L | REQ-UI-010 |
 | `/dashboard/comparison` | Claude vs OpenAI across Polymarket and Alpaca | REQ-UI-011 |
-| `/dashboard/config` | Runtime config editor | REQ-UI-005, REQ-ALP-014, REQ-NOT-006 |
 | `/dashboard/audit` | Audit events and health indicators | REQ-OBS-005 |
 | `/dashboard/system` | Worker, ingestion, wallet, venue, notification, kill-switch state | REQ-UI-004, REQ-UI-008 |
 
@@ -2756,6 +2760,20 @@ The backend token signing secret is only available to Next.js server runtime and
 - **Complexity:** O(number of edited fields).
 - **Key steps:** Load current config/version, render validated controls, preserve each recommended setting's required JSON value type, show per-venue market-data counts, submit the patch with the expected version, show the audit result, and refresh dashboard state.
 
+#### Overview State Derivation
+
+- **What it does:** Maps the current snapshot to exactly one `live`, `attention`, or `clear` state.
+- **Why this approach:** The operator needs one answer before detailed records or configuration.
+- **Complexity:** O(number of latest pipeline stages and setup checks).
+- **Precedence:** `live` only when `execution.latestRun.pipelineRunId` matches the newest completed `pipelineRuns[0].id` and that execution run has at least one submitted or filled non-simulated intent; otherwise `attention` when the matching latest pipeline has a blocked stage, a critical section is degraded, required setup is missing, or notifications are incomplete; otherwise `clear`. If run IDs are missing, a submitted intent timestamp must fall between the latest pipeline start and completion times or live state is not asserted.
+- **Output:** A discriminated `OverviewState` union with state-specific content, four monitoring facts, one recent result, and contextual links. The production component has no state selector.
+
+#### Recommendation Confirmation and Undo
+
+- **What it does:** Applies one recommendation with explicit confirmation and supports reversal of the last successful recommendation.
+- **Why this approach:** Risk configuration should not change from a single ambiguous click.
+- **Key steps:** Capture current version and typed value, show current and proposed values in the confirmation dialog, submit through the existing config mutation, store the successful inverse patch in component state, and expose one undo action until another mutation or page load replaces it. Version conflicts require a refresh instead of a blind retry.
+
 ### 22.3 Data Structures
 
 | Structure | Type | Description | Invariants |
@@ -2765,6 +2783,10 @@ The backend token signing secret is only available to Next.js server runtime and
 | `DashboardViewModel` | TypeScript type | Aggregated UI state | Secrets absent |
 | `ConfigFormState` | TypeScript type | Editable config sections | Carries config version |
 | `MetricDisplayValue` | TypeScript type | Metric value, unavailable marker, caveat | Missing data is not rendered as zero |
+| `OverviewState` | TypeScript discriminated union | `live`, `attention`, or `clear` state with state-specific fields | Exactly one state is rendered and it is derived from real snapshot data |
+| `DashboardPrimaryRoute` | TypeScript literal union | Overview, Activity, Performance, Settings, Help route metadata | Five items, no overflow destination |
+| `RecommendationUndo` | TypeScript type | Config path, previous typed value, applied typed value, resulting version | Retains only the most recent successful recommendation and is cleared by the next config mutation, navigation, or reload |
+| `PerformanceData` | TypeScript type | `VenuePortfolioView` confirmed account, position, and fill totals | Trade counts use `overall.filledTrades` and each venue's `filledTrades`; Win rate remains unavailable until confirmed closed outcomes exist |
 
 ### 22.4 Edge Cases & Boundary Conditions
 
@@ -2784,6 +2806,13 @@ The backend token signing secret is only available to Next.js server runtime and
 | 12 | WebSocket setup fails while a snapshot request is slow | Keep one request in flight and schedule the next poll only after completion with bounded backoff | REQ-UI-014 |
 | 13 | WebSocket remains connected while no database state changes | Receive heartbeats without replacing dashboard state or issuing snapshot reads | REQ-UI-015 |
 | 14 | Portfolio reconciliation commits new confirmed positions or fills | Apply the portfolio from the next event snapshot without a separate polling interval | REQ-UI-015, REQ-UI-013 |
+| 15 | Latest tick placed a real order and another section is degraded | Render live-trade state first and include the degradation once in supporting status | REQ-UI-017, REQ-UI-025 |
+| 16 | Latest funnel is blocked by more than three settings | Rank blockers by latest stopped stage and impact, then show at most three recommendations | REQ-UI-018 |
+| 17 | Mobile viewport is 390 CSS pixels wide | Show all five labeled destinations without page-level horizontal overflow | REQ-UI-016, REQ-UI-024 |
+| 18 | Recommendation save succeeds and the operator selects Undo | Submit the inverse typed patch through the audited endpoint, or show a version conflict without overwriting newer settings | REQ-UI-026, REQ-UI-006, REQ-UI-007 |
+| 19 | Another config mutation occurs after a recommendation save | Clear the prior undo action before or with the new mutation | REQ-UI-026 |
+| 20 | Latest execution summary contains an older submitted order than the latest pipeline run | Do not render live state unless the execution run ID or bounded timestamps correlate it to the latest pipeline | REQ-UI-017 |
+| 21 | Portfolio fills exist but authoritative closed-trade outcomes do not | Render Win rate as unavailable and do not infer wins from fills | REQ-UI-021, REQ-CMP-004, REQ-CMP-005 |
 
 ### 22.5 Error Handling
 
@@ -2799,7 +2828,8 @@ The backend token signing secret is only available to Next.js server runtime and
 
 | NFR | Requirement | How Addressed |
 |-----|-------------|---------------|
-| Usability | Operational dashboard should be scan-friendly | Dense tables, tabs by model/provider, clear status states |
+| Usability | Overview should answer whether action is needed without duplicating route content | One derived state, progressive disclosure, and focused routes |
+| Accessibility | Primary navigation and status remain usable across input and display modes | Semantic landmarks, text labels, visible focus, non-color status cues, reduced motion, 390-pixel layout test |
 | Security | Session cookies are protected | HttpOnly, Secure, SameSite cookie settings |
 | Security | Backend token secret is server-only | Browser calls Next.js BFF route; server-only module mints FastAPI token |
 | Reliability | UI handles degraded sections | Typed API errors and unavailable states |
@@ -2815,7 +2845,51 @@ The backend token signing secret is only available to Next.js server runtime and
 | Imports | GitHub OAuth | OAuth callback | User identity |
 | Exports to | User | Browser UI | Operational controls |
 
-### 22.8 Open Questions / Assumptions
+### 22.8 Dashboard IA Component Boundaries
+
+| Component | Responsibility | Inputs | Excludes |
+|-----------|----------------|--------|----------|
+| `DashboardNav` | Render the five primary routes and location state | Current pathname, theme preference | Legacy route overflow menu |
+| `ConsumerDashboard` | Orchestrate realtime data, mutations, state derivation, and degraded notices | Existing dashboard APIs and realtime hook | Detailed activity tables and full portfolio records |
+| `OverviewPage` | Render one overview state and supporting facts | Derived state, monitoring facts, latest result, callbacks | Data fetching and prototype state controls |
+| `ActivityView` | Render latest funnel and recent check log | Operations snapshot | Config forms and portfolio tables |
+| `PerformanceView` | Render confirmed metrics and by-market summary | Venue portfolio snapshot | Simulated or unfilled orders; inferred wins from raw fills; comparison metrics that are not the portfolio source of truth |
+| `ConfigControls` | Render common controls first and advanced controls on demand | Config snapshot and audited mutation callback | Direct backend access |
+| `HelpAboutView` | Render static process and FAQ content | None | Backend-dependent status |
+
+All route components use semantic regions with one page heading. The dashboard shell sets shared tokens, maximum content width, sticky navigation, responsive five-column mobile navigation, and focus styles. Page-specific CSS remains under the dashboard namespace.
+
+#### Common Settings Mapping
+
+The common confidence and spread controls follow `default_selected_venue`. Changing the selected venue changes the displayed path and does not patch both venues. Each Apply action submits one typed patch unless the operator explicitly changes a market checkbox group.
+
+| Common control | Config path | Type and range | Save behavior |
+|----------------|-------------|----------------|---------------|
+| Confidence, Polymarket US or International selected | `reasoning.polymarket.min_confidence` | Decimal ratio 0 to 1, step 0.01; display as percent | One `number` patch |
+| Confidence, Alpaca selected | `reasoning.alpaca.min_confidence` | Decimal ratio 0 to 1, step 0.01; display as percent | One `number` patch |
+| Spread, Polymarket US or International selected | `scanner.polymarket.max_spread` | Decimal ratio 0 to 0.2, step 0.001; display as percent | One `number` patch |
+| Spread, Alpaca selected | `scanner.alpaca.max_spread` | USD 0.01 to 5, step 0.01 | One `number` patch |
+| Use real money | `live_enabled` | Boolean | One boolean patch after the existing typed live confirmation |
+| Trade email | `notifications.email_on_trade_placed` | Boolean | One boolean patch |
+| Recipient email | `notifications.recipients` | Object mapping recipient name to validated email | Preserve existing keys and patch the edited operator entry |
+| Polymarket US market | `venues.polymarket_us.enabled` | Boolean | One boolean patch |
+| Polymarket International market | `venues.polymarket_international.enabled` | Boolean | One boolean patch |
+| Alpaca market | `venues.alpaca.enabled` | Boolean | One boolean patch |
+
+#### Contextual Legacy Route Ownership
+
+| Legacy route | Owning redesigned page and link label |
+|--------------|---------------------------------------|
+| `/dashboard/operations` | Activity, `Detailed operations and emergency stop`; Settings, `Open emergency stop` |
+| `/dashboard/data` | Activity, `Market data` |
+| `/dashboard/scenario` | Settings, `Test settings with What-if` |
+| `/dashboard/comparison` | Performance, `Compare AI models` |
+| `/dashboard/models` | Performance, `AI model detail` |
+| `/dashboard/system` | Overview, `System health` |
+
+Direct URLs remain valid. A route-link test asserts that each owner page renders its mapped contextual link.
+
+### 22.9 Open Questions / Assumptions
 
 | # | Question/Assumption | Impact if Wrong | Status |
 |---|---------------------|-----------------|--------|

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    body { margin: 0; }
+    a { color: inherit; text-decoration: none; }
+  </style>
+</helmet>
+
+<div style="min-height:100vh; background:#f4f6f8; color:#17202a; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;">
+
+  <!-- Topbar / nav -->
+  <header style="display:flex; align-items:center; gap:20px; justify-content:space-between; padding:14px 32px; border-bottom:1px solid #d7dee8; background:rgba(255,255,255,0.88); position:sticky; top:0; z-index:20; backdrop-filter:blur(12px);">
+    <div style="display:inline-flex; align-items:center; gap:10px; font-size:14px; font-weight:800; white-space:nowrap;">
+      <span style="width:18px; height:18px; border-radius:4px; background:linear-gradient(135deg,#126b62,#2b6fd6); display:inline-block;"></span>
+      <span>codex-poly-bot</span>
+    </div>
+    <div style="display:flex; align-items:center; flex:1; gap:12px; justify-content:flex-end; min-width:0;">
+      <nav style="display:flex; align-items:center; flex:1; gap:8px; justify-content:flex-start; min-width:0;" aria-label="Dashboard">
+        <a href="#" data-active="true" style="display:inline-flex; align-items:center; gap:7px; background:#e0f1ed; border:1px solid #79c2b0; border-radius:6px; color:#0b4f49; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">Overview</a>
+        <a href="#" style="display:inline-flex; align-items:center; gap:7px; background:#ffffff; border:1px solid #d7dee8; border-radius:6px; color:#17202a; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">Run</a>
+        <a href="#" style="display:inline-flex; align-items:center; gap:7px; background:#ffffff; border:1px solid #d7dee8; border-radius:6px; color:#17202a; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">Markets</a>
+        <a href="#" style="display:inline-flex; align-items:center; gap:7px; background:#ffffff; border:1px solid #d7dee8; border-radius:6px; color:#17202a; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">What-if</a>
+        <div style="position:relative;">
+          <div style="cursor:pointer; display:inline-flex; align-items:center; gap:7px; background:#ffffff; border:1px solid #d7dee8; border-radius:6px; color:#17202a; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">
+            <span>More</span>
+            <span style="font-size:10px;">&#9662;</span>
+          </div>
+        </div>
+      </nav>
+      <div style="display:flex; align-items:center; gap:8px; color:#5f6c7b;">
+        <span style="font-size:12px; font-weight:800; text-transform:uppercase;">Theme</span>
+        <div style="background:#eef3f7; border:1px solid #d7dee8; border-radius:6px; display:inline-flex; overflow:hidden;">
+          <button style="background:transparent; border:0; color:#17202a; font-size:13px; font-weight:700; min-height:36px; padding:0 10px;">System</button>
+          <button style="background:transparent; border-left:1px solid #d7dee8; border-right:0; border-top:0; border-bottom:0; color:#17202a; font-size:13px; font-weight:700; min-height:36px; padding:0 10px;">Light</button>
+          <button style="background:#126b62; border-left:1px solid #d7dee8; border-right:0; border-top:0; border-bottom:0; color:#ffffff; font-size:13px; font-weight:700; min-height:36px; padding:0 10px;">Dark</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div style="margin:0 auto; max-width:1320px; padding:28px 32px 44px; display:grid; gap:20px;">
+
+    <!-- Hero -->
+    <div style="display:flex; align-items:center; gap:18px; justify-content:space-between; background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:28px;">
+      <div>
+        <p style="color:#5f6c7b; font-size:11px; font-weight:800; letter-spacing:0; margin:0 0 7px; text-transform:uppercase;">Dashboard</p>
+        <h1 style="font-size:34px; line-height:1.05; margin:0 0 10px;">No trade on the last cycle</h1>
+        <div>
+          <p style="color:#5f6c7b; font-size:16px; line-height:1.55; margin:0 0 6px; max-width:780px;">The scanner found 3 candidates but none cleared the confidence gate. Simulation mode is active, so no funds were at risk.</p>
+          <p style="color:#5f6c7b; font-size:16px; line-height:1.55; margin:0; max-width:780px;">Active venues: polymarket, alpaca &middot; Live mode: simulation only</p>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:16px;">
+          <a href="#" style="display:inline-flex; align-items:center; gap:7px; background:#126b62; border:1px solid #126b62; border-radius:6px; color:#fff; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">&#8635; Run</a>
+          <a href="#" style="display:inline-flex; align-items:center; gap:7px; background:#ffffff; border:1px solid #d7dee8; border-radius:6px; color:#17202a; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">&#9881; Settings</a>
+          <a href="#" style="display:inline-flex; align-items:center; gap:7px; background:#ffffff; border:1px solid #d7dee8; border-radius:6px; color:#17202a; font-size:13px; font-weight:600; min-height:40px; padding:0 13px;">&#10003; Verify system</a>
+        </div>
+      </div>
+      <div style="align-items:center; border:1px solid #c3ccd9; border-radius:8px; display:inline-flex; flex:0 0 auto; font-size:14px; font-weight:800; gap:8px; min-height:48px; padding:0 14px; white-space:nowrap; background:#e3eefc; color:#24558f;">
+        <span>&#9432;</span><span>No trade this cycle</span>
+      </div>
+    </div>
+
+    <!-- Tick timing strip -->
+    <div style="display:grid; gap:12px; grid-template-columns:repeat(4,minmax(0,1fr));">
+      <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); display:grid; gap:6px; min-height:92px; padding:14px;">
+        <span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Last tick</span>
+        <strong style="font-size:20px; line-height:1.12;">14:32:05 UTC</strong>
+        <small style="color:#5f6c7b; line-height:1.35;">Run 8841</small>
+      </div>
+      <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); display:grid; gap:6px; min-height:92px; padding:14px;">
+        <span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Last status</span>
+        <strong style="font-size:20px; line-height:1.12;">completed</strong>
+        <small style="color:#5f6c7b; line-height:1.35;">Latest recorded tick result.</small>
+      </div>
+      <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); display:grid; gap:6px; min-height:92px; padding:14px;">
+        <span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Next tick</span>
+        <strong style="font-size:20px; line-height:1.12;">14:33:05 UTC</strong>
+        <small style="color:#5f6c7b; line-height:1.35;">Every 60s</small>
+      </div>
+      <div style="background:#ffffff; border:1px solid #2f70b7; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); display:grid; gap:6px; min-height:92px; padding:14px;">
+        <span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Countdown</span>
+        <strong style="font-size:20px; line-height:1.12;">00:42</strong>
+        <small style="color:#5f6c7b; line-height:1.35;">Connected</small>
+      </div>
+    </div>
+
+    <!-- Tick funnel -->
+    <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:18px; overflow:hidden;">
+      <div style="display:flex; align-items:flex-start; gap:14px; justify-content:space-between;">
+        <div>
+          <p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Last tick funnel</p>
+          <h2 style="font-size:20px; margin:0 0 6px;">Why no trade happened</h2>
+          <p style="color:#5f6c7b; line-height:1.5; margin:0;">3 candidates entered, 1 passed scoring, 0 cleared risk checks.</p>
+        </div>
+        <span style="border-radius:999px; border:1px solid #b5cdeb; font-size:12px; font-weight:700; padding:6px 9px; background:#e3eefc; color:#24558f; white-space:nowrap;">waiting</span>
+      </div>
+      <div style="display:grid; gap:10px; grid-template-columns:repeat(4,minmax(130px,1fr));">
+        <div style="background:#f9fbfc; border:1px solid #9ed9c7; border-radius:8px; padding:12px; display:grid; gap:8px;">
+          <span style="color:#5f6c7b; font-size:12px; font-weight:800;">Scan</span>
+          <strong style="font-size:15px;">487 &rarr; 35</strong>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #9ed9c7; border-radius:8px; padding:12px; display:grid; gap:8px;">
+          <span style="color:#5f6c7b; font-size:12px; font-weight:800;">Candidates</span>
+          <strong style="font-size:15px;">35 &rarr; 3</strong>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #b5cdeb; border-radius:8px; padding:12px; display:grid; gap:8px;">
+          <span style="color:#5f6c7b; font-size:12px; font-weight:800;">Confidence gate</span>
+          <strong style="font-size:15px;">3 &rarr; 1</strong>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #efb0a9; border-radius:8px; padding:12px; display:grid; gap:8px;">
+          <span style="color:#5f6c7b; font-size:12px; font-weight:800;">Risk checks</span>
+          <strong style="font-size:15px;">1 &rarr; 0</strong>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cycle guide -->
+    <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+      <div style="display:grid; gap:12px; grid-template-columns:minmax(220px,0.8fr) minmax(280px,1fr); align-items:end;">
+        <div>
+          <p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">How it works</p>
+          <h2 style="font-size:22px; margin:0;">One trading cycle, five checks</h2>
+        </div>
+        <p style="color:#5f6c7b; line-height:1.5; margin:0;">A cycle is one full pass through market data, trade scoring, order handling, and exit monitoring.</p>
+      </div>
+      <div style="display:grid; gap:10px; grid-template-columns:repeat(5,minmax(0,1fr));">
+        <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+          <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:850; height:26px; justify-content:center; width:26px;">1</span>
+          <div><strong style="font-size:13px;">Collect prices</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Latest prices, spreads, liquidity.</p></div>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+          <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:850; height:26px; justify-content:center; width:26px;">2</span>
+          <div><strong style="font-size:13px;">Find candidates</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Markets that fit your filters move forward.</p></div>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+          <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:850; height:26px; justify-content:center; width:26px;">3</span>
+          <div><strong style="font-size:13px;">Score the trade</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Direction, confidence, and risk controls.</p></div>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+          <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:850; height:26px; justify-content:center; width:26px;">4</span>
+          <div><strong style="font-size:13px;">Simulate or submit</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Live only when every gate is clear.</p></div>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+          <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:850; height:26px; justify-content:center; width:26px;">5</span>
+          <div><strong style="font-size:13px;">Monitor exits</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Stop, target, and closing rules.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Consumer grid: safety / actions / controls -->
+    <div style="display:grid; gap:16px; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:start;">
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Safety</p><h2 style="font-size:20px; margin:0;">Current mode</h2></div>
+          <span style="border-radius:999px; border:1px solid #b5cdeb; font-size:12px; font-weight:700; padding:6px 9px; background:#e3eefc; color:#24558f;">waiting</span>
+        </div>
+        <div style="display:grid; gap:10px;">
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Trading mode</span><strong style="font-size:20px;">Simulation only</strong></div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Emergency stop</span><strong style="font-size:20px;">clear</strong></div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Active venues</span><strong style="font-size:20px;">polymarket, alpaca</strong></div>
+        </div>
+        <p style="color:#5f6c7b; font-size:13px; margin:0;">Simulation is the current safe mode.</p>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Action needed</p><h2 style="font-size:20px; margin:0;">Next operator step</h2></div>
+          <span style="border-radius:999px; border:1px solid #b5cdeb; font-size:12px; font-weight:700; padding:6px 9px; background:#e3eefc; color:#24558f;">2 items</span>
+        </div>
+        <ol style="color:#5f6c7b; display:grid; gap:14px; line-height:1.5; margin:0; padding-left:20px;">
+          <li><strong style="color:#17202a; display:block;">Loosen the confidence gate</strong><span>1 candidate missed the 0.75 confidence threshold by 4 points.</span><br/><a href="#" style="color:#126b62; display:inline-flex; font-size:13px; font-weight:800; margin-top:6px;">Review what-if</a></li>
+          <li><strong style="color:#17202a; display:block;">Add a notification recipient</strong><span>Trade emails have no approved recipient yet.</span><br/><a href="#" style="color:#126b62; display:inline-flex; font-size:13px; font-weight:800; margin-top:6px;">Open settings</a></li>
+        </ol>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Primary controls</p><h2 style="font-size:20px; margin:0;">Common actions</h2></div>
+          <span>&#9881;</span>
+        </div>
+        <div style="display:grid; gap:12px;">
+          <a href="#" style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:14px; display:block;"><strong>Run or review</strong><p style="color:#5f6c7b; font-size:13px; margin:4px 0 0;">Run a simulation cycle, review orders, and use the emergency stop.</p></a>
+          <a href="#" style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:14px; display:block;"><strong>Change settings</strong><p style="color:#5f6c7b; font-size:13px; margin:4px 0 0;">Venues, live mode, notifications, market filters, model limits.</p></a>
+          <a href="#" style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:14px; display:block;"><strong>Check readiness</strong><p style="color:#5f6c7b; font-size:13px; margin:4px 0 0;">Credentials, scheduler heartbeat, notifications, account status.</p></a>
+        </div>
+      </section>
+
+      <!-- Portfolio span-3 -->
+      <section style="grid-column:1/-1; background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Actual portfolio</p><h2 style="font-size:20px; margin:0;">Venue-confirmed performance</h2></div>
+        </div>
+        <div style="border-block:1px solid #d7dee8; display:grid; grid-template-columns:repeat(6,minmax(0,1fr));">
+          <div style="padding:14px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Equity</span><strong style="font-size:21px;">$14,312</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:14px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Realized P&amp;L</span><strong style="font-size:21px; color:#0d5f52;">+$2,140</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:14px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Unrealized</span><strong style="font-size:21px; color:#a33a3a;">-$88</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:14px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Open positions</span><strong style="font-size:21px;">4</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:14px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Win rate</span><strong style="font-size:21px;">74%</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:14px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Trades</span><strong style="font-size:21px;">271</strong></div>
+        </div>
+      </section>
+
+      <!-- Last tick result span-3 -->
+      <section style="grid-column:1/-1; background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Last tick</p><h2 style="font-size:20px; margin:0;">Result</h2></div>
+          <span style="border-radius:999px; border:1px solid #b5cdeb; font-size:12px; font-weight:700; padding:6px 9px; background:#e3eefc; color:#24558f;">waiting</span>
+        </div>
+        <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:16px; display:grid; gap:8px;">
+          <strong>No candidate cleared every gate</strong>
+          <p style="color:#5f6c7b; margin:0;">3 candidates were scored; the closest missed the confidence threshold by 4 points.</p>
+        </div>
+        <div style="display:grid; gap:10px; grid-template-columns:repeat(3,minmax(0,1fr));">
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Passed filters</span><strong style="font-size:20px;">3</strong></div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Real orders</span><strong style="font-size:20px;">0</strong></div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:12px; font-weight:750; text-transform:uppercase;">Practice orders</span><strong style="font-size:20px;">1</strong></div>
+        </div>
+      </section>
+
+      <!-- Notifications -->
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Notifications</p><h2 style="font-size:20px; margin:0;">Trade emails</h2></div>
+          <span>&#128276;</span>
+        </div>
+        <label style="display:flex; align-items:center; gap:10px; font-size:14px;">
+          <input type="checkbox" checked="checked"/>
+          <span>Email me when a real trade is placed</span>
+        </label>
+        <p style="color:#5f6c7b; font-size:13px; margin:0;">Add a recipient in Settings before emails can send.</p>
+      </section>
+
+      <!-- Daily summary span-2 -->
+      <section style="grid-column:span 2; background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Daily summary</p><h2 style="font-size:20px; margin:0;">What is happening</h2></div>
+          <span>&#8635;</span>
+        </div>
+        <div style="display:grid; gap:8px;">
+          <p style="color:#17202a; font-size:14px; margin:0;">Scanner surfaced 35 candidates today, down from 42 yesterday.</p>
+          <p style="color:#17202a; font-size:14px; margin:0;">Confidence gate is the most common blocker (61% of rejections).</p>
+        </div>
+        <div style="display:flex; justify-content:space-between; color:#5f6c7b; font-size:12px; border-top:1px solid #d7dee8; padding-top:10px;">
+          <span>Generated 2 min ago</span><span>claude-3.7</span>
+        </div>
+      </section>
+
+      <!-- Recommendations span-3 -->
+      <section style="grid-column:1/-1; background:#ffffff; border:1px solid #d7dee8; border-radius:8px; box-shadow:0 1px 2px rgba(27,39,54,.05); padding:20px; display:grid; gap:16px;">
+        <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
+          <div><p style="color:#5f6c7b; font-size:11px; font-weight:800; margin:0 0 7px; text-transform:uppercase;">Recommendations</p><h2 style="font-size:20px; margin:0;">Change the settings</h2></div>
+          <span>&#9881;</span>
+        </div>
+        <div style="display:grid; gap:12px; grid-template-columns:repeat(3,minmax(0,1fr));">
+          <article style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:16px; display:grid; gap:12px;">
+            <div><span style="border-radius:999px; border:1px solid #b5cdeb; font-size:12px; font-weight:700; padding:5px 8px; background:#e3eefc; color:#24558f;">conservative</span>
+              <h3 style="font-size:15px; margin:10px 0 4px;">Tighten risk further</h3>
+              <p style="color:#5f6c7b; font-size:13px; margin:0;">Fewer trades, smaller size, more certainty.</p></div>
+            <div style="display:flex; gap:8px;"><button style="background:#fff; border:1px solid #d7dee8; border-radius:6px; padding:8px 12px; font-size:13px; font-weight:700;">View detail</button><button style="background:#126b62; border:1px solid #126b62; border-radius:6px; color:#fff; padding:8px 12px; font-size:13px; font-weight:700;">Apply</button></div>
+          </article>
+          <article style="background:#f9fbfc; border:1px solid #79c2b0; border-radius:8px; padding:16px; display:grid; gap:12px;">
+            <div><span style="border-radius:999px; border:1px solid #9ed9c7; font-size:12px; font-weight:700; padding:5px 8px; background:#dff3ec; color:#0d5f52;">balanced</span>
+              <h3 style="font-size:15px; margin:10px 0 4px;">Current defaults</h3>
+              <p style="color:#5f6c7b; font-size:13px; margin:0;">The settings this deployment ships with.</p></div>
+            <div style="display:flex; gap:8px;"><button style="background:#fff; border:1px solid #d7dee8; border-radius:6px; padding:8px 12px; font-size:13px; font-weight:700;">Viewing</button><button style="background:#126b62; border:1px solid #126b62; border-radius:6px; color:#fff; padding:8px 12px; font-size:13px; font-weight:700;">Apply</button></div>
+          </article>
+          <article style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:16px; display:grid; gap:12px;">
+            <div><span style="border-radius:999px; border:1px solid #efb0a9; font-size:12px; font-weight:700; padding:5px 8px; background:#fae4e1; color:#a33a3a;">aggressive</span>
+              <h3 style="font-size:15px; margin:10px 0 4px;">Allow more candidates</h3>
+              <p style="color:#5f6c7b; font-size:13px; margin:0;">Lower the confidence gate to admit more trades.</p></div>
+            <div style="display:flex; gap:8px;"><button style="background:#fff; border:1px solid #d7dee8; border-radius:6px; padding:8px 12px; font-size:13px; font-weight:700;">View detail</button><button style="background:#126b62; border:1px solid #126b62; border-radius:6px; color:#fff; padding:8px 12px; font-size:13px; font-weight:700;">Apply</button></div>
+          </article>
+        </div>
+        <div style="border-top:1px solid #d7dee8; padding-top:14px;">
+          <div style="display:grid; gap:8px; grid-template-columns:1.1fr 0.7fr 0.7fr 1.4fr; font-size:12px; color:#5f6c7b; font-weight:800; text-transform:uppercase; padding-bottom:8px;">
+            <span>Setting</span><span>Current</span><span>New</span><span>Why</span>
+          </div>
+          <div style="display:grid; gap:8px; grid-template-columns:1.1fr 0.7fr 0.7fr 1.4fr; font-size:13px; padding:8px 0; border-top:1px solid #d7dee8;">
+            <span>Min confidence (Polymarket)</span><span>0.75</span><span>0.75</span><span>Balanced default</span>
+          </div>
+          <div style="display:grid; gap:8px; grid-template-columns:1.1fr 0.7fr 0.7fr 1.4fr; font-size:13px; padding:8px 0; border-top:1px solid #d7dee8;">
+            <span>Max spread (Polymarket)</span><span>0.05</span><span>0.05</span><span>Balanced default</span>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+</x-dc>
+</body>
+</html>

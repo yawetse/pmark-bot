@@ -1378,3 +1378,146 @@
 - [x] Event broker, migration, WebSocket, and frontend recovery tests pass
 - [x] Full backend and frontend checks pass
 - [x] Code and design artifacts include REQ-* traceability
+
+---
+
+### TASK-036: Replace the Dashboard Primary Information Architecture
+
+**Story:** As an operator, I want five clear dashboard destinations, so that I can reach the current decision, activity, performance, settings, and help without searching an overflow menu.
+
+**Priority:** P0
+**Estimate:** M
+**Phase:** Phase 8 - Dashboard information architecture redesign
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `dashboard-redesign`
+**Dependencies:** TASK-023, TASK-035
+
+**Requirements Covered:** REQ-UI-016, REQ-UI-024
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-036-01 | While an authenticated user is in the dashboard, the primary navigation shall show Overview, Activity, Performance, Settings, and Help without a More menu. |
+| AC-036-02 | At a 390 CSS-pixel viewport, all five destinations shall remain labeled and usable without page-level horizontal overflow. |
+| AC-036-03 | When a user opens an existing specialist route directly, the route shall remain available and the primary navigation shall not report a false active destination. |
+| AC-036-04 | When a keyboard user moves through the header, each destination shall expose visible focus and current-page state. |
+
+**Definition of Done:**
+- [x] Navigation tests, typecheck, and responsive browser checks pass
+- [x] Legacy route links and direct URLs remain valid
+- [x] Design handoff assets and implementation use the same route labels
+
+---
+
+### TASK-037: Implement the Data-Derived Overview
+
+**Story:** As an operator, I want one current dashboard state, so that I can see whether a live trade happened, an action is required, or the system is clear.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 8 - Dashboard information architecture redesign
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `dashboard-redesign`
+**Dependencies:** TASK-036
+
+**Requirements Covered:** REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-025, REQ-UI-026
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-037-01 | When the latest tick placed a non-simulated order, Overview shall render only the live-trade primary state. |
+| AC-037-02 | If no latest real order exists and an actionable pipeline, setup, notification, or critical degradation blocker exists, then Overview shall render the attention state with at most three relevant recommendations. |
+| AC-037-03 | If no live order or blocker exists, then Overview shall render the all-clear state without recommendations. |
+| AC-037-04 | Below the primary state, Overview shall show four runtime facts, one latest result, and contextual route links without detailed records or forms. |
+| AC-037-05 | Before a recommendation is applied, the dashboard shall confirm exact current and proposed values and shall expose one audited undo action after success. |
+
+**Definition of Done:**
+- [x] State precedence and recommendation tests pass
+- [x] No prototype state selector is present in production code
+- [x] Degraded information is consolidated and last valid data remains visible
+
+---
+
+### TASK-038: Implement Focused Activity and Performance Pages
+
+**Story:** As an operator, I want activity and confirmed financial results on focused pages, so that Overview does not repeat operational or portfolio records.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 8 - Dashboard information architecture redesign
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `dashboard-redesign`
+**Dependencies:** TASK-036
+
+**Requirements Covered:** REQ-UI-013, REQ-UI-020, REQ-UI-021, REQ-CMP-004, REQ-CMP-005
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-038-01 | When Activity loads, it shall show the latest funnel, update time, and recent check log from persisted or realtime operations data. |
+| AC-038-02 | When Performance loads, it shall show confirmed aggregate metrics and a by-market summary without counting simulated or unfilled orders. |
+| AC-038-03 | When authoritative closed-trade outcomes are missing, Performance shall show Win rate as unavailable and shall not infer wins from raw fills. |
+| AC-038-04 | When a financial metric is missing or stale, Performance shall show unavailable or stale status rather than a fabricated zero. |
+| AC-038-05 | When Activity or Performance renders, it shall expose the contextual links assigned to that page while retained direct routes remain valid. |
+
+**Definition of Done:**
+- [x] Route, component, API contract, and no-duplication tests pass
+- [x] Win rate remains unavailable without confirmed closed outcomes, and trade counts use venue-confirmed fills
+- [x] Desktop and mobile browser checks match the handoff hierarchy
+
+---
+
+### TASK-040: Implement Focused Settings and Help Pages
+
+**Story:** As an operator, I want common settings and operating help to be concise, so that I can make a routine change or understand the process without reading the full system reference.
+
+**Priority:** P0
+**Estimate:** M
+**Phase:** Phase 8 - Dashboard information architecture redesign
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `dashboard-redesign`
+**Dependencies:** TASK-036
+
+**Requirements Covered:** REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-022, REQ-UI-023, REQ-NOT-006
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-040-01 | When Settings loads, common controls shall use the documented selected-venue config paths and plain-language labels while advanced settings remain available on demand. |
+| AC-040-02 | When a common setting is saved, the existing typed validation, version conflict, audit, and next-loop behavior shall remain active. |
+| AC-040-03 | When Settings renders real-money controls or the emergency-stop link, those controls shall be visually distinct from routine settings. |
+| AC-040-04 | When Help loads without backend data, it shall still show Collect prices, Find candidates, Score, Simulate or submit, and Monitor exits in order, common questions, and a link to Overview. |
+| AC-040-05 | When Settings renders, it shall expose the contextual What-if and Operations links assigned to the page while retained direct routes remain valid. |
+
+**Definition of Done:**
+- [x] Common settings path, type, validation, and conflict tests pass
+- [x] Full advanced config capability remains available without dominating the initial page
+- [x] Help static rendering and contextual route tests pass
+
+---
+
+### TASK-039: Verify and Release the Dashboard IA Redesign
+
+**Story:** As the product owner, I want the redesigned dashboard verified in development and production, so that the GitHub issue closes with evidence instead of an unverified code change.
+
+**Priority:** P0
+**Estimate:** M
+**Phase:** Phase 8 - Dashboard information architecture redesign
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `dashboard-redesign`, `release`
+**Dependencies:** TASK-036, TASK-037, TASK-038, TASK-040
+
+**Requirements Covered:** REQ-UI-016, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026, REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-039-01 | Before merge, the repository shall pass frontend typecheck, dashboard tests including all mapped contextual links and direct routes, accessibility audit, browser checks, infrastructure validation, deployment script tests, and required backend regression tests. |
+| AC-039-02 | When the branch is ready, GitHub issue #194 shall link the implementation pull request and record test evidence. |
+| AC-039-03 | When the change merges to `develop`, the development deployment shall complete and the HTTPS dashboard and ECS service shall pass health and browser verification. |
+| AC-039-04 | When development evidence passes, the promotion pull request shall merge to `main`, production shall deploy, and production health and dashboard browser evidence shall pass. |
+
+**Definition of Done:**
+- [ ] Traceability matrix maps every redesign requirement to code and evidence
+- [ ] Development and production deployment evidence is attached to issue #194
+- [ ] Issue #194 is closed only after the production requirement audit passes

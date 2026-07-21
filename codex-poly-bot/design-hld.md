@@ -1,9 +1,9 @@
 # codex-poly-bot High-Level Design
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.0  
-**Date:** 2026-04-24  
-**Status:** DRAFT  
+**Version:** 1.1
+**Date:** 2026-07-21
+**Status:** APPROVED
 **Requirements Source:** `requirements.md`
 
 ## 1. Design Goals
@@ -182,6 +182,11 @@ Configuration flow:
 | DD-040 | Comparison metric windows | Dashboard supports all-time, daily, trailing 7-day, and trailing 30-day windows | One all-time view only | More query work, better experiment readout | Makes Claude/OpenAI and venue comparison usable. |
 | DD-041 | Main portfolio source of truth | Reconcile balances, positions, fills, and P&L from authenticated venue account APIs | Derive portfolio totals from internal order intents and simulated positions | Adds bounded venue polling and snapshots, prevents unfilled or simulated orders from appearing as actual performance | The main dashboard must answer whether confirmed venue trades are making money. |
 | DD-042 | Dashboard change delivery | PostgreSQL commit notifications feed one listener per backend task, which fans out scoped WebSocket invalidations and retains polling only as recovery | Rebuild every connected user's snapshot on a fixed timer, add Redis, or remove polling fallback | Removes steady-state read amplification without adding infrastructure; notifications are non-durable, so reconnects require a full snapshot | PostgreSQL is already the source of truth and delivers `NOTIFY` only after commit. |
+| DD-043 | Dashboard information architecture | Use five primary destinations: Overview, Activity, Performance, Settings, and Help; keep specialist model, market, scenario, and system routes behind contextual links | Keep the current mixed primary nav and More menu | Reduces top-level choices while preserving specialist tools and deep links | The design handoff makes the operator's next decision the organizing principle. |
+| DD-044 | Overview state precedence | Derive one state with live trade first, actionable attention second, and all-clear last | Let the user select a display state or render all status panels together | The page remains deterministic and concise; state derivation must be covered by unit tests | Prototype controls must not reach production and a real order placement is the most urgent state. |
+| DD-045 | Dashboard component strategy | Compose small route-specific views over the existing typed API client and realtime store, using the installed Lucide, Recharts, and AG Grid packages only where the information requires them | Rewrite the API, add another state system, or install a new design library | Limits change risk and bundle growth while allowing the UI hierarchy to change | Existing data contracts and infrastructure already satisfy the handoff. |
+| DD-046 | Responsive primary navigation | Keep all five destinations visible in a single desktop row and a compact five-column mobile row with text labels | Hide destinations in an overflow menu or allow horizontal page scrolling | Uses more header height on small screens but keeps location and choices explicit | The handoff requires every primary destination to remain visible. |
+| DD-047 | Recommendation safety | Confirm exact before-and-after values and retain a one-change undo action through the audited config endpoint | Apply recommendations immediately or build a separate rollback service | Adds one confirmation step but prevents accidental risk changes and reuses existing versioned config writes | Recommendations can affect live-money eligibility and need an attributable reversal path. |
 
 ## 5. Cross-Cutting Concerns
 
@@ -490,7 +495,7 @@ Development and production do not share wallet private keys, venue API credentia
 
 The dashboard has a combined overview plus separate Claude and OpenAI views. Each model view shows positions, decisions, strategy signals, budget usage, P&L, refusals, and recent order events for that provider, grouped by Polymarket and Alpaca. Shared system views show ingestion, venue status, Alpaca account mode and health, audit log, notifications, environment health, and kill switch state.
 
-The combined overview uses venue-confirmed account APIs for actual portfolio value, realized and unrealized P&L, open holdings, and confirmed fills. It groups Polymarket US and Alpaca by provider account, deduplicates credentials that resolve to the same account, preserves the last confirmed snapshot when refresh fails, and marks missing values unavailable. Submitted, unfilled, and simulated orders are excluded. AI and AWS costs remain in economics views rather than being mixed into actual venue P&L.
+Performance uses venue-confirmed account APIs for actual portfolio value, realized and unrealized P&L, open holdings, and confirmed fills. It groups Polymarket US and Alpaca by provider account, deduplicates credentials that resolve to the same account, preserves the last confirmed snapshot when refresh fails, and marks missing values unavailable. Submitted, unfilled, and simulated orders are excluded. Overview receives only a compact current-status result and a link to Performance. AI and AWS costs remain in economics views rather than being mixed into actual venue P&L.
 
 Comparison views calculate P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics by model provider, venue, environment, instrument type, and time window. Supported windows are all-time, current trading day, trailing 7 days, and trailing 30 days. Missing or insufficient data is shown as unavailable rather than zero.
 
@@ -503,10 +508,21 @@ Metric definitions:
 - Drawdown: maximum peak-to-trough decline in cumulative realized plus unrealized equity curve for the selected window.
 - Model cost: recorded LLM provider cost for scoring requests in the selected window.
 - Open exposure: current notional value at risk across open positions.
-- Trade count: live orders that reached `FILLED` or `PARTIALLY_FILLED` plus dry-run simulated orders that reached a terminal simulated-filled state. Canceled, rejected, refused, unknown, and unfilled orders are excluded from trade count and shown separately as order events.
+- Confirmed Performance trade count: venue orders that reached `FILLED` or `PARTIALLY_FILLED`. Canceled, rejected, refused, unknown, unfilled, and simulated orders are excluded.
+- Experiment comparison trade count: confirmed trades use the same definition as Performance. A comparison view may show simulated terminal outcomes as a separate, explicitly labeled simulation metric, but shall not combine them with confirmed trade counts, win rate, or P&L.
 - Return-to-risk: net P&L divided by maximum drawdown when drawdown is positive; unavailable when drawdown is zero or insufficient data exists.
 
 Fees are included when captured from the venue or broker. If fees are unavailable, the metric records `fees_unavailable=true` and shows a caveat in the dashboard detail view.
+
+### 5.12 Dashboard Information Architecture
+
+The authenticated shell has five primary destinations: Overview, Activity, Performance, Settings, and Help. The header remains sticky, shows the current location without relying on color alone, and exposes all five destinations at desktop and mobile widths. Existing operations, model, market, scenario, comparison, data, and system routes remain valid. `/dashboard/operations` remains the detailed operations and emergency-stop route. It is linked from Activity and Settings. Specialist routes are reached from contextual links inside the five primary pages instead of a global overflow menu.
+
+Overview answers whether the operator needs to act now. It derives one state from the latest persisted or realtime snapshot. A latest non-simulated placed order produces the live-trade state. Otherwise, a blocked funnel stage, degraded critical section, missing required configuration, or notification gap produces the attention state. Otherwise the page renders all-clear. The live-trade state takes precedence because it represents current market exposure. The attention state contains a prioritized blocker list and at most three recommendations. Other states do not render recommendations.
+
+Activity owns the latest funnel and recent check records. Performance owns venue-confirmed Equity, Realized P&L, Unrealized P&L, Open positions, Win rate, and Trades, the Market, Trades, Win rate, and P&L table, confirmed holdings and fills, and links to specialist provider comparison. Settings owns configuration, presents common controls before advanced controls, and provides a visually distinct route to the existing emergency stop. Help is static and presents Collect prices, Find candidates, Score, Simulate or submit, and Monitor exits in that order. Each page consumes the existing typed REST and WebSocket snapshot contracts. Missing financial values remain unavailable, and stale data retains the last confirmed value with one consolidated explanation.
+
+The redesign uses the existing frontend dependencies. Charts are limited to trends that cannot be read faster from a value or table. Animation is limited to short feedback transitions, is transform or opacity based, and is disabled by `prefers-reduced-motion`.
 
 ## 6. Module Map
 
@@ -587,8 +603,8 @@ Fees are included when captured from the venue or broker. If fees are unavailabl
 | REQ-STR-001, REQ-STR-002, REQ-STR-003, REQ-STR-004, REQ-STR-005, REQ-STR-006, REQ-STR-007, REQ-STR-008, REQ-STR-009 | Strategy engine and strategy modules |
 | REQ-EXE-001, REQ-EXE-002, REQ-EXE-003, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-007, REQ-EXE-008, REQ-EXE-009, REQ-EXE-010, REQ-EXE-011, REQ-EXE-012, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-EXE-017 | Risk engine, execution service, global dry-run, kill switch |
 | REQ-EXT-001, REQ-EXT-002, REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006 | Exit monitor and execution integration |
-| REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015 | Next.js dashboard, GitHub OAuth, API routers, recommendations, confirmed portfolio, event-driven WebSocket updates, bounded polling recovery |
-| REQ-CMP-001, REQ-CMP-002, REQ-CMP-003, REQ-CMP-004 | Comparison service and dashboard model/venue analytics |
+| REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-016, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026 | Next.js dashboard, GitHub OAuth, five-page information architecture, data-derived overview state, focused activity and performance views, audited settings, static help, accessible responsive navigation, confirmed portfolio, event-driven WebSocket updates, bounded polling recovery |
+| REQ-CMP-001, REQ-CMP-002, REQ-CMP-003, REQ-CMP-004, REQ-CMP-005 | Comparison service and dashboard model/venue analytics |
 | REQ-NOT-001, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-NOT-007 | Notification service and SES adapter |
 | REQ-DEP-001, REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006, REQ-DEP-007, REQ-DEP-008, REQ-DEP-009, REQ-DEP-010 | CloudFormation, GitHub Actions, Docker, Codex setup |
 | REQ-OBS-001, REQ-OBS-002, REQ-OBS-003, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006 | Structured logs, audit service, dashboard health |

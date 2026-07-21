@@ -1,9 +1,9 @@
 # codex-poly-bot Requirements
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.0  
-**Date:** 2026-04-24  
-**Status:** DRAFT  
+**Version:** 1.1
+**Date:** 2026-07-21
+**Status:** APPROVED
 
 ## Product Intent
 
@@ -179,9 +179,20 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-UI-010 | P1 | The dashboard shall present separate views for Claude and OpenAI positions, decisions, budgets, and P&L. |
 | REQ-UI-011 | P0 | The dashboard shall compare Claude and OpenAI performance across Polymarket and Alpaca using P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics. |
 | REQ-UI-012 | P0 | When recent scanner output identifies a settings-based blocker, the dashboard shall show an actionable config recommendation that preserves the setting's required value type, saves user-owned database settings through the audited config endpoint, shows venue-specific input counts when a total spans venues, and explains that model, credential, market-hours, and risk gates still apply. |
-| REQ-UI-013 | P0 | When an authorized user opens the main dashboard, the system shall show venue-confirmed account value, realized P&L, unrealized P&L, open positions, and confirmed fills for Polymarket US and Alpaca, separated by model-provider account and marked unavailable when venue data is missing or stale. |
+| REQ-UI-013 | P0 | When an authorized user opens Performance, the system shall show venue-confirmed account value, realized P&L, unrealized P&L, open positions, and confirmed fills for Polymarket US and Alpaca, separated by model-provider account and marked unavailable when venue data is missing or stale; Overview shall show only a compact current-status result with a link to Performance. |
 | REQ-UI-014 | P0 | If the realtime dashboard connection is unavailable, then polling shall keep at most one snapshot request in flight, retry with bounded backoff, and read only the latest persisted dashboard rows required for the response. |
 | REQ-UI-015 | P0 | While an authorized dashboard WebSocket is connected, the system shall send one complete user-scoped snapshot on connection, send lightweight heartbeats while state is unchanged, and send updated operations, market, schedule, and portfolio data only after a relevant committed database change; if the event stream fails, the browser shall reconnect with bounded backoff while retaining polling as a recovery path. |
+| REQ-UI-016 | P0 | The authenticated dashboard shall provide five always-visible primary destinations named Overview, Activity, Performance, Settings, and Help, shall remove the More menu, and shall preserve legacy operational routes through contextual links and direct URLs, including `/dashboard/operations` as the detailed operations and emergency-stop route linked from Activity and Settings. |
+| REQ-UI-017 | P0 | When dashboard data loads, Overview shall derive exactly one current state from persisted or realtime data, using live-trade state when the latest tick placed a non-simulated order, attention state when a pipeline stage is blocked or required setup is incomplete, and all-clear state otherwise; no prototype or manual state selector shall be rendered. |
+| REQ-UI-018 | P0 | When Overview is in attention state, the system shall show a short prioritized list of actionable blockers and no more than three relevant setting recommendations; when Overview is live-trade or all-clear, it shall not show blocker recommendations. |
+| REQ-UI-019 | P0 | Overview shall show only current mode, active markets, last check, next check, the most recent result, and contextual links below its primary state, and shall not duplicate detailed operation records, performance tables, configuration forms, or help content. |
+| REQ-UI-020 | P0 | When an authorized user opens Activity, the system shall show the latest scan funnel and a recent check log from persisted or realtime operations data, shall identify when the data was updated, and shall render an unavailable or degraded state rather than inventing counts. |
+| REQ-UI-021 | P0 | When an authorized user opens Performance, the system shall show venue-confirmed Equity, Realized P&L, Unrealized P&L, Open positions, Win rate, and Trades metrics plus a by-market table with Market, Trades, Win rate, and P&L columns, shall exclude simulated and unfilled orders, and shall render missing or stale money values as unavailable rather than zero. |
+| REQ-UI-022 | P0 | Settings shall present common confidence, spread, real-money, notification, recipient, and market controls in plain language, shall preserve validated audited persistence for all existing advanced settings, shall link to the existing emergency-stop control, and shall keep destructive or live-money controls visually distinct. |
+| REQ-UI-023 | P1 | Help shall explain the trading process as Collect prices, Find candidates, Score, Simulate or submit, and Monitor exits in that order, answer common operating questions, and link back to Overview without depending on backend availability. |
+| REQ-UI-024 | P0 | The five dashboard destinations shall remain usable without horizontal page overflow at 390 CSS pixels and at desktop widths, shall support keyboard navigation and visible focus, shall not communicate status by color alone, and shall respect reduced-motion preferences. |
+| REQ-UI-025 | P0 | If one or more upstream dashboard sections fail while a last known snapshot exists, then each redesigned page shall keep valid data visible, identify stale or unavailable sections once, and avoid repeating the same failure message in multiple cards. |
+| REQ-UI-026 | P0 | Before an Overview recommendation changes a setting, the dashboard shall show the exact current and proposed values and require confirmation; after a successful change, it shall provide an undo action through the same validated audited configuration endpoint until the next config mutation, navigation, or page reload, and shall reject stale undo attempts on version conflict. |
 
 ### Cross-Market Comparison Analytics
 
