@@ -1,35 +1,23 @@
 "use client";
 
-// REQ: REQ-UI-004, REQ-UI-008, REQ-UI-010, REQ-UI-011
+// REQ: REQ-UI-004, REQ-UI-016, REQ-UI-024
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
-  Bot,
   CircleHelp,
-  Database,
   GitBranch,
-  MoreHorizontal,
-  ServerCog,
   SlidersHorizontal,
-  Workflow,
 } from "lucide-react";
 import { ThemePreferenceControl } from "@/components/dashboard/theme-preference-control";
 
 const PRIMARY_NAV_ITEMS = [
   { href: "/dashboard", label: "Overview", icon: Activity },
-  { href: "/dashboard/operations", label: "Run", icon: GitBranch },
-  { href: "/dashboard/data", label: "Markets", icon: Database },
-  { href: "/dashboard/scenario", label: "What-if", icon: Workflow },
-];
-
-const SECONDARY_NAV_ITEMS = [
+  { href: "/dashboard/activity", label: "Activity", icon: GitBranch },
+  { href: "/dashboard/performance", label: "Performance", icon: BarChart3 },
   { href: "/dashboard/config", label: "Settings", icon: SlidersHorizontal },
-  { href: "/dashboard/models", label: "AI models", icon: Bot },
-  { href: "/dashboard/comparison", label: "Results", icon: BarChart3 },
-  { href: "/dashboard/system", label: "Health", icon: ServerCog },
   { href: "/dashboard/help", label: "Help", icon: CircleHelp },
 ];
 
@@ -43,7 +31,7 @@ export function DashboardNav() {
       </a>
       <header className="topbar">
         <Link className="brand" href="/dashboard">
-          <span>codex-poly-bot</span>
+          <span>Poly Bot</span>
         </Link>
         <div className="topbar-actions">
           <nav className="nav" aria-label="Dashboard">
@@ -62,29 +50,6 @@ export function DashboardNav() {
                 </Link>
               );
             })}
-            <details className="nav-more">
-              <summary data-active={SECONDARY_NAV_ITEMS.some((item) => isActivePath(pathname, item.href)) ? "true" : undefined}>
-                <MoreHorizontal aria-hidden="true" size={15} strokeWidth={2.3} />
-                <span>More</span>
-              </summary>
-              <div className="nav-more-menu">
-                {SECONDARY_NAV_ITEMS.map((item) => {
-                  const active = isActivePath(pathname, item.href);
-                  const Icon = item.icon;
-                  return (
-                    <Link
-                      aria-current={active ? "page" : undefined}
-                      data-active={active ? "true" : undefined}
-                      href={item.href}
-                      key={item.href}
-                    >
-                      <Icon aria-hidden="true" size={15} strokeWidth={2.3} />
-                      <span>{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </details>
           </nav>
           <ThemePreferenceControl />
         </div>

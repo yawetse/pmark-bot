@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { HelpAboutView } from "@/components/dashboard/help-about-view";
 import { getDashboardSession } from "@/lib/server/session";
 
-// REQ: REQ-UI-004, REQ-DEP-001, REQ-DEP-002, REQ-WAL-003
+// REQ: REQ-UI-016, REQ-UI-023
 
 export default async function HelpPage() {
   const sessionCheck = await getDashboardSession();

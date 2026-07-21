@@ -121,9 +121,10 @@ assert.doesNotMatch(operationsPage, /DashboardNav/);
 
 const nav = read("components/dashboard/dashboard-nav.tsx");
 for (const route of [
-  "/dashboard/models",
-  "/dashboard/comparison",
-  "/dashboard/operations",
+  "/dashboard",
+  "/dashboard/activity",
+  "/dashboard/performance",
+  "/dashboard/config",
   "/dashboard/help",
 ]) {
   assert.match(nav, new RegExp(route.replaceAll("/", "\\/")));
@@ -194,17 +195,16 @@ assert.match(aboutPage, /redirect\("\/dashboard\/help"\)/);
 
 const helpAbout = read("components/dashboard/help-about-view.tsx");
 for (const token of [
-  "How codex-poly-bot Works",
-  "Main Components",
-  "How Work Moves Through the System",
-  "What Users Can Do",
-  "How Information Is Stored",
-  "AWS Infrastructure",
-  "Where It Runs",
-  "How Code Gets Deployed",
-  "ECS Fargate",
-  "RDS Postgres",
-  "AWS Secrets Manager",
+  "How one check works",
+  "One check, five steps",
+  "Collect prices",
+  "Find candidates",
+  "Score",
+  "Simulate or submit",
+  "Monitor exits",
+  "Common questions",
+  "Back to Overview",
+  "/dashboard/operations",
 ]) {
   assert.match(helpAbout, new RegExp(token));
 }

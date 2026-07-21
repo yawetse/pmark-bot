@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { ArrowRight, ShieldAlert, Workflow } from "lucide-react";
 
 import { ConfigControls } from "@/components/dashboard/config-controls";
 import type { ConfigSnapshot } from "@/components/dashboard/config-controls";
@@ -7,7 +9,7 @@ import { LogoutControl } from "@/components/dashboard/logout-control";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
 import { getDashboardSession } from "@/lib/server/session";
 
-// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007
+// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-008, REQ-UI-016, REQ-UI-022
 
 export default async function ConfigPage() {
   const sessionCheck = await getDashboardSession();
@@ -23,11 +25,11 @@ export default async function ConfigPage() {
   );
 
   return (
-    <div className="page-stack">
+    <div className="page-stack settings-page">
       <PageHeader
         eyebrow="Settings"
-        title="Trading preferences"
-        body="Change how the app scans markets, asks models, applies risk limits, and sends alerts. Saved values apply on the next trading loop."
+        title="Settings"
+        body="Change the rules used most. Advanced controls remain available when you need them, and every saved value is versioned and audited."
       />
       <div className="content-grid config-content-grid">
         <ConfigControls
@@ -41,35 +43,19 @@ export default async function ConfigPage() {
             <p>End this dashboard session on the current browser.</p>
             <LogoutControl username={sessionCheck.session.username} />
           </section>
-          <section className="panel">
-            <p className="section-label">Change safety</p>
-            <h2>What happens after save</h2>
-            <ul className="status-list safety-status-list">
-              <li>
-                <span>Saved scope</span>
-                <span>Trading settings are saved in the database for your dashboard user and environment.</span>
-              </li>
-              <li>
-                <span>Version check</span>
-                <span>The app checks the active config version so one save does not overwrite another.</span>
-              </li>
-              <li>
-                <span>Apply timing</span>
-                <span>Saved values apply on the next loop. The app does not change a decision midway through a run.</span>
-              </li>
-              <li>
-                <span>Live trading</span>
-                <span>Live mode only permits orders. Venue, credential, risk, and emergency-stop checks still decide whether an order can go out.</span>
-              </li>
-              <li>
-                <span>Risk settings</span>
-                <span>Position size, daily loss, open positions, allocation, and slippage can still block a trade.</span>
-              </li>
-              <li>
-                <span>Advanced editor</span>
-                <span>Use the path editor only when a setting is not shown in the main preference list.</span>
-              </li>
-            </ul>
+          <section className="panel settings-safety-card">
+            <ShieldAlert aria-hidden="true" size={22} />
+            <p className="section-label">Safety control</p>
+            <h2>Emergency stop</h2>
+            <p>Stop or review live order handling from the detailed Operations page.</p>
+            <Link className="button danger-button" href="/dashboard/operations">Open emergency stop <ArrowRight aria-hidden="true" size={15} /></Link>
+          </section>
+          <section className="panel settings-context-card">
+            <Workflow aria-hidden="true" size={22} />
+            <p className="section-label">Before saving</p>
+            <h2>Test a change</h2>
+            <p>Use What-if to review a proposed setting without changing the active version.</p>
+            <Link className="button subtle" href="/dashboard/scenario">Test settings with What-if <ArrowRight aria-hidden="true" size={15} /></Link>
           </section>
         </div>
       </div>

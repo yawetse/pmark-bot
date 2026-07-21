@@ -27,7 +27,7 @@ import {
 } from "@/lib/config-paths";
 import type { AllowedConfigPath } from "@/lib/config-paths";
 
-// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-ALP-014, REQ-NOT-006
+// REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-UI-022, REQ-ALP-014, REQ-NOT-006
 
 type ConfigUpdateResponse = {
   new_version?: string;
@@ -654,15 +654,36 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const [customPresetDraft, setCustomPresetDraft] = useState(() =>
     formatValueForInput(valueAtPath(initialSnapshot?.settings, "alpaca.custom_presets") ?? {}),
   );
-  const [expectedVersion, setExpectedVersion] = useState(() =>
-    expectedVersionFromSnapshot(initialSnapshot),
-  );
   const [currentVersion, setCurrentVersion] = useState(initialSnapshot?.version ?? "");
   const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
   const [pendingDrafts, setPendingDrafts] = useState<Partial<Record<AllowedConfigPath, ConfigValue>>>({});
+  const [recipientEmailDraft, setRecipientEmailDraft] = useState(() =>
+    recipientEmailForOwner(
+      valueAtPath(initialSnapshot?.settings, "notifications.recipients"),
+      initialSnapshot,
+    ),
+  );
   const [liveModeConfirmation, setLiveModeConfirmation] = useState<LiveModeConfirmationState>({
     status: "closed",
   });
+
+  if (!initialSnapshot) {
+    return (
+      <section className="panel config-preferences-panel config-unavailable" aria-labelledby="config-unavailable-title">
+        <div className="panel-heading">
+          <div>
+            <p className="section-label">Settings</p>
+            <h2 id="config-unavailable-title">Settings are unavailable</h2>
+          </div>
+          <span className="status blocked">read only</span>
+        </div>
+        <p className="status-message" role="status">
+          {loadError ?? "The current saved config could not be loaded."} No settings can be changed until a versioned snapshot is available.
+        </p>
+      </section>
+    );
+  }
+  const snapshot = initialSnapshot;
   const selectedDetail = CONFIG_PATH_DETAILS[path];
   const currentValue = valueAtPath(settings, path);
   const resolvedSymbols = symbolsFromValue(valueAtPath(settings, "alpaca.symbol_universe"));
@@ -670,6 +691,12 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const refreshEnabled = valueAtPath(settings, "alpaca.preset_refresh.enabled");
   const refreshCadence = valueAtPath(settings, "alpaca.preset_refresh.cadence_hours");
   const staleAfter = valueAtPath(settings, "alpaca.preset_refresh.stale_after_hours");
+  const selectedVenue = String(valueAtPath(settings, "default_selected_venue") ?? "polymarket_us");
+  const commonSettings = commonSettingsForVenue(selectedVenue);
+  const savedRecipientEmail = recipientEmailForOwner(
+    valueAtPath(settings, "notifications.recipients"),
+    initialSnapshot,
+  );
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -728,8 +755,8 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     const result = await dashboardApi<ConfigUpdateResponse>("config", {
       method: "POST",
       body: JSON.stringify({
-        environment: initialSnapshot?.environment ?? process.env.NEXT_PUBLIC_APP_ENV ?? "local",
-        expected_version: expectedVersion || null,
+        environment: snapshot.environment,
+        expected_version: currentVersion === "bootstrap" ? null : currentVersion,
         patches: patches.map((patch) => ({ op: "replace", path: patch.path, value: patch.value })),
       }),
     });
@@ -749,8 +776,13 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     if (refreshed.ok) {
       setSettings(refreshed.data.settings);
       setCurrentVersion(refreshed.data.version);
-      setExpectedVersion(expectedVersionFromSnapshot(refreshed.data));
       syncStockUniverseDrafts(refreshed.data.settings);
+      setRecipientEmailDraft(
+        recipientEmailForOwner(
+          valueAtPath(refreshed.data.settings, "notifications.recipients"),
+          refreshed.data,
+        ),
+      );
       setValue(formatValueForInput(valueAtPath(refreshed.data.settings, path)));
       setSaveState({ status: "saved", version: refreshed.data.version });
       return true;
@@ -762,7 +794,6 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       ),
     );
     setCurrentVersion(savedVersion);
-    setExpectedVersion(savedVersion);
     setSaveState({ status: "saved", version: savedVersion });
     return true;
   }
@@ -830,6 +861,21 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     await savePreferenceSetting(setting, nextValue);
   }
 
+  async function saveRecipientEmail() {
+    const email = recipientEmailDraft.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setSaveState({ status: "error", message: "Enter a valid notification email address." });
+      return;
+    }
+    const currentRecipients = valueAtPath(settings, "notifications.recipients");
+    const recipients = currentRecipients && typeof currentRecipients === "object" && !Array.isArray(currentRecipients)
+      ? { ...(currentRecipients as Record<string, unknown>) }
+      : {};
+    const recipientKey = configRecipientKey(snapshot);
+    recipients[recipientKey] = email;
+    await saveConfigPatch("notifications.recipients", recipients);
+  }
+
   async function confirmLiveModeSave() {
     if (liveModeConfirmation.status !== "open" || !liveModeConfirmation.confirmed) {
       return;
@@ -887,68 +933,69 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         </div>
       ) : null}
       {loadError ? <p className="status-message">{loadError}</p> : null}
-      <div className="config-stage-strip" aria-label="How config changes move through the app">
-        <div>
-          <span>1</span>
-          <strong>Market data</strong>
-          <small>What gets pulled from venues.</small>
+      <section className="common-settings" aria-labelledby="common-settings-title">
+        <div className="common-settings-heading">
+          <div>
+            <p className="section-label">Common settings</p>
+            <h3 id="common-settings-title">Rules used most</h3>
+            <p>Confidence and spread apply to {selectedVenueLabel(selectedVenue)}. Each saved value applies on the next loop.</p>
+          </div>
+          <span className="status idle">{selectedVenueLabel(selectedVenue)}</span>
         </div>
-        <div>
-          <span>2</span>
-          <strong>Market filters and model</strong>
-          <small>Which candidates survive scoring.</small>
+        <div className="common-settings-list">
+          {commonSettings.map((setting) => {
+            const currentSettingValue = valueAtPath(settings, setting.path);
+            const draftValue = preferenceDraftValue(setting, settings, pendingDrafts);
+            return (
+              <PreferenceRow
+                compact
+                currentValue={currentSettingValue}
+                draftValue={draftValue}
+                hasPendingChange={hasPendingPreferenceChange(setting, currentSettingValue, draftValue)}
+                key={`common-${setting.path}`}
+                onChange={(nextValue) => updatePreferenceDraft(setting.path, nextValue)}
+                onSave={() => void onPreferenceSave(setting)}
+                setting={setting}
+              />
+            );
+          })}
+          <div className="preference-row common-recipient-row compact">
+            <div className="preference-copy">
+              <div className="preference-title-row"><Bell aria-hidden="true" size={16} /><strong>Notification email</strong></div>
+              <p>Receives live-trade alerts and scheduled summaries. Existing additional recipients are preserved.</p>
+            </div>
+            <div className="preference-control">
+              <input aria-label="Notification email" className="preference-text-input" onChange={(event) => { setRecipientEmailDraft(event.target.value); setSaveState({ status: "idle" }); }} type="email" value={recipientEmailDraft} />
+              <div className="preference-value-summary" aria-live="polite"><span>Current: {savedRecipientEmail || "Not set"}</span>{recipientEmailDraft.trim() !== savedRecipientEmail ? <strong>New: {recipientEmailDraft.trim() || "Not set"}</strong> : null}</div>
+              <button className={`button preference-save-button ${recipientEmailDraft.trim() !== savedRecipientEmail ? "primary" : ""}`.trim()} disabled={!recipientEmailDraft.trim() || recipientEmailDraft.trim() === savedRecipientEmail} onClick={() => void saveRecipientEmail()} type="button"><Save aria-hidden="true" size={15} />Apply</button>
+            </div>
+          </div>
         </div>
-        <div>
-          <span>3</span>
-          <strong>Risk and trade gates</strong>
-          <small>Whether an order can be placed.</small>
-        </div>
-        <div>
-          <span>4</span>
-          <strong>Alerts</strong>
-          <small>Who is notified and when.</small>
-        </div>
-      </div>
-      <nav className="config-preference-nav" aria-label="Settings sections">
-        {PREFERENCE_SECTIONS.map((section) => (
-          <a href={`#${sectionId(section.title)}`} key={section.title}>
-            {section.title}
-          </a>
-        ))}
-      </nav>
-      <div className="preference-section-list">
-        {PREFERENCE_SECTIONS.map((section) => {
-          const Icon = section.icon;
-          return (
-            <FormSection
-              body={section.body}
-              icon={<Icon aria-hidden="true" size={19} strokeWidth={2.2} />}
-              id={sectionId(section.title)}
-              key={section.title}
-              title={section.title}
-            >
-              <div className="preference-row-list">
-                {section.settings.map((setting) => {
-                  const currentSettingValue = valueAtPath(settings, setting.path);
-                  const draftValue = preferenceDraftValue(setting, settings, pendingDrafts);
-                  return (
-                    <PreferenceRow
-                      currentValue={currentSettingValue}
-                      draftValue={draftValue}
-                      hasPendingChange={hasPendingPreferenceChange(setting, currentSettingValue, draftValue)}
-                      key={setting.path}
-                      onChange={(nextValue) => updatePreferenceDraft(setting.path, nextValue)}
-                      onSave={() => void onPreferenceSave(setting)}
-                      setting={setting}
-                    />
-                  );
-                })}
-              </div>
-            </FormSection>
-          );
-        })}
-      </div>
-      <form className="symbol-editor" onSubmit={onStockUniverseSubmit}>
+      </section>
+      <Disclosure title="Advanced settings and risk controls">
+        <div className="advanced-settings-content">
+          <nav className="config-preference-nav" aria-label="Advanced settings sections">
+            {PREFERENCE_SECTIONS.map((section) => (
+              <a href={`#${sectionId(section.title)}`} key={section.title}>{section.title}</a>
+            ))}
+          </nav>
+          <div className="preference-section-list">
+            {PREFERENCE_SECTIONS.map((section) => {
+              const Icon = section.icon;
+              return (
+                <FormSection body={section.body} icon={<Icon aria-hidden="true" size={19} strokeWidth={2.2} />} id={sectionId(section.title)} key={section.title} title={section.title}>
+                  <div className="preference-row-list">
+                    {section.settings.map((setting) => {
+                      const currentSettingValue = valueAtPath(settings, setting.path);
+                      const draftValue = preferenceDraftValue(setting, settings, pendingDrafts);
+                      return <PreferenceRow currentValue={currentSettingValue} draftValue={draftValue} hasPendingChange={hasPendingPreferenceChange(setting, currentSettingValue, draftValue)} key={setting.path} onChange={(nextValue) => updatePreferenceDraft(setting.path, nextValue)} onSave={() => void onPreferenceSave(setting)} setting={setting} />;
+                    })}
+                  </div>
+                </FormSection>
+              );
+            })}
+          </div>
+          <form className="symbol-editor" onSubmit={onStockUniverseSubmit}>
         <div>
           <h3>Alpaca stock universe</h3>
           <p>
@@ -1013,7 +1060,9 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           <Save aria-hidden="true" size={15} />
           Save stock universe
         </button>
-      </form>
+          </form>
+        </div>
+      </Disclosure>
       <Disclosure title="Advanced Path-Based Editor">
         <form className="form-stack" onSubmit={onSubmit}>
           <div>
@@ -1069,11 +1118,10 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
             />
           </label>
           <label>
-            Expected version
+            Current version
             <input
-              value={expectedVersion}
-              onChange={(event) => setExpectedVersion(event.target.value)}
-              placeholder="Current version"
+              readOnly
+              value={currentVersion}
             />
           </label>
           <button className="button primary" type="submit">
@@ -1195,6 +1243,7 @@ function LiveModeConfirmationDialog({
 }
 
 function PreferenceRow({
+  compact = false,
   currentValue,
   draftValue,
   hasPendingChange,
@@ -1202,6 +1251,7 @@ function PreferenceRow({
   onSave,
   setting,
 }: {
+  compact?: boolean;
   currentValue: unknown;
   draftValue: ConfigValue;
   hasPendingChange: boolean;
@@ -1211,29 +1261,32 @@ function PreferenceRow({
 }) {
   const detail = CONFIG_PATH_DETAILS[setting.path];
   const inputId = sectionId(`setting-${setting.path}`);
+  const descriptionId = `${inputId}-description`;
   const terms = termsForSetting(setting, detail);
 
   return (
-    <div className="preference-row">
+    <div className={`preference-row ${compact ? "compact" : ""}`.trim()}>
       <div className="preference-copy">
         <div className="preference-title-row">
           <label htmlFor={inputId}>{detail.label}</label>
-          <span className="preference-stage">{setting.stage}</span>
-          <SettingHelpDialog
-            currentValue={formatPreferenceDisplay(setting, currentValue)}
-            detail={detail}
-            path={setting.path}
-            setting={setting}
-            terms={terms}
-          />
+          {!compact ? <span className="preference-stage">{setting.stage}</span> : null}
+          {!compact ? (
+            <SettingHelpDialog
+              currentValue={formatPreferenceDisplay(setting, currentValue)}
+              detail={detail}
+              path={setting.path}
+              setting={setting}
+              terms={terms}
+            />
+          ) : null}
         </div>
-        <p>{detail.description}</p>
+        <p id={descriptionId}>{detail.description}</p>
         {setting.note ? <p className="preference-note">{setting.note}</p> : null}
-        <small>{detail.effect}</small>
-        <code>{setting.path}</code>
+        {!compact ? <small>{detail.effect}</small> : null}
+        {!compact ? <code>{setting.path}</code> : null}
       </div>
       <div className="preference-control">
-        {renderPreferenceControl(setting, inputId, draftValue, onChange)}
+        {renderPreferenceControl(setting, inputId, descriptionId, draftValue, onChange)}
         <div className="preference-value-summary" aria-live="polite">
           <span>Current: {formatPreferenceDisplay(setting, currentValue)}</span>
           {hasPendingChange ? <strong>New: {formatPreferenceDisplay(setting, draftValue)}</strong> : null}
@@ -1374,6 +1427,7 @@ function termsForSetting(
 function renderPreferenceControl(
   setting: SettingDefinition,
   inputId: string,
+  descriptionId: string,
   value: ConfigValue,
   onChange: (value: ConfigValue) => void,
 ) {
@@ -1382,6 +1436,7 @@ function renderPreferenceControl(
     return (
       <label className="preference-switch-control" htmlFor={inputId}>
         <input
+          aria-describedby={descriptionId}
           checked={checked}
           id={inputId}
           onChange={(event) => onChange(event.target.checked)}
@@ -1398,6 +1453,7 @@ function renderPreferenceControl(
   if (setting.kind === "select") {
     return (
       <select
+        aria-describedby={descriptionId}
         className="preference-select"
         id={inputId}
         value={String(value)}
@@ -1415,6 +1471,7 @@ function renderPreferenceControl(
   if (setting.kind === "text") {
     return (
       <input
+        aria-describedby={descriptionId}
         className="preference-text-input"
         id={inputId}
         type="text"
@@ -1430,7 +1487,7 @@ function renderPreferenceControl(
     return (
       <div className="preference-range-control">
         <input
-          aria-describedby={`${inputId}-range`}
+          aria-describedby={`${descriptionId} ${inputId}-range`}
           id={inputId}
           max={setting.max}
           min={setting.min}
@@ -1439,9 +1496,12 @@ function renderPreferenceControl(
           type="range"
           value={clampedDisplayValue}
         />
-        <label className="preference-number-field">
+        <label className="preference-number-field" htmlFor={`${inputId}-number`}>
           <span id={`${inputId}-range`}>{formatUnitLabel(setting.unit)}</span>
           <input
+            aria-describedby={descriptionId}
+            aria-label={`${CONFIG_PATH_DETAILS[setting.path].label} value`}
+            id={`${inputId}-number`}
             max={setting.max}
             min={setting.min}
             onChange={(event) => onChange(configNumberFromDisplay(setting, event.target.valueAsNumber))}
@@ -1459,6 +1519,7 @@ function renderPreferenceControl(
     <label className="preference-number-field preference-number-only" htmlFor={inputId}>
       <span>{formatUnitLabel(setting.unit)}</span>
       <input
+        aria-describedby={descriptionId}
         id={inputId}
         min={setting.min}
         onChange={(event) => onChange(configNumberFromDisplay(setting, event.target.valueAsNumber))}
@@ -1478,6 +1539,38 @@ function settingForPath(path: AllowedConfigPath): SettingDefinition | null {
     }
   }
   return null;
+}
+
+function commonSettingsForVenue(venue: string): SettingDefinition[] {
+  const alpaca = venue === "alpaca";
+  const paths: AllowedConfigPath[] = [
+    alpaca ? "reasoning.alpaca.min_confidence" : "reasoning.polymarket.min_confidence",
+    alpaca ? "scanner.alpaca.max_spread" : "scanner.polymarket.max_spread",
+    "live_enabled",
+    "notifications.email_on_trade_placed",
+    "venues.polymarket_us.enabled",
+    "venues.polymarket_international.enabled",
+    "venues.alpaca.enabled",
+  ];
+  return paths.map(settingForPath).filter((setting): setting is SettingDefinition => setting !== null);
+}
+
+function configRecipientKey(snapshot: ConfigSnapshot): string {
+  return snapshot.username?.trim() || snapshot.config_owner?.trim() || "operator";
+}
+
+function recipientEmailForOwner(value: unknown, snapshot?: ConfigSnapshot): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "";
+  }
+  const recipient = snapshot
+    ? (value as Record<string, unknown>)[configRecipientKey(snapshot)]
+    : undefined;
+  return typeof recipient === "string" ? recipient : "";
+}
+
+function selectedVenueLabel(value: string): string {
+  return VENUE_OPTIONS.find((option) => option.value === value)?.label ?? "Polymarket US";
 }
 
 function requiresLiveModeConfirmation(
@@ -1753,16 +1846,9 @@ function parseCurrentVersion(message: string): string | null {
   }
 }
 
-function expectedVersionFromSnapshot(snapshot?: ConfigSnapshot): string {
-  if (!snapshot || snapshot.version === "bootstrap") {
-    return "";
-  }
-  return snapshot.version;
-}
-
 function valueAtPath(settings: Record<string, unknown> | undefined, path: string): unknown {
   if (!settings) {
-    return true;
+    return undefined;
   }
   return path.split(".").reduce<unknown>((current, segment) => {
     if (isPlainObject(current)) {
