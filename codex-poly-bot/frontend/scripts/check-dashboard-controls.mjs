@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 // REQ: REQ-UI-004, REQ-UI-005, REQ-UI-007, REQ-UI-009, REQ-UI-013,
-// REQ-CMP-005, REQ-OBS-005
+// REQ-UI-016, REQ-UI-017, REQ-UI-019, REQ-UI-022, REQ-CMP-005, REQ-OBS-005
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -97,7 +97,7 @@ assert.doesNotMatch(walletStatus, /private/i);
 assert.doesNotMatch(walletStatus, /secret/i);
 
 const dashboardPage = read("app/dashboard/page.tsx");
-assert.match(dashboardPage, /ConsumerDashboard/);
+assert.match(dashboardPage, /OverviewDashboard/);
 assert.doesNotMatch(dashboardPage, /serverDashboardApi<DashboardSummaryView>/);
 
 const dashboardLayout = read("app/dashboard/layout.tsx");
@@ -127,16 +127,15 @@ const dashboardNav = read("components/dashboard/dashboard-nav.tsx");
 assert.match(dashboardNav, /ThemePreferenceControl/);
 for (const token of [
   "Overview",
-  "Run",
-  "Markets",
-  "What-if",
+  "Activity",
+  "Performance",
   "Settings",
-  "AI models",
-  "Results",
-  "Health",
+  "Help",
 ]) {
   assert.match(dashboardNav, new RegExp(token));
 }
+assert.doesNotMatch(dashboardNav, /More/);
+assert.doesNotMatch(dashboardNav, /nav-more/);
 
 const themeControl = read("components/dashboard/theme-preference-control.tsx");
 for (const token of [

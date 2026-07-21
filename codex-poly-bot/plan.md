@@ -21,6 +21,7 @@
 | 5 | External integration and notification logic | Official Polymarket integration, Alpaca paper/live account validation, venue balance/position/fill reconciliation, OpenAI adapter, Claude adapter, notification flows, local/file-backed S3 storage, mocked or existing SES sandbox delivery | Phases 2-4 | Development mode can read confirmed portfolio data and run full dry-run against configured external APIs without live venue submission; AWS-managed S3/SES is still provisioned in Phase 6 |
 | 6 | AWS deployment and CI/CD | Infrastructure, CloudFormation templates, GitHub Actions, ECR image build, ECS service, RDS, S3, Secrets Manager, CloudWatch, SES, migration safety | Phases 1-5 | Merge to `develop` deploys the development stack in dry-run mode with health checks passing |
 | 7 | Production readiness and runbooks | Documentation, source references, live-trading checklist, operations runbook, rollback runbook, final traceability checks | Phases 1-6 | Merge to `main` deploys production automatically in dry-run mode; live enablement is controlled by checklist and dashboard config |
+| 8 | Dashboard information architecture redesign | Five-route shell, data-derived Overview, Activity, Performance, simplified Settings, Help, responsive and accessibility validation | Phases 4 and 7; issue #194; dashboard design handoff | Development and production show the redesigned dashboard with real data, no prototype controls, and all release health checks passing |
 
 ## Dependency Graph
 
@@ -88,6 +89,13 @@ Backend app + API routers
   -> Auth UI
   -> Dashboard UI
 
+Existing dashboard contracts + design handoff
+  -> Five-route dashboard shell
+  -> Data-derived Overview
+  -> Activity + Performance
+  -> Settings + Help
+  -> Accessibility + browser verification
+
 Core services + API + Frontend
   -> GitHub Actions CI/CD
   -> CloudFormation Infrastructure
@@ -105,6 +113,7 @@ Core services + API + Frontend
 | M5: External dry-run dev | Run dev mode with configured external APIs | Real venue/model API reads work, local/file-backed snapshots write, SES delivery is mocked or uses an existing sandbox identity, no live orders are submitted |
 | M6: Development deployment | Merge to `develop` | GitHub Actions deploys dev AWS stack, ECS health passes, CloudWatch logs receive structured events |
 | M7: Production dry-run | Merge to `main` | Production stack deploys automatically, remains dry-run by default, live checklist is ready |
+| M8: Dashboard IA production release | Verify issue #194 in development and production | Five routes match the handoff hierarchy, real data selects one Overview state, focused pages avoid duplicate information, and desktop/mobile evidence passes |
 
 ## Parallelization Plan
 
@@ -114,6 +123,7 @@ Core services + API + Frontend
 | Adapter integrations | Domain and ports exist | Polymarket, Alpaca, AWS, LLM adapters, wallet CLI | Port contracts and credential model |
 | Trading core | Foundation plus mocked ports | Ingestion, scoring, strategies, risk, execution, exits, comparison, scheduler | Order/position/reconciliation repositories |
 | Dashboard/API | API schema contracts exist | FastAPI routers, Next.js auth, dashboard UI, API client | Field-level API contracts and auth token boundary |
+| Dashboard redesign | Existing dashboard APIs and handoff are stable | Navigation, Overview, Activity, Performance, Settings, Help, responsive CSS | Shared realtime data, route ownership, and visual tokens |
 | CI baseline | Phase 1 foundation exists | Local test workflow and non-deploy CI checks | Test commands and safe mock defaults |
 | AWS deployment infrastructure | Phase 5 external integrations complete | CloudFormation, deploy workflow, ECR/ECS/RDS/S3/CloudWatch/SES | Environment names, secrets paths, migration safety |
 | Docs/runbooks | Phase outputs stabilize | Local setup, deployment, live checklist, source references, operations | Must track current commands and deployment flow |
@@ -177,13 +187,13 @@ Core services + API + Frontend
 | Audit service | Phase 1 |
 | Frontend app | Phase 4 |
 | Auth UI | Phase 4 |
-| Dashboard UI | Phase 4 |
+| Dashboard UI | Phase 4 and Phase 8 |
 | Frontend API client | Phase 4 |
 | Infrastructure | Phase 6 |
 | CI/CD | Phase 1 and Phase 6 |
 | Local development | Phase 1 |
 | Codex setup | Phase 1 |
-| Documentation | Phase 7 |
+| Documentation | Phase 7 and Phase 8 |
 
 ## Phase Gates
 
@@ -196,3 +206,4 @@ Core services + API + Frontend
 | Phase 5 complete | External API read-only/dry-run integration tests pass with opt-in credentials; AWS-managed S3/SES waits for Phase 6 |
 | Phase 6 complete | `develop` deployment succeeds, CloudWatch structured logs visible, ECS health checks pass |
 | Phase 7 complete | Runbooks, live checklist, source references, and traceability checks are complete |
+| Phase 8 complete | Frontend typecheck and tests pass; design review, code review, accessibility audit, 390-pixel and desktop browser checks pass; issue #194 is updated; development and production deploy and health evidence pass |

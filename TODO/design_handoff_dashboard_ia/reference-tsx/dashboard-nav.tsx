@@ -1,19 +1,14 @@
 "use client";
 
-// REQ: REQ-UI-004, REQ-UI-016, REQ-UI-024
+// Redesigned nav: flat, always-visible items, no overflow "More" menu.
+// Drop-in replacement for components/dashboard/dashboard-nav.tsx
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Activity,
-  BarChart3,
-  CircleHelp,
-  GitBranch,
-  SlidersHorizontal,
-} from "lucide-react";
+import { Activity, BarChart3, CircleHelp, GitBranch, SlidersHorizontal } from "lucide-react";
 import { ThemePreferenceControl } from "@/components/dashboard/theme-preference-control";
 
-const PRIMARY_NAV_ITEMS = [
+const NAV_ITEMS = [
   { href: "/dashboard", label: "Overview", icon: Activity },
   { href: "/dashboard/activity", label: "Activity", icon: GitBranch },
   { href: "/dashboard/performance", label: "Performance", icon: BarChart3 },
@@ -35,7 +30,7 @@ export function DashboardNav() {
         </Link>
         <div className="topbar-actions">
           <nav className="nav" aria-label="Dashboard">
-            {PRIMARY_NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.map((item) => {
               const active = isActivePath(pathname, item.href);
               const Icon = item.icon;
               return (
