@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 
-import { ConsumerDashboard } from "@/components/dashboard/consumer-dashboard";
+import { OverviewDashboard } from "@/components/dashboard/overview-dashboard";
 import { getDashboardSession } from "@/lib/server/session";
 
-// REQ: REQ-UI-002, REQ-UI-003, REQ-UI-004
+// REQ: REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-017, REQ-UI-019
 
 export default async function DashboardPage() {
   const sessionCheck = await getDashboardSession();
@@ -14,5 +14,5 @@ export default async function DashboardPage() {
     redirect("/access-denied");
   }
 
-  return <ConsumerDashboard />;
+  return <OverviewDashboard />;
 }

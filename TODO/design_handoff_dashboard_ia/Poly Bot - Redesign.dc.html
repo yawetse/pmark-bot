@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    body { margin: 0; }
+    a { color: #126b62; text-decoration: none; }
+    a:hover { color: #0b4f49; }
+  </style>
+</helmet>
+
+<div style="min-height:100vh; background:#f4f6f8; color:#17202a; font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;">
+
+  <header style="display:flex; align-items:center; gap:24px; justify-content:space-between; padding:16px 32px; border-bottom:1px solid #d7dee8; background:rgba(255,255,255,0.92); position:sticky; top:0; z-index:20; backdrop-filter:blur(12px);">
+    <div style="display:inline-flex; align-items:center; gap:10px; font-size:14px; font-weight:800; white-space:nowrap;">
+      <span style="width:18px; height:18px; border-radius:4px; background:linear-gradient(135deg,#126b62,#2b6fd6); display:inline-block;"></span>
+      <span>Poly Bot</span>
+    </div>
+    <nav style="display:flex; align-items:center; gap:6px;" aria-label="Main">
+      <a href="#" onClick="{{ goOverview }}" style="{{ navOverviewStyle }}">Overview</a>
+      <a href="#" onClick="{{ goActivity }}" style="{{ navActivityStyle }}">Activity</a>
+      <a href="#" onClick="{{ goPerformance }}" style="{{ navPerformanceStyle }}">Performance</a>
+      <a href="#" onClick="{{ goSettings }}" style="{{ navSettingsStyle }}">Settings</a>
+      <a href="#" onClick="{{ goHelp }}" style="{{ navHelpStyle }}">Help</a>
+    </nav>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#5f6c7b; background:#eef3f7; border-radius:999px; padding:6px 12px;">
+        <span style="width:7px; height:7px; border-radius:999px; background:#0d7f68; display:inline-block;"></span>
+        Simulation mode
+      </span>
+    </div>
+  </header>
+
+  <div style="margin:0 auto; max-width:1100px; padding:36px 32px 56px; display:grid; gap:28px;">
+
+    <!-- OVERVIEW -->
+    <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h1 style="font-size:26px; margin:0 0 4px;">Overview</h1>
+          <p style="color:#5f6c7b; font-size:14px; margin:0;">Updated 42 seconds ago &middot; checks itself every minute</p>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:11px; font-weight:700; color:#9aa7b5; text-transform:uppercase;">Demo: preview state</span>
+          <div style="display:inline-flex; background:#eef3f7; border-radius:999px; padding:3px; gap:2px;">
+            <button onClick="{{ setDemoAttention }}" style="{{ demoBtnAttentionStyle }}">Needs attention</button>
+            <button onClick="{{ setDemoClear }}" style="{{ demoBtnClearStyle }}">All clear</button>
+            <button onClick="{{ setDemoLive }}" style="{{ demoBtnLiveStyle }}">Live trade</button>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ isAttention }}" hint-placeholder-val="{{ true }}">
+        <section style="background:#fffaf7; border:1px solid #efb0a9; border-radius:12px; padding:26px; display:grid; gap:18px; margin-top:24px;">
+          <div style="display:flex; align-items:flex-start; gap:14px;">
+            <span style="flex:0 0 auto; width:36px; height:36px; border-radius:999px; background:#fae4e1; color:#a33a3a; display:inline-flex; align-items:center; justify-content:center; font-size:18px; font-weight:800;">!</span>
+            <div>
+              <h2 style="font-size:20px; margin:0 0 4px;">2 things need your attention</h2>
+              <p style="color:#5f6c7b; font-size:14px; margin:0; line-height:1.5;">Everything else is running fine. These are the only items worth a look right now.</p>
+            </div>
+          </div>
+          <div style="display:grid; gap:12px;">
+            <div style="background:#ffffff; border:1px solid #e8d6d2; border-radius:10px; padding:16px 18px; display:flex; align-items:center; justify-content:space-between; gap:16px;">
+              <div>
+                <strong style="font-size:15px; display:block; margin-bottom:3px;">A good trade was skipped by a hair</strong>
+                <span style="color:#5f6c7b; font-size:13px;">One market almost qualified but missed the confidence rule by a small margin. Loosening it slightly could let it through next time.</span>
+              </div>
+              <a href="#" onClick="{{ goSettings }}" style="flex:0 0 auto; display:inline-flex; align-items:center; background:#126b62; color:#fff; border-radius:6px; font-size:13px; font-weight:700; padding:0 16px; min-height:38px;">Review</a>
+            </div>
+            <div style="background:#ffffff; border:1px solid #e8d6d2; border-radius:10px; padding:16px 18px; display:flex; align-items:center; justify-content:space-between; gap:16px;">
+              <div>
+                <strong style="font-size:15px; display:block; margin-bottom:3px;">No one gets notified about trades yet</strong>
+                <span style="color:#5f6c7b; font-size:13px;">Email alerts are on, but no address is set up to receive them.</span>
+              </div>
+              <a href="#" onClick="{{ goSettings }}" style="flex:0 0 auto; display:inline-flex; align-items:center; background:#126b62; color:#fff; border-radius:6px; font-size:13px; font-weight:700; padding:0 16px; min-height:38px;">Add recipient</a>
+            </div>
+          </div>
+        </section>
+
+        <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:14px; margin-top:24px;">
+          <div>
+            <h2 style="font-size:16px; margin:0 0 4px;">Recommended settings for next cycle</h2>
+            <p style="color:#5f6c7b; font-size:13px; margin:0;">Based on what got skipped, here are three ways to adjust — pick one or keep what you have.</p>
+          </div>
+          <div style="display:grid; gap:12px; grid-template-columns:repeat(3,minmax(0,1fr));">
+            <article style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:grid; gap:12px;">
+              <div>
+                <span style="border-radius:999px; font-size:11px; font-weight:700; padding:4px 9px; background:#e3eefc; color:#24558f;">Fewer, safer trades</span>
+                <h3 style="font-size:14px; margin:10px 0 4px;">Tighten further</h3>
+                <p style="color:#5f6c7b; font-size:12.5px; margin:0; line-height:1.4;">Raises the bar even higher. Expect fewer trades, more certainty.</p>
+              </div>
+              <button style="background:#fff; border:1px solid #d7dee8; border-radius:6px; padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer;">Use this</button>
+            </article>
+            <article style="background:#f2f9f6; border:1px solid #9ed9c7; border-radius:10px; padding:16px; display:grid; gap:12px;">
+              <div>
+                <span style="border-radius:999px; font-size:11px; font-weight:700; padding:4px 9px; background:#dff3ec; color:#0d5f52;">Currently on</span>
+                <h3 style="font-size:14px; margin:10px 0 4px;">Keep current settings</h3>
+                <p style="color:#5f6c7b; font-size:12.5px; margin:0; line-height:1.4;">The balanced defaults this deployment ships with.</p>
+              </div>
+              <button style="background:#126b62; border:1px solid #126b62; border-radius:6px; color:#fff; padding:8px 12px; font-size:13px; font-weight:700; cursor:default;">In use</button>
+            </article>
+            <article style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:grid; gap:12px;">
+              <div>
+                <span style="border-radius:999px; font-size:11px; font-weight:700; padding:4px 9px; background:#fae4e1; color:#a33a3a;">More trades</span>
+                <h3 style="font-size:14px; margin:10px 0 4px;">Let the close one through</h3>
+                <p style="color:#5f6c7b; font-size:12.5px; margin:0; line-height:1.4;">Lowers the confidence rule slightly — would have let today's near-miss trade proceed.</p>
+              </div>
+              <button style="background:#fff; border:1px solid #d7dee8; border-radius:6px; padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer;">Use this</button>
+            </article>
+          </div>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{ isClear }}" hint-placeholder-val="{{ false }}">
+        <section style="background:#f2f9f6; border:1px solid #9ed9c7; border-radius:12px; padding:26px; display:flex; align-items:center; gap:16px; margin-top:24px;">
+          <span style="flex:0 0 auto; width:36px; height:36px; border-radius:999px; background:#dff3ec; color:#0d5f52; display:inline-flex; align-items:center; justify-content:center; font-size:18px; font-weight:800;">&#10003;</span>
+          <div>
+            <h2 style="font-size:20px; margin:0 0 4px;">All clear — nothing needs you right now</h2>
+            <p style="color:#5f6c7b; font-size:14px; margin:0; line-height:1.5;">The bot checked 487 markets this hour and nothing crossed the line for a trade. That's normal — no action needed.</p>
+          </div>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{ isLive }}" hint-placeholder-val="{{ false }}">
+        <section style="background:#eef6ff; border:1px solid #a9c8ee; border-radius:12px; padding:26px; display:grid; gap:16px; margin-top:24px;">
+          <div style="display:flex; align-items:flex-start; gap:14px;">
+            <span style="flex:0 0 auto; width:36px; height:36px; border-radius:999px; background:#dbeafe; color:#1d4ed8; display:inline-flex; align-items:center; justify-content:center; font-size:18px; font-weight:800;">$</span>
+            <div>
+              <h2 style="font-size:20px; margin:0 0 4px;">A real trade was just placed</h2>
+              <p style="color:#5f6c7b; font-size:14px; margin:0; line-height:1.5;">Real money is involved in this one. Here's exactly what happened.</p>
+            </div>
+          </div>
+          <div style="background:#ffffff; border:1px solid #cfe0f5; border-radius:10px; padding:16px 18px; display:grid; gap:6px;">
+            <strong style="font-size:15px;">Bought "Will the Fed cut rates in July?" — YES at 62&cent;</strong>
+            <span style="color:#5f6c7b; font-size:13px;">$250 position &middot; confidence 0.81 &middot; placed on Polymarket at 2:32 PM</span>
+          </div>
+          <a href="#" onClick="{{ goActivity }}" style="font-size:13px; font-weight:700;">See full trade detail &rarr;</a>
+        </section>
+      </sc-if>
+
+      <section style="display:grid; gap:14px; margin-top:24px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between;">
+          <h2 style="font-size:16px; margin:0; color:#5f6c7b; font-weight:800; text-transform:uppercase; letter-spacing:0.02em;">How things are running</h2>
+          <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#0d5f52;">
+            <span style="width:7px; height:7px; border-radius:999px; background:#0d7f68; display:inline-block;"></span>
+            Nothing else is blocked
+          </span>
+        </div>
+        <div style="display:grid; gap:12px; grid-template-columns:repeat(4,minmax(0,1fr));">
+          <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:grid; gap:6px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Trading mode</span>
+            <strong style="font-size:17px;">Simulation</strong>
+            <span style="color:#5f6c7b; font-size:12px;">No real money is at risk</span>
+          </div>
+          <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:grid; gap:6px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Active markets</span>
+            <strong style="font-size:17px;">Polymarket, Alpaca</strong>
+            <span style="color:#5f6c7b; font-size:12px;">Both being watched</span>
+          </div>
+          <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:grid; gap:6px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Last check</span>
+            <strong style="font-size:17px;">2:32 PM</strong>
+            <span style="color:#5f6c7b; font-size:12px;">Finished normally</span>
+          </div>
+          <div style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:grid; gap:6px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Next check</span>
+            <strong style="font-size:17px;">in 42s</strong>
+            <span style="color:#5f6c7b; font-size:12px;">Every minute</span>
+          </div>
+        </div>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:18px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:24px;">
+        <div style="display:flex; align-items:center; gap:14px;">
+          <span style="width:32px; height:32px; border-radius:999px; background:#edf2f7; color:#4f5f73; display:inline-flex; align-items:center; justify-content:center; font-size:15px;">&#8212;</span>
+          <div>
+            <strong style="font-size:14px; display:block;">{{ recentResultHeadline }}</strong>
+            <span style="color:#5f6c7b; font-size:13px;">{{ recentResultSub }}</span>
+          </div>
+        </div>
+        <a href="#" onClick="{{ goActivity }}" style="flex:0 0 auto; font-size:13px; font-weight:700;">See full activity &rarr;</a>
+      </section>
+
+      <section style="display:grid; gap:12px; margin-top:24px;">
+        <h2 style="font-size:16px; margin:0; color:#5f6c7b; font-weight:800; text-transform:uppercase; letter-spacing:0.02em;">Explore more</h2>
+        <div style="display:grid; gap:12px; grid-template-columns:repeat(3,minmax(0,1fr));">
+          <a href="#" onClick="{{ goPerformance }}" style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:block;">
+            <strong style="font-size:14px; display:block; margin-bottom:4px; color:#17202a;">Performance</strong>
+            <span style="color:#5f6c7b; font-size:13px;">P&amp;L, win rate, and how each market is doing.</span>
+          </a>
+          <a href="#" onClick="{{ goSettings }}" style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:block;">
+            <strong style="font-size:14px; display:block; margin-bottom:4px; color:#17202a;">Settings</strong>
+            <span style="color:#5f6c7b; font-size:13px;">Risk rules, notifications, and which markets to watch.</span>
+          </a>
+          <a href="#" onClick="{{ goHelp }}" style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:16px; display:block;">
+            <strong style="font-size:14px; display:block; margin-bottom:4px; color:#17202a;">Help</strong>
+            <span style="color:#5f6c7b; font-size:13px;">How a trading cycle works, in five steps.</span>
+          </a>
+        </div>
+      </section>
+    </sc-if>
+
+    <!-- ACTIVITY -->
+    <sc-if value="{{ isActivity }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h1 style="font-size:26px; margin:0 0 4px;">Activity</h1>
+          <p style="color:#5f6c7b; font-size:14px; margin:0;">Every check the bot has run recently, and why each one ended the way it did.</p>
+        </div>
+        <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#5f6c7b; background:#eef3f7; border-radius:999px; padding:6px 12px;">
+          <span style="width:7px; height:7px; border-radius:999px; background:#0d7f68; display:inline-block;"></span>
+          Updated 42 seconds ago
+        </span>
+      </div>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:16px; margin-top:24px;">
+        <h2 style="font-size:16px; margin:0;">Last check, step by step</h2>
+        <div style="display:grid; gap:10px; grid-template-columns:repeat(4,minmax(130px,1fr));">
+          <div style="background:#f9fbfc; border:1px solid #9ed9c7; border-radius:8px; padding:12px; display:grid; gap:8px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Markets scanned</span>
+            <strong style="font-size:15px;">487 &rarr; 35</strong>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #9ed9c7; border-radius:8px; padding:12px; display:grid; gap:8px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Looked promising</span>
+            <strong style="font-size:15px;">35 &rarr; 3</strong>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #b5cdeb; border-radius:8px; padding:12px; display:grid; gap:8px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Passed confidence rule</span>
+            <strong style="font-size:15px;">3 &rarr; 1</strong>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #efb0a9; border-radius:8px; padding:12px; display:grid; gap:8px;">
+            <span style="color:#5f6c7b; font-size:12px; font-weight:700;">Passed risk checks</span>
+            <strong style="font-size:15px;">1 &rarr; 0</strong>
+          </div>
+        </div>
+        <p style="color:#5f6c7b; font-size:13px; margin:0;">Nothing traded this cycle — the one candidate that reached the confidence rule was 4 points short.</p>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:12px; margin-top:16px;">
+        <h2 style="font-size:16px; margin:0;">Recent checks</h2>
+        <sc-for list="{{ activityRows }}" as="row" hint-placeholder-count="5">
+          <div style="display:grid; grid-template-columns:110px 1fr auto; align-items:center; gap:12px; padding:10px 0; border-top:1px solid #eef1f4;">
+            <span style="color:#5f6c7b; font-size:13px;">{{ row.time }}</span>
+            <span style="font-size:13px;">{{ row.summary }}</span>
+            <span style="font-size:12px; font-weight:700; padding:3px 9px; border-radius:999px; background:{{ row.badgeBg }}; color:{{ row.badgeColor }};">{{ row.status }}</span>
+          </div>
+        </sc-for>
+      </section>
+    </sc-if>
+
+    <!-- PERFORMANCE -->
+    <sc-if value="{{ isPerformance }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h1 style="font-size:26px; margin:0 0 4px;">Performance</h1>
+          <p style="color:#5f6c7b; font-size:14px; margin:0;">Confirmed results from the venues — simulation trades are excluded.</p>
+        </div>
+        <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#0d5f52; background:#eef3f7; border-radius:999px; padding:6px 12px;">
+          <span style="width:7px; height:7px; border-radius:999px; background:#0d7f68; display:inline-block;"></span>
+          Win rate trending up
+        </span>
+      </div>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:16px; margin-top:24px;">
+        <div style="display:grid; grid-template-columns:repeat(6,minmax(0,1fr));">
+          <div style="padding:6px 12px 0 0; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Equity</span><strong style="font-size:21px;">$14,312</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:6px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Realized P&amp;L</span><strong style="font-size:21px; color:#0d5f52;">+$2,140</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:6px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Unrealized</span><strong style="font-size:21px; color:#a33a3a;">-$88</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:6px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Open positions</span><strong style="font-size:21px;">4</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:6px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Win rate</span><strong style="font-size:21px;">74%</strong></div>
+          <div style="border-left:1px solid #d7dee8; padding:6px 12px; display:grid; gap:6px;"><span style="color:#5f6c7b; font-size:11px; font-weight:800; text-transform:uppercase;">Trades</span><strong style="font-size:21px;">271</strong></div>
+        </div>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:12px; margin-top:16px;">
+        <h2 style="font-size:16px; margin:0;">By market</h2>
+        <div style="display:grid; grid-template-columns:1.4fr 0.8fr 0.8fr 0.8fr; font-size:12px; color:#5f6c7b; font-weight:800; text-transform:uppercase; padding-bottom:8px;">
+          <span>Market</span><span>Trades</span><span>Win rate</span><span>P&amp;L</span>
+        </div>
+        <sc-for list="{{ marketRows }}" as="m" hint-placeholder-count="2">
+          <div style="display:grid; grid-template-columns:1.4fr 0.8fr 0.8fr 0.8fr; font-size:13px; padding:10px 0; border-top:1px solid #eef1f4; align-items:center;">
+            <span>{{ m.name }}</span><span>{{ m.trades }}</span><span>{{ m.winRate }}</span><span style="color:{{ m.pnlColor }}; font-weight:700;">{{ m.pnl }}</span>
+          </div>
+        </sc-for>
+      </section>
+    </sc-if>
+
+    <!-- SETTINGS -->
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h1 style="font-size:26px; margin:0 0 4px;">Settings</h1>
+          <p style="color:#5f6c7b; font-size:14px; margin:0;">Plain-language controls — no config file to edit by hand.</p>
+        </div>
+        <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#5f6c7b; background:#eef3f7; border-radius:999px; padding:6px 12px;">
+          <span style="width:7px; height:7px; border-radius:999px; background:#0d7f68; display:inline-block;"></span>
+          Simulation mode
+        </span>
+      </div>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:18px; margin-top:24px;">
+        <h2 style="font-size:16px; margin:0;">Risk &amp; trading rules</h2>
+        <div style="display:grid; gap:8px;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:14px;">Minimum confidence before trading</span>
+            <span style="font-size:14px; font-weight:700;">0.75</span>
+          </div>
+          <input type="range" min="0" max="1" step="0.01" value="0.75" style="width:100%;"/>
+          <span style="color:#5f6c7b; font-size:12px;">Higher means fewer, safer trades. Lower means more trades get through.</span>
+        </div>
+        <div style="display:grid; gap:8px; border-top:1px solid #eef1f4; padding-top:16px;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:14px;">Maximum spread allowed</span>
+            <span style="font-size:14px; font-weight:700;">0.05</span>
+          </div>
+          <input type="range" min="0" max="0.2" step="0.01" value="0.05" style="width:100%;"/>
+          <span style="color:#5f6c7b; font-size:12px;">Rejects markets where the buy/sell gap is too wide to trade safely.</span>
+        </div>
+        <label style="display:flex; align-items:center; gap:10px; font-size:14px; border-top:1px solid #eef1f4; padding-top:16px;">
+          <input type="checkbox"/>
+          <span>Allow real-money trades (currently off — simulation only)</span>
+        </label>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:14px; margin-top:16px;">
+        <h2 style="font-size:16px; margin:0;">Notifications</h2>
+        <label style="display:flex; align-items:center; gap:10px; font-size:14px;">
+          <input type="checkbox" checked="checked"/>
+          <span>Email me when a real trade is placed</span>
+        </label>
+        <div style="display:grid; gap:6px;">
+          <span style="font-size:13px; color:#5f6c7b;">Recipient email</span>
+          <input type="email" placeholder="you@example.com" style="border:1px solid #d7dee8; border-radius:6px; padding:10px 12px; font-size:14px; max-width:320px;"/>
+        </div>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:14px; margin-top:16px;">
+        <h2 style="font-size:16px; margin:0;">Markets to watch</h2>
+        <label style="display:flex; align-items:center; gap:10px; font-size:14px;">
+          <input type="checkbox" checked="checked"/>
+          <span>Polymarket</span>
+        </label>
+        <label style="display:flex; align-items:center; gap:10px; font-size:14px;">
+          <input type="checkbox" checked="checked"/>
+          <span>Alpaca</span>
+        </label>
+      </section>
+    </sc-if>
+
+    <!-- HELP -->
+    <sc-if value="{{ isHelp }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h1 style="font-size:26px; margin:0 0 4px;">Help</h1>
+          <p style="color:#5f6c7b; font-size:14px; margin:0;">How the bot decides whether to trade, and what to do if something looks off.</p>
+        </div>
+        <a href="#" onClick="{{ goOverview }}" style="font-size:13px; font-weight:700;">&larr; Back to Overview</a>
+      </div>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:16px; margin-top:24px;">
+        <h2 style="font-size:18px; margin:0;">One check, five steps</h2>
+        <div style="display:grid; gap:10px; grid-template-columns:repeat(5,minmax(0,1fr));">
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+            <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:800; height:26px; justify-content:center; width:26px;">1</span>
+            <div><strong style="font-size:13px;">Collect prices</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Latest prices, spreads, liquidity.</p></div>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+            <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:800; height:26px; justify-content:center; width:26px;">2</span>
+            <div><strong style="font-size:13px;">Find candidates</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Markets that fit your filters move forward.</p></div>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+            <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:800; height:26px; justify-content:center; width:26px;">3</span>
+            <div><strong style="font-size:13px;">Score the trade</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Direction, confidence, and risk controls.</p></div>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+            <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:800; height:26px; justify-content:center; width:26px;">4</span>
+            <div><strong style="font-size:13px;">Simulate or submit</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Live only when every gate is clear.</p></div>
+          </div>
+          <div style="background:#f9fbfc; border:1px solid #d7dee8; border-radius:8px; padding:12px; display:grid; gap:10px; grid-template-columns:auto minmax(0,1fr);">
+            <span style="align-items:center; background:#e0f1ed; border-radius:999px; color:#0b4f49; display:inline-flex; font-size:12px; font-weight:800; height:26px; justify-content:center; width:26px;">5</span>
+            <div><strong style="font-size:13px;">Monitor exits</strong><p style="color:#5f6c7b; font-size:12px; margin:4px 0 0;">Stop, target, and closing rules.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section style="background:#ffffff; border:1px solid #d7dee8; border-radius:10px; padding:20px; display:grid; gap:14px; margin-top:16px;">
+        <h2 style="font-size:16px; margin:0;">Common questions</h2>
+        <div><strong style="font-size:14px; display:block; margin-bottom:2px;">Why didn't it trade?</strong><p style="color:#5f6c7b; font-size:13px; margin:0;">Usually a candidate missed one of the five checks — check Activity for exactly which one.</p></div>
+        <div><strong style="font-size:14px; display:block; margin-bottom:2px;">Is my money at risk?</strong><p style="color:#5f6c7b; font-size:13px; margin:0;">Only if real-money trading is turned on in Settings. It's off by default.</p></div>
+        <div><strong style="font-size:14px; display:block; margin-bottom:2px;">How do I get emailed about trades?</strong><p style="color:#5f6c7b; font-size:13px; margin:0;">Add a recipient address in Settings &rarr; Notifications.</p></div>
+      </section>
+    </sc-if>
+
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { view: "overview", demo: "attention" };
+
+  nav(name) {
+    const active = this.state.view === name;
+    return {
+      display: "inline-flex", alignItems: "center", gap: 8,
+      background: active ? "#e0f1ed" : "transparent",
+      borderRadius: 6,
+      color: active ? "#0b4f49" : "#17202a",
+      fontSize: 14, fontWeight: active ? 700 : 600,
+      minHeight: 40, padding: "0 16px", cursor: "pointer"
+    };
+  }
+
+  demoBtn(name) {
+    const active = this.state.demo === name;
+    return {
+      border: 0, borderRadius: 999, fontSize: 12, fontWeight: 700,
+      padding: "6px 12px", cursor: "pointer",
+      background: active ? "#ffffff" : "transparent",
+      color: active ? "#126b62" : "#5f6c7b",
+      boxShadow: active ? "0 1px 2px rgba(27,39,54,.15)" : "none"
+    };
+  }
+
+  renderVals() {
+    const v = this.state.view;
+    const recent = {
+      attention: ["Last check found 3 possible trades, none qualified", "The closest one is the item flagged above."],
+      clear: ["Last check found nothing worth flagging", "487 markets scanned, all within normal range."],
+      live: ["Last check placed one real trade", "See the trade card above for details."]
+    }[this.state.demo];
+
+    return {
+      isOverview: v === "overview", isActivity: v === "activity",
+      isPerformance: v === "performance", isSettings: v === "settings", isHelp: v === "help",
+      goOverview: () => this.setState({ view: "overview" }),
+      goActivity: () => this.setState({ view: "activity" }),
+      goPerformance: () => this.setState({ view: "performance" }),
+      goSettings: () => this.setState({ view: "settings" }),
+      goHelp: () => this.setState({ view: "help" }),
+      navOverviewStyle: this.nav("overview"), navActivityStyle: this.nav("activity"),
+      navPerformanceStyle: this.nav("performance"), navSettingsStyle: this.nav("settings"), navHelpStyle: this.nav("help"),
+
+      isAttention: this.state.demo === "attention", isClear: this.state.demo === "clear", isLive: this.state.demo === "live",
+      setDemoAttention: () => this.setState({ demo: "attention" }),
+      setDemoClear: () => this.setState({ demo: "clear" }),
+      setDemoLive: () => this.setState({ demo: "live" }),
+      demoBtnAttentionStyle: this.demoBtn("attention"), demoBtnClearStyle: this.demoBtn("clear"), demoBtnLiveStyle: this.demoBtn("live"),
+
+      recentResultHeadline: recent[0], recentResultSub: recent[1],
+
+      activityRows: [
+        { time: "2:32 PM", summary: "3 candidates, 1 passed scoring, 0 passed risk", status: "no trade", badgeBg: "#eef2f7", badgeColor: "#4f5f73" },
+        { time: "2:31 PM", summary: "2 candidates, 0 passed scoring", status: "no trade", badgeBg: "#eef2f7", badgeColor: "#4f5f73" },
+        { time: "2:30 PM", summary: "1 candidate, passed all checks, simulated", status: "simulated", badgeBg: "#e3eefc", badgeColor: "#24558f" },
+        { time: "2:29 PM", summary: "4 candidates, 1 passed scoring, 0 passed risk", status: "no trade", badgeBg: "#eef2f7", badgeColor: "#4f5f73" },
+        { time: "2:28 PM", summary: "0 candidates found", status: "no trade", badgeBg: "#eef2f7", badgeColor: "#4f5f73" }
+      ],
+      marketRows: [
+        { name: "Polymarket", trades: 194, winRate: "76%", pnl: "+$1,860", pnlColor: "#0d5f52" },
+        { name: "Alpaca", trades: 77, winRate: "68%", pnl: "+$280", pnlColor: "#0d5f52" }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

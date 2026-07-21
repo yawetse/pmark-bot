@@ -1,0 +1,39 @@
+/* Append to globals.css. Namespaced classes for the redesigned Overview — does not
+   touch existing .consumer-* / .cycle-guide / .action-list rules, so both can coexist
+   during rollout (feature-flag the page, then delete the old classes once switched over). */
+
+.overview-page { display: grid; gap: 28px; max-width: 1100px; margin: 0 auto; padding: 36px 32px 56px; }
+.overview-header { display: flex; align-items: baseline; justify-content: space-between; }
+.overview-header h1 { font-size: 26px; margin: 0 0 4px; }
+.muted { color: var(--muted-foreground, #5f6c7b); }
+
+.attention-card { background: #fffaf7; border: 1px solid #efb0a9; border-radius: 12px; padding: 26px; display: grid; gap: 18px; }
+.attention-card-head { display: flex; align-items: flex-start; gap: 14px; }
+.attention-icon { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 999px; background: #fae4e1; color: #a33a3a; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
+.attention-list { display: grid; gap: 12px; }
+.attention-item { background: #fff; border: 1px solid #e8d6d2; border-radius: 10px; padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.btn-primary { display: inline-flex; align-items: center; background: #126b62; color: #fff; border-radius: 6px; font-size: 13px; font-weight: 700; padding: 0 16px; min-height: 38px; text-decoration: none; }
+
+.recommendations-card { background: #fff; border: 1px solid #d7dee8; border-radius: 10px; padding: 20px; display: grid; gap: 14px; }
+.recommendations-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rec-card { background: #f9fbfc; border: 1px solid #d7dee8; border-radius: 10px; padding: 16px; display: grid; gap: 12px; }
+.rec-card-current { background: #f2f9f6; border-color: #9ed9c7; }
+.rec-badge { border-radius: 999px; font-size: 11px; font-weight: 700; padding: 4px 9px; background: #e3eefc; color: #24558f; }
+
+.clear-card { background: #f2f9f6; border: 1px solid #9ed9c7; border-radius: 12px; padding: 26px; display: flex; align-items: center; gap: 16px; }
+.clear-icon { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 999px; background: #dff3ec; color: #0d5f52; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
+
+.live-card { background: #eef6ff; border: 1px solid #a9c8ee; border-radius: 12px; padding: 26px; display: grid; gap: 16px; }
+.live-card-head { display: flex; align-items: flex-start; gap: 14px; }
+.live-icon { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
+.live-detail { background: #fff; border: 1px solid #cfe0f5; border-radius: 10px; padding: 16px 18px; display: grid; gap: 6px; }
+
+.monitoring-header { display: flex; align-items: baseline; justify-content: space-between; }
+.status-ok { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #0d5f52; }
+.monitoring-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 14px; }
+.monitoring-card { background: #fff; border: 1px solid #d7dee8; border-radius: 10px; padding: 16px; display: grid; gap: 6px; }
+
+.recent-result-strip { background: #fff; border: 1px solid #d7dee8; border-radius: 10px; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+.explore-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 12px; }
+.explore-card { background: #fff; border: 1px solid #d7dee8; border-radius: 10px; padding: 16px; display: grid; gap: 4px; text-decoration: none; color: inherit; }
