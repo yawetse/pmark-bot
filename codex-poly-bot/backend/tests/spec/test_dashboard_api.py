@@ -19,7 +19,6 @@ from app.services.runtime_status_service import (
     DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
     DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
     DASHBOARD_REASONING_OUTPUT_ROW_LIMIT,
-    DASHBOARD_SCANNER_CANDIDATE_ROW_LIMIT,
     DASHBOARD_STRATEGY_OUTPUT_ROW_LIMIT,
     DASHBOARD_STRATEGY_VOTE_ROW_LIMIT,
     DATA_EXPLORER_DATASETS,
@@ -350,11 +349,6 @@ def test_req_ui_008_10_operations_details_read_only_the_latest_run(monkeypatch) 
     service.exit_summary(Environment.DEVELOPMENT)
 
     expected_calls = {
-        service.SCANNER_CANDIDATES_TABLE: (
-            DASHBOARD_SCANNER_CANDIDATE_ROW_LIMIT,
-            "scanner_run_id",
-            "scanner-latest",
-        ),
         service.REASONING_OUTPUTS_TABLE: (
             DASHBOARD_REASONING_OUTPUT_ROW_LIMIT,
             "reasoning_run_id",
@@ -400,6 +394,10 @@ def test_req_ui_008_10_operations_details_read_only_the_latest_run(monkeypatch) 
             and kwargs.get("filters") == {"environment": environment}
             for called_table, kwargs in calls
         )
+    assert not any(
+        called_table == service.SCANNER_CANDIDATES_TABLE
+        for called_table, _ in calls
+    )
 
 
 def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypatch) -> None:
