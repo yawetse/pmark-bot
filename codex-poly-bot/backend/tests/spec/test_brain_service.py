@@ -5,10 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.db import RepositoryRegistry
+from app.db import DatabaseState, RepositoryRegistry
 from app.domain import Environment, ModelProvider, Venue
 from app.services import BrainService, FakeLlmProvider, ScannerService
 from app.services.brain_service import _remaining_budget
+
+
+class _ReasoningRunNotNullState(DatabaseState):
+    """Mirror the production reasoning_runs completed_at constraint."""
+
+    def insert(self, table_name: str, row: dict) -> dict:
+        if table_name == "shared.reasoning_runs":
+            assert row["completed_at"] is not None
+        return super().insert(table_name, row)
 
 
 def test_req_llm_001_04_brain_scores_polymarket_and_stock_scanner_survivors() -> None:
@@ -168,6 +177,30 @@ def test_req_llm_001_05_selected_venue_receives_limited_prompt_slots_first() -> 
         Venue.POLYMARKET_US.value,
     }
     assert {output["refusalReason"] for output in skipped} == {"provider rate limit reached"}
+
+
+def test_req_llm_001_06_scheduled_reasoning_run_satisfies_production_timestamp_constraint() -> None:
+    """TST-REQ-LLM-001-06: Validates REQ-LLM-001 and REQ-DB-001
+
+    Given: a scheduled reasoning run begins without a final completion time
+    When: the running row is written to the production-shaped store
+    Then: the provisional row satisfies the non-null completed_at constraint
+    """
+    registry = RepositoryRegistry(_ReasoningRunNotNullState())
+    started_at = datetime(2026, 7, 22, 22, 37, tzinfo=UTC)
+
+    result = BrainService(registry, providers=()).run(
+        environment=Environment.PRODUCTION,
+        pipeline_run_id="pipeline-scheduled",
+        trigger="scheduled",
+        scanner_run={"id": "scanner-scheduled", "candidates": []},
+        config_payload={},
+        started_at=started_at,
+        completed_at=None,
+    )
+
+    assert result.payload["status"] == "no_candidates"
+    assert result.payload["completedAt"] is not None
 
 
 def test_req_llm_004_04_brain_records_budget_and_credential_skips() -> None:
