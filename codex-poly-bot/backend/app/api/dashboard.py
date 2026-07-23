@@ -37,6 +37,7 @@ from app.services import (
     ConfigPatchOperation,
     ConfigValidationError,
     DashboardAccessResult,
+    trading_profile_patches,
 )
 
 
@@ -277,6 +278,7 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
 
         payload = await request.json()
         environment = _parse_environment(payload.get("environment"), context.environment)
+        requested_profile = payload.get("profile")
         patches = [
             ConfigPatchOperation(
                 op=str(item.get("op")),
@@ -287,6 +289,10 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             if isinstance(item, dict)
         ]
         try:
+            if requested_profile is not None:
+                if patches:
+                    raise ConfigValidationError("profile and direct patches cannot be combined")
+                patches = trading_profile_patches(str(requested_profile))
             result = services.config.save_config_patches(
                 actor=context.actor,
                 access=context.access,

@@ -79,6 +79,11 @@ type LiveModeConfirmationState =
       source: "advanced" | "preference";
     };
 
+type TradingProfileConfirmationState = {
+  open: boolean;
+  confirmed: boolean;
+};
+
 type ConfigControlsProps = {
   initialSnapshot?: ConfigSnapshot;
   loadError?: string;
@@ -321,6 +326,8 @@ const OPENAI_SCORING_MODEL_OPTIONS = [
   { label: "GPT-5 Nano", value: "gpt-5-nano" },
 ];
 
+const ACTIVE_STOCK_PROFILE = "active_stock_day_trader";
+
 const PREFERENCE_SECTIONS: SettingSection[] = [
   {
     title: "Trading Access",
@@ -434,7 +441,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
       {
         path: "scanner.alpaca.min_quote_liquidity",
         kind: "number",
-        fallback: 1,
+        fallback: 0.5,
         min: 0,
         step: 1,
         unit: "count",
@@ -443,7 +450,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
       {
         path: "scanner.alpaca.max_spread",
         kind: "range",
-        fallback: 0.5,
+        fallback: 1,
         min: 0.01,
         max: 5,
         step: 0.01,
@@ -473,7 +480,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
       {
         path: "reasoning.max_prompts_per_provider_per_run",
         kind: "range",
-        fallback: 100,
+        fallback: 4,
         min: 1,
         max: 500,
         step: 1,
@@ -602,6 +609,65 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         displayMultiplier: 100,
         stage: "Execution gate",
       },
+      {
+        path: "exit.alpaca.profit_target_pct",
+        kind: "range",
+        fallback: 2,
+        min: 0.25,
+        max: 20,
+        step: 0.25,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Stock exit",
+      },
+      {
+        path: "exit.alpaca.stop_loss_pct",
+        kind: "range",
+        fallback: 1,
+        min: 0.25,
+        max: 10,
+        step: 0.25,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Stock exit",
+      },
+      {
+        path: "exit.alpaca.trailing_stop_pct",
+        kind: "range",
+        fallback: 1,
+        min: 0.25,
+        max: 10,
+        step: 0.25,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Stock exit",
+      },
+      {
+        path: "exit.alpaca.max_position_age_hours",
+        kind: "range",
+        fallback: 6,
+        min: 1,
+        max: 24,
+        step: 1,
+        unit: "hours",
+        stage: "Stock exit",
+      },
+      {
+        path: "exit.alpaca.market_hours_only",
+        kind: "switch",
+        fallback: true,
+        stage: "Stock session",
+      },
+      {
+        path: "exit.alpaca.close_before_market_close_minutes",
+        kind: "range",
+        fallback: 15,
+        min: 1,
+        max: 120,
+        step: 1,
+        unit: "minutes",
+        stage: "Stock session",
+      },
     ],
   },
   {
@@ -609,8 +675,8 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
     body: "Controls model spend caps, alert thresholds, repeated alert timing, and trade emails.",
     icon: Bell,
     settings: [
-      { path: "llm.openai.budget_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "Model budget" },
-      { path: "llm.claude.budget_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "Model budget" },
+      { path: "llm.openai.budget_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "24-hour budget" },
+      { path: "llm.claude.budget_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "24-hour budget" },
       { path: "notifications.email_on_trade_placed", kind: "switch", fallback: false, stage: "Alerts" },
       { path: "notifications.thresholds.daily_loss_usd", kind: "number", fallback: 100, min: 0, step: 1, unit: "usd", stage: "Alerts" },
       { path: "notifications.thresholds.model_spend_usd", kind: "number", fallback: 20, min: 0, step: 1, unit: "usd", stage: "Alerts" },
@@ -666,6 +732,10 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
   const [liveModeConfirmation, setLiveModeConfirmation] = useState<LiveModeConfirmationState>({
     status: "closed",
   });
+  const [profileConfirmation, setProfileConfirmation] = useState<TradingProfileConfirmationState>({
+    open: false,
+    confirmed: false,
+  });
 
   if (!initialSnapshot) {
     return (
@@ -697,6 +767,9 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     valueAtPath(settings, "notifications.recipients"),
     initialSnapshot,
   );
+  const activeStockProfileApplied = activeStockProfileIsApplied(settings);
+  const liveTradingOn = Boolean(valueAtPath(settings, "live_enabled"));
+  const alpacaAccountMode = String(valueAtPath(settings, "alpaca.account_mode") ?? "paper");
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -796,6 +869,53 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     setCurrentVersion(savedVersion);
     setSaveState({ status: "saved", version: savedVersion });
     return true;
+  }
+
+  async function applyActiveStockProfile() {
+    if (!profileConfirmation.confirmed) {
+      return;
+    }
+    const result = await dashboardApi<ConfigUpdateResponse>("config", {
+      method: "POST",
+      body: JSON.stringify({
+        environment: snapshot.environment,
+        expected_version: currentVersion === "bootstrap" ? null : currentVersion,
+        profile: ACTIVE_STOCK_PROFILE,
+      }),
+    });
+    if (!result.ok) {
+      const conflictingVersion = parseCurrentVersion(result.message);
+      if (result.status === 409 && conflictingVersion) {
+        setSaveState({ status: "conflict", currentVersion: conflictingVersion });
+      } else {
+        setSaveState({ status: "error", message: result.message });
+      }
+      return;
+    }
+    const savedVersion = result.data.new_version ?? currentVersion;
+    const refreshed = await dashboardApi<ConfigSnapshot>("config/current");
+    if (!refreshed.ok) {
+      setCurrentVersion(savedVersion);
+      setSaveState({
+        status: "error",
+        message: `Saved profile version ${savedVersion}, but the updated settings could not be reloaded. Reload this page before making another change.`,
+      });
+      setProfileConfirmation({ open: false, confirmed: false });
+      return;
+    }
+    setSettings(refreshed.data.settings);
+    setCurrentVersion(refreshed.data.version);
+    setPendingDrafts({});
+    syncStockUniverseDrafts(refreshed.data.settings);
+    setRecipientEmailDraft(
+      recipientEmailForOwner(
+        valueAtPath(refreshed.data.settings, "notifications.recipients"),
+        refreshed.data,
+      ),
+    );
+    setValue(formatValueForInput(valueAtPath(refreshed.data.settings, path)));
+    setSaveState({ status: "saved", version: refreshed.data.version });
+    setProfileConfirmation({ open: false, confirmed: false });
   }
 
   function syncStockUniverseDrafts(nextSettings: Record<string, unknown>) {
@@ -933,6 +1053,29 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
         </div>
       ) : null}
       {loadError ? <p className="status-message">{loadError}</p> : null}
+      <section className="trading-profile-card" aria-labelledby="active-stock-profile-title">
+        <div className="trading-profile-copy">
+          <p className="section-label">Stock trading profile</p>
+          <h3 id="active-stock-profile-title">Active day trader</h3>
+          <p>
+            Applies the coordinated one-minute scan, stock signal, model, position risk, and same-day exit settings. It preserves the current live-trading gate and Alpaca account mode.
+          </p>
+        </div>
+        <div className="trading-profile-actions">
+          <span className={`status ${activeStockProfileApplied ? "ok" : "idle"}`}>
+            {activeStockProfileApplied ? "applied" : "not applied"}
+          </span>
+          <button
+            className={`button ${activeStockProfileApplied ? "" : "primary"}`.trim()}
+            disabled={activeStockProfileApplied}
+            onClick={() => setProfileConfirmation({ open: true, confirmed: false })}
+            type="button"
+          >
+            <Bot aria-hidden="true" size={16} />
+            {activeStockProfileApplied ? "Profile applied" : "Review and apply"}
+          </button>
+        </div>
+      </section>
       <section className="common-settings" aria-labelledby="common-settings-title">
         <div className="common-settings-heading">
           <div>
@@ -1140,6 +1283,17 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
           }
         }}
       />
+      <ActiveTradingProfileDialog
+        accountMode={alpacaAccountMode}
+        confirmation={profileConfirmation}
+        environment={initialSnapshot?.environment ?? process.env.NEXT_PUBLIC_APP_ENV ?? "local"}
+        liveTradingOn={liveTradingOn}
+        onConfirm={() => void applyActiveStockProfile()}
+        onConfirmedChange={(confirmed) =>
+          setProfileConfirmation((current) => ({ ...current, confirmed }))
+        }
+        onOpenChange={(open) => setProfileConfirmation({ open, confirmed: false })}
+      />
       {saveState.status === "saved" ? (
         <p className="status-message">Saved version {saveState.version}. Applies on next loop.</p>
       ) : null}
@@ -1150,6 +1304,105 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       ) : null}
       {saveState.status === "error" ? <p className="status-message">{saveState.message}</p> : null}
     </section>
+  );
+}
+
+function ActiveTradingProfileDialog({
+  accountMode,
+  confirmation,
+  environment,
+  liveTradingOn,
+  onConfirm,
+  onConfirmedChange,
+  onOpenChange,
+}: {
+  accountMode: string;
+  confirmation: TradingProfileConfirmationState;
+  environment: string;
+  liveTradingOn: boolean;
+  onConfirm: () => void;
+  onConfirmedChange: (confirmed: boolean) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  if (!confirmation.open) {
+    return null;
+  }
+  return (
+    <Dialog.Root open onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content className="dialog-content" aria-describedby="active-profile-confirmation-body">
+          <div className="dialog-heading">
+            <AlertTriangle aria-hidden="true" size={22} strokeWidth={2.4} />
+            <div>
+              <Dialog.Title>Apply active stock day trader</Dialog.Title>
+              <Dialog.Description id="active-profile-confirmation-body">
+                This saves one audited config version for {environment} and applies it on the next trading loop.
+              </Dialog.Description>
+            </div>
+          </div>
+          <div className="setting-help-summary">
+            <div>
+              <span>Live trading</span>
+              <strong>{liveTradingOn ? "On, unchanged" : "Off, unchanged"}</strong>
+            </div>
+            <div>
+              <span>Alpaca account</span>
+              <strong>{accountMode}, unchanged</strong>
+            </div>
+            <div>
+              <span>Schedule</span>
+              <strong>Every 60 seconds</strong>
+            </div>
+          </div>
+          <div className="setting-help-body profile-confirmation-body">
+            <section>
+              <h3>Entry and model settings</h3>
+              <p>54% confidence, 1.5% edge, four top candidates per provider per run, all six stock scanners, and rolling 24-hour model budgets.</p>
+            </section>
+            <section>
+              <h3>Position controls</h3>
+              <p>$100 maximum order, $100 daily loss limit, five open positions, 10% allocation per symbol, and a 0.5% estimated slippage limit.</p>
+            </section>
+            <section>
+              <h3>Exit controls</h3>
+              <p>2% profit target, 1% stop loss, 1% trailing stop, six-hour maximum hold, regular-hours trading, and closing 15 minutes before the regular market close.</p>
+            </section>
+            {liveTradingOn && accountMode === "live" ? (
+              <p className="profile-live-warning" role="alert">
+                The current account is live. Approved signals may submit real-money orders beginning with the next loop after this save.
+              </p>
+            ) : null}
+          </div>
+          <label className="checkbox-row">
+            <input
+              checked={confirmation.confirmed}
+              type="checkbox"
+              onChange={(event) => onConfirmedChange(event.target.checked)}
+            />
+            <span>
+              I reviewed the stock entry, risk, and exit settings and understand they apply on the next loop.
+            </span>
+          </label>
+          <div className="dialog-actions">
+            <Dialog.Close asChild>
+              <button className="button" type="button">
+                <X aria-hidden="true" size={15} />
+                Cancel
+              </button>
+            </Dialog.Close>
+            <button
+              className={liveTradingOn && accountMode === "live" ? "button danger" : "button primary"}
+              disabled={!confirmation.confirmed}
+              onClick={onConfirm}
+              type="button"
+            >
+              Apply profile
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -1835,6 +2088,56 @@ function parseCustomPresets(
   } catch {
     return { ok: false, message: "Custom presets JSON is not valid" };
   }
+}
+
+function activeStockProfileIsApplied(settings: Record<string, unknown> | undefined): boolean {
+  const expected: Record<string, string | number | boolean> = {
+    trading_profile: ACTIVE_STOCK_PROFILE,
+    default_selected_venue: "alpaca",
+    "venues.alpaca.enabled": true,
+    trading_loop_interval_seconds: 60,
+    "scanner.alpaca.min_quote_liquidity": 0.5,
+    "scanner.alpaca.max_spread": 1,
+    "scanner.alpaca.min_history_bars": 2,
+    "scanner.alpaca.strategies.momentum.enabled": true,
+    "scanner.alpaca.strategies.momentum.min_change_pct": 0.005,
+    "scanner.alpaca.strategies.mean_reversion.enabled": true,
+    "scanner.alpaca.strategies.mean_reversion.min_deviation_pct": 0.01,
+    "scanner.alpaca.strategies.gap.enabled": true,
+    "scanner.alpaca.strategies.gap.min_gap_pct": 0.01,
+    "scanner.alpaca.strategies.liquidity.enabled": true,
+    "scanner.alpaca.strategies.liquidity.min_volume": 100000,
+    "scanner.alpaca.strategies.volatility.enabled": true,
+    "scanner.alpaca.strategies.volatility.min_range_pct": 0.015,
+    "scanner.alpaca.strategies.unusual_volume.enabled": true,
+    "scanner.alpaca.strategies.unusual_volume.min_ratio": 1.25,
+    "reasoning.max_prompts_per_provider_per_run": 4,
+    "reasoning.alpaca.min_confidence": 0.54,
+    "reasoning.alpaca.min_edge": 0.015,
+    "llm.openai.budget_usd": 20,
+    "llm.openai.settings.budget_window_hours": 24,
+    "llm.claude.budget_usd": 20,
+    "llm.claude.settings.budget_window_hours": 24,
+    "risk.alpaca.max_position_usd": 100,
+    "risk.alpaca.max_daily_loss_usd": 100,
+    "risk.alpaca.max_open_positions": 5,
+    "risk.alpaca.max_portfolio_allocation_per_symbol": 0.1,
+    "risk.alpaca.market_order_slippage_threshold": 0.005,
+    "exit.alpaca.profit_target_pct": 0.02,
+    "exit.alpaca.stop_loss_pct": 0.01,
+    "exit.alpaca.trailing_stop_pct": 0.01,
+    "exit.alpaca.max_position_age_hours": 6,
+    "exit.alpaca.min_stale_price_move_pct": 0.005,
+    "exit.alpaca.market_hours_only": true,
+    "exit.alpaca.close_before_market_close_minutes": 15,
+  };
+  return Object.entries(expected).every(([path, expectedValue]) => {
+    const currentValue = valueAtPath(settings, path);
+    if (typeof expectedValue === "number") {
+      return Number(currentValue) === expectedValue;
+    }
+    return currentValue === expectedValue;
+  });
 }
 
 function parseCurrentVersion(message: string): string | null {

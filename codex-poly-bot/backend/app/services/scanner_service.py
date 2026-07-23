@@ -32,16 +32,16 @@ DEFAULT_SCANNER_CONFIG: dict[str, Any] = {
         "target_wallet_recent_hours": 72,
     },
     "alpaca": {
-        "min_quote_liquidity": "1",
-        "max_spread": "0.50",
+        "min_quote_liquidity": "0.5",
+        "max_spread": "1.00",
         "min_history_bars": 2,
         "strategies": {
-            "momentum": {"enabled": True, "min_change_pct": "0.01"},
-            "mean_reversion": {"enabled": True, "min_deviation_pct": "0.02"},
-            "gap": {"enabled": True, "min_gap_pct": "0.015"},
+            "momentum": {"enabled": True, "min_change_pct": "0.005"},
+            "mean_reversion": {"enabled": True, "min_deviation_pct": "0.01"},
+            "gap": {"enabled": True, "min_gap_pct": "0.01"},
             "liquidity": {"enabled": True, "min_volume": "100000"},
-            "volatility": {"enabled": True, "min_range_pct": "0.02"},
-            "unusual_volume": {"enabled": True, "min_ratio": "1.50"},
+            "volatility": {"enabled": True, "min_range_pct": "0.015"},
+            "unusual_volume": {"enabled": True, "min_ratio": "1.25"},
         },
     },
 }
@@ -547,10 +547,12 @@ def _stock_refusal(
         return "symbol outside universe"
     if price is None:
         return "price missing"
-    if liquidity < _decimal_setting(config.get("min_quote_liquidity"), "1"):
+    if liquidity < _decimal_setting(config.get("min_quote_liquidity"), "0.5"):
         return "quote liquidity below minimum"
-    max_spread = _decimal_setting(config.get("max_spread"), "0.50")
-    if spread is not None and spread > max_spread:
+    max_spread = _decimal_setting(config.get("max_spread"), "1.00")
+    if spread is None:
+        return "spread missing"
+    if spread > max_spread:
         return "spread too wide"
     if len(bars) < _int_setting(config.get("min_history_bars"), 2):
         return "insufficient historical bars"

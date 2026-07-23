@@ -2349,7 +2349,17 @@ class SharedRepositories:
             if row["idempotency_key"] == idempotency_key:
                 row.update(
                     {
+                        "exit_run_id": exit_run_id,
+                        "pipeline_run_id": pipeline_run_id,
+                        "position_id": position_id,
+                        "trigger_type": trigger_type,
                         "status": status,
+                        "quantity": None if quantity is None else Decimal(str(quantity)),
+                        "notional_usd": Decimal(str(notional_usd)),
+                        "threshold": None if threshold is None else Decimal(str(threshold)),
+                        "observed_value": (
+                            None if observed_value is None else Decimal(str(observed_value))
+                        ),
                         "refusal_reason": refusal_reason,
                         "venue_order_id": venue_order_id,
                         "source_payload": _json_ready(source_payload),

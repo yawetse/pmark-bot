@@ -7,7 +7,7 @@ REQ-LLM-005, REQ-STR-003, REQ-UI-004, REQ-OBS-005
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import json
 from typing import Any, Mapping
@@ -31,7 +31,7 @@ from app.services.llm_service import (
 
 
 DEFAULT_REASONING_CONFIG: dict[str, Any] = {
-    "max_prompts_per_provider_per_run": 100,
+    "max_prompts_per_provider_per_run": 4,
     "polymarket": {
         "prompt_version": "pm-brain-v1",
         "min_confidence": "0.75",
@@ -40,8 +40,8 @@ DEFAULT_REASONING_CONFIG: dict[str, Any] = {
     },
     "alpaca": {
         "prompt_version": "stock-brain-v1",
-        "min_confidence": "0.60",
-        "min_edge": "0.02",
+        "min_confidence": "0.54",
+        "min_edge": "0.015",
         "inputs": [
             "price_action",
             "historical_bars",
@@ -92,15 +92,14 @@ class BrainService:
         scanner_run: dict[str, Any],
         config_payload: dict[str, Any],
         started_at: datetime,
-        completed_at: datetime,
+        completed_at: datetime | None,
     ) -> ReasoningRunResult:
         """Run LLM scoring for accepted scanner candidates and persist outputs."""
 
         reasoning_config = reasoning_config_from_payload(config_payload)
-        accepted_candidates = tuple(
-            candidate
-            for candidate in scanner_run.get("candidates", ())
-            if candidate.get("status") == "accepted"
+        accepted_candidates = _prioritized_accepted_candidates(
+            scanner_run.get("candidates", ()),
+            selected_venue=str(config_payload.get("default_selected_venue") or ""),
         )
         provider_plans = self._provider_plans(environment, config_payload)
         outputs: list[dict[str, Any]] = []
@@ -141,7 +140,7 @@ class BrainService:
                             provider=plan.provider,
                             config=reasoning_config,
                             reason=plan.skip_reason,
-                            created_at=completed_at,
+                            created_at=completed_at or datetime.now(UTC),
                         )
                     )
                     continue
@@ -156,7 +155,7 @@ class BrainService:
                             provider=plan.provider,
                             config=reasoning_config,
                             reason="provider rate limit reached",
-                            created_at=completed_at,
+                            created_at=completed_at or datetime.now(UTC),
                         )
                     )
                     continue
@@ -170,7 +169,7 @@ class BrainService:
                             candidate=candidate,
                             provider=plan.provider,
                             config=reasoning_config,
-                            created_at=completed_at,
+                            created_at=completed_at or datetime.now(UTC),
                         )
                     )
                     scored += 1
@@ -184,7 +183,7 @@ class BrainService:
                             provider=plan.provider,
                             config=reasoning_config,
                             reason=str(exc),
-                            created_at=completed_at,
+                            created_at=completed_at or datetime.now(UTC),
                         )
                     )
 
@@ -201,7 +200,7 @@ class BrainService:
             scored_count=scored,
             skipped_count=skipped,
             failed_count=failed,
-            completed_at=completed_at,
+            completed_at=completed_at or datetime.now(UTC),
         )
         return ReasoningRunResult(payload=reasoning_run_payload(run_row, outputs))
 
@@ -234,12 +233,14 @@ class BrainService:
             environment=environment,
             provider=ModelProvider.OPENAI,
             budget=_provider_budget(llm_config, ModelProvider.OPENAI),
+            window_hours=_provider_budget_window_hours(llm_config, ModelProvider.OPENAI),
         )
         claude_budget = _remaining_budget(
             registry=self.registry,
             environment=environment,
             provider=ModelProvider.CLAUDE,
             budget=_provider_budget(llm_config, ModelProvider.CLAUDE),
+            window_hours=_provider_budget_window_hours(llm_config, ModelProvider.CLAUDE),
         )
         openai_settings = llm_config.get(ModelProvider.OPENAI.value, {}).get("settings", {})
         claude_settings = llm_config.get(ModelProvider.CLAUDE.value, {}).get("settings", {})
@@ -418,6 +419,29 @@ class BrainService:
             check_results=prompt_payload["checks"],
             created_at=created_at,
         )
+
+
+def _prioritized_accepted_candidates(
+    candidates: Any,
+    *,
+    selected_venue: str,
+) -> tuple[dict[str, Any], ...]:
+    accepted = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict) and candidate.get("status") == "accepted"
+    ]
+    if not selected_venue:
+        return tuple(accepted)
+    return tuple(
+        sorted(
+            accepted,
+            key=lambda candidate: (
+                str(candidate.get("venue") or "") != selected_venue,
+                -len(candidate.get("strategyNames") or candidate.get("strategy_names") or ()),
+            ),
+        )
+    )
 
 
 def reasoning_config_from_payload(config_payload: dict[str, Any]) -> dict[str, Any]:
@@ -686,23 +710,52 @@ def _provider_enabled(llm_config: dict[str, Any], provider: ModelProvider) -> bo
     return bool(raw)
 
 
+def _provider_budget_window_hours(
+    llm_config: dict[str, Any],
+    provider: ModelProvider,
+) -> int:
+    settings = llm_config.get(provider.value, {}).get("settings", {})
+    if not isinstance(settings, Mapping):
+        return 24
+    return _positive_int(settings.get("budget_window_hours"), 24)
+
+
 def _remaining_budget(
     *,
     registry: RepositoryRegistry,
     environment: Environment,
     provider: ModelProvider,
     budget: Decimal,
+    window_hours: int = 24,
+    now: datetime | None = None,
 ) -> Decimal:
+    observed_at = now or datetime.now(UTC)
+    cutoff = observed_at - timedelta(hours=max(1, int(window_hours)))
     try:
         rows = [
             row
             for row in registry.state.rows("shared.ai_usage_events")
-            if row.get("environment") == environment.value and row.get("provider") == provider.value
+            if row.get("environment") == environment.value
+            and row.get("provider") == provider.value
+            and (_usage_created_at(row) is not None and _usage_created_at(row) >= cutoff)
         ]
     except PersistenceUnavailableError:
         return Decimal("0")
     spent = sum((_decimal(row.get("cost_usd"), Decimal("0")) for row in rows), Decimal("0"))
     return budget - spent
+
+
+def _usage_created_at(row: Mapping[str, Any]) -> datetime | None:
+    value = row.get("created_at")
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _usage_values(

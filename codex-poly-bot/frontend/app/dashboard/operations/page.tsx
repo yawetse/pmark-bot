@@ -23,7 +23,7 @@ export default async function OperationsPage() {
   }
   const [operations, orderHistory, marketData, economics, preferences] = await Promise.all([
     serverDashboardApi<OperationsSummaryView>(
-      "operations/summary",
+      "operations/summary?include_details=true&include_history=true",
       sessionCheck.session.username,
     ),
     serverDashboardApi<OrderHistoryView>(
