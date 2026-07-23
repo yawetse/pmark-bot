@@ -105,7 +105,6 @@ DASHBOARD_PIPELINE_RUN_ROW_LIMIT = 250
 DASHBOARD_PIPELINE_STEP_ROW_LIMIT = 1_250
 DASHBOARD_PIPELINE_RECORD_ROW_LIMIT = 1_000
 DASHBOARD_TICK_SUMMARY_ROW_LIMIT = 100
-DASHBOARD_SCANNER_CANDIDATE_ROW_LIMIT = 2_500
 DASHBOARD_REASONING_OUTPUT_ROW_LIMIT = 100
 DASHBOARD_STRATEGY_VOTE_ROW_LIMIT = 200
 DASHBOARD_STRATEGY_OUTPUT_ROW_LIMIT = 100
@@ -1902,29 +1901,19 @@ class RuntimeStatusService:
         }
 
     def scanner_summary(self, environment: Environment) -> dict[str, Any]:
-        """Return latest scanner status and candidate rows for operations UI.
+        """Return latest scanner aggregates without loading historical candidates.
 
         REQ: REQ-STR-003, REQ-UI-004, REQ-OBS-005
         """
 
         try:
-            runs = self.registry.state.rows(
-                self.SCANNER_RUNS_TABLE,
-                limit=1,
-                newest_first=True,
-                filters={"environment": environment.value},
-            )
-            candidates = (
-                self.registry.state.rows(
-                    self.SCANNER_CANDIDATES_TABLE,
-                    limit=DASHBOARD_SCANNER_CANDIDATE_ROW_LIMIT,
-                    newest_first=True,
-                    filters={
-                        "environment": environment.value,
-                        "scanner_run_id": runs[0]["id"],
-                    },
+            latest = self.registry.shared().latest_scanner_run(environment=environment)
+            rejection_breakdown = (
+                self.registry.shared().scanner_rejection_breakdown(
+                    environment=environment,
+                    pipeline_run_id=latest["pipeline_run_id"],
                 )
-                if runs
+                if latest is not None
                 else []
             )
         except PersistenceUnavailableError:
@@ -1936,8 +1925,9 @@ class RuntimeStatusService:
                 "acceptedCount": 0,
                 "rejectedCount": 0,
                 "candidates": [],
+                "detailsDeferred": True,
             }
-        if not runs:
+        if latest is None:
             return {
                 "status": "idle",
                 "message": "No scanner run has been recorded yet.",
@@ -1946,27 +1936,21 @@ class RuntimeStatusService:
                 "acceptedCount": 0,
                 "rejectedCount": 0,
                 "candidates": [],
+                "detailsDeferred": True,
             }
-        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
-        latest = runs[0]
-        latest_candidates = [
-            candidate for candidate in candidates if candidate["scanner_run_id"] == latest["id"]
-        ]
-        latest_candidates.sort(key=lambda row: row.get("created_at"), reverse=True)
-        payload = scanner_run_payload(
-            latest,
-            _balanced_scanner_candidate_items(latest_candidates, limit=100),
-        )
-        rejection_breakdown = _scanner_rejection_breakdown(latest_candidates)
+        payload = scanner_run_payload(latest, [])
+        candidate_count = payload["acceptedCount"] + payload["rejectedCount"]
+        payload["candidateCount"] = candidate_count
         return {
             "status": payload["status"],
             "message": _scanner_summary_message({**payload, "rejectionBreakdown": rejection_breakdown}),
             "latestRun": payload,
-            "candidateCount": payload["candidateCount"],
+            "candidateCount": candidate_count,
             "acceptedCount": payload["acceptedCount"],
             "rejectedCount": payload["rejectedCount"],
             "rejectionBreakdown": rejection_breakdown,
-            "candidates": payload["candidates"],
+            "candidates": [],
+            "detailsDeferred": True,
         }
 
     def scanner_overview(self, environment: Environment) -> dict[str, Any]:

@@ -1142,13 +1142,6 @@ Index(
 )
 
 Index(
-    "ix_scanner_candidates_environment_run_created_at",
-    metadata.tables["shared.scanner_candidates"].c.environment,
-    metadata.tables["shared.scanner_candidates"].c.scanner_run_id,
-    metadata.tables["shared.scanner_candidates"].c.created_at,
-)
-
-Index(
     "ix_reasoning_runs_environment_started_at",
     metadata.tables["shared.reasoning_runs"].c.environment,
     metadata.tables["shared.reasoning_runs"].c.started_at,
@@ -1179,32 +1172,6 @@ Index(
     metadata.tables["shared.strategy_consensus_outputs"].c.environment,
     metadata.tables["shared.strategy_consensus_outputs"].c.consensus_run_id,
     metadata.tables["shared.strategy_consensus_outputs"].c.model_provider,
-)
-
-Index(
-    "ix_execution_runs_environment_started_at",
-    metadata.tables["shared.execution_runs"].c.environment,
-    metadata.tables["shared.execution_runs"].c.started_at,
-)
-
-Index(
-    "ix_order_intents_environment_execution_run_created_at",
-    metadata.tables["shared.order_intents"].c.environment,
-    metadata.tables["shared.order_intents"].c.execution_run_id,
-    metadata.tables["shared.order_intents"].c.created_at,
-)
-
-Index(
-    "ix_exit_runs_environment_started_at",
-    metadata.tables["shared.exit_runs"].c.environment,
-    metadata.tables["shared.exit_runs"].c.started_at,
-)
-
-Index(
-    "ix_exit_intents_environment_exit_run_created_at",
-    metadata.tables["shared.exit_intents"].c.environment,
-    metadata.tables["shared.exit_intents"].c.exit_run_id,
-    metadata.tables["shared.exit_intents"].c.created_at,
 )
 
 Index(

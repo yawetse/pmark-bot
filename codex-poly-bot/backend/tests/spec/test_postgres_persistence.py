@@ -161,10 +161,6 @@ def test_req_db_002_01_claude_openai_records_migrations_repositories_run_each_mo
     assert "shared.order_intents" in plan.table_names
     assert "shared.exit_runs" in plan.table_names
     assert "shared.exit_intents" in plan.table_names
-    migration_sql = "\n".join(plan.sql)
-    assert "ix_scanner_candidates_environment_run_created_at" in migration_sql
-    assert "ix_order_intents_environment_execution_run_created_at" in migration_sql
-    assert "ix_exit_intents_environment_exit_run_created_at" in migration_sql
     assert "shared.polymarket_gamma_markets" in plan.table_names
     assert "shared.polymarket_chain_fill_events" in plan.table_names
     assert "shared.polymarket_trades" in plan.table_names
