@@ -20,6 +20,15 @@ class _ReasoningRunNotNullState(DatabaseState):
         return super().insert(table_name, row)
 
 
+class _AiUsageRowsMustStayBoundedState(DatabaseState):
+    """Fail if a budget check attempts to load every AI usage payload."""
+
+    def rows(self, table_name: str, **kwargs):
+        if table_name == "shared.ai_usage_events":
+            raise AssertionError("budget checks must use a database aggregate")
+        return super().rows(table_name, **kwargs)
+
+
 def test_req_llm_001_04_brain_scores_polymarket_and_stock_scanner_survivors() -> None:
     """TST-REQ-LLM-001-04: Validates REQ-LLM-001, REQ-LLM-003, and REQ-OBS-005
 
@@ -279,7 +288,7 @@ def test_req_llm_004_04_brain_records_budget_and_credential_skips() -> None:
 def test_req_llm_004_05_provider_budget_uses_rolling_24_hour_window() -> None:
     """Old model spend must not permanently stop the trading pipeline."""
 
-    registry = RepositoryRegistry()
+    registry = RepositoryRegistry(_AiUsageRowsMustStayBoundedState())
     now = datetime(2026, 7, 22, 15, 0, tzinfo=UTC)
     for created_at, cost in (
         (now - timedelta(hours=25), Decimal("19.00")),

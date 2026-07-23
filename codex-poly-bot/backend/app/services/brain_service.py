@@ -736,30 +736,18 @@ def _remaining_budget(
     observed_at = now or datetime.now(UTC)
     cutoff = observed_at - timedelta(hours=max(1, int(window_hours)))
     try:
-        rows = [
-            row
-            for row in registry.state.rows("shared.ai_usage_events")
-            if row.get("environment") == environment.value
-            and row.get("provider") == provider.value
-            and (_usage_created_at(row) is not None and _usage_created_at(row) >= cutoff)
-        ]
+        spent = registry.state.sum_decimal(
+            "shared.ai_usage_events",
+            "cost_usd",
+            filters={
+                "environment": environment.value,
+                "provider": provider.value,
+            },
+            created_at_gte=cutoff,
+        )
     except PersistenceUnavailableError:
         return Decimal("0")
-    spent = sum((_decimal(row.get("cost_usd"), Decimal("0")) for row in rows), Decimal("0"))
     return budget - spent
-
-
-def _usage_created_at(row: Mapping[str, Any]) -> datetime | None:
-    value = row.get("created_at")
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _usage_values(

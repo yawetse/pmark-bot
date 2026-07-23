@@ -157,6 +157,34 @@ class DatabaseState:
             if all(row.get(key) == value for key, value in (filters or {}).items())
         )
 
+    def sum_decimal(
+        self,
+        table_name: str,
+        column_name: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        created_at_gte: datetime | None = None,
+    ) -> Decimal:
+        """Sum matching in-memory decimal values without copying row payloads."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_read_tables:
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            )
+        total = Decimal("0")
+        for row in self.tables.setdefault(table_name, []):
+            if not all(row.get(key) == value for key, value in (filters or {}).items()):
+                continue
+            created_at = row.get("created_at")
+            if created_at_gte is not None and (
+                not isinstance(created_at, datetime) or created_at < created_at_gte
+            ):
+                continue
+            total += Decimal(str(row.get(column_name) or "0"))
+        return total
+
 
 @dataclass(frozen=True)
 class _SqlAlchemyTransaction:
@@ -394,6 +422,54 @@ class PersistentDatabaseState(DatabaseState):
             session = self.session_factory()
         try:
             return int(session.execute(statement).scalar_one())
+        except SQLAlchemyError as exc:
+            if owns_session:
+                session.rollback()
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            ) from exc
+        finally:
+            if owns_session:
+                session.close()
+
+    def sum_decimal(
+        self,
+        table_name: str,
+        column_name: str,
+        *,
+        filters: dict[str, Any] | None = None,
+        created_at_gte: datetime | None = None,
+    ) -> Decimal:
+        """Sum matching Postgres decimal values without loading row payloads."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        if table_name in self.fail_on_read_tables:
+            raise PersistenceUnavailableError(
+                f"Postgres persistence is unavailable for {table_name}"
+            )
+        table = _table_for_name(table_name)
+        if column_name not in table.c:
+            raise SchemaViolationError(
+                f"unknown repository column: {table_name}.{column_name}"
+            )
+        statement = select(func.coalesce(func.sum(table.c[column_name]), 0))
+        for key, value in (filters or {}).items():
+            if key not in table.c:
+                raise SchemaViolationError(f"unknown repository column: {table_name}.{key}")
+            statement = statement.where(table.c[key] == value)
+        if created_at_gte is not None:
+            if "created_at" not in table.c:
+                raise SchemaViolationError(
+                    f"created_at filtering is unavailable for {table_name}"
+                )
+            statement = statement.where(table.c.created_at >= created_at_gte)
+        session = self._active_session.get()
+        owns_session = session is None
+        if owns_session:
+            session = self.session_factory()
+        try:
+            return Decimal(str(session.execute(statement).scalar_one()))
         except SQLAlchemyError as exc:
             if owns_session:
                 session.rollback()
