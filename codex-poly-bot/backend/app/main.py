@@ -397,6 +397,8 @@ async def _worker_heartbeat_loop(
     interval_seconds: int,
 ) -> None:
     while True:
+        loop_started_at = asyncio.get_running_loop().time()
+        next_interval_seconds = interval_seconds
         try:
             services.runtime_status.record_worker_heartbeat(
                 status="running",
@@ -405,6 +407,10 @@ async def _worker_heartbeat_loop(
             username = _scheduler_config_username(settings, services, environment)
             reload_result = services.config.config_for_next_loop(environment, username=username)
             config_payload = reload_result.snapshot.payload or services.runtime_status.runtime_config_payload()
+            next_interval_seconds = _configured_worker_interval(
+                config_payload,
+                fallback=interval_seconds,
+            )
             await asyncio.to_thread(
                 services.runtime_status.trigger_scheduled_run,
                 environment=environment,
@@ -416,7 +422,20 @@ async def _worker_heartbeat_loop(
                 status="failed",
                 message="scheduler tick failed",
             )
-        await asyncio.sleep(interval_seconds)
+        elapsed_seconds = asyncio.get_running_loop().time() - loop_started_at
+        await asyncio.sleep(_worker_sleep_delay(next_interval_seconds, elapsed_seconds))
+
+
+def _configured_worker_interval(config_payload: dict[str, object], *, fallback: int) -> int:
+    try:
+        configured = int(config_payload.get("trading_loop_interval_seconds", fallback))
+    except (TypeError, ValueError):
+        configured = fallback
+    return max(ConfigService.SAFE_MINIMUM_LOOP_INTERVAL_SECONDS, configured)
+
+
+def _worker_sleep_delay(interval_seconds: int, elapsed_seconds: float) -> float:
+    return max(0.0, float(interval_seconds) - max(0.0, elapsed_seconds))
 
 
 async def _portfolio_refresh_loop(

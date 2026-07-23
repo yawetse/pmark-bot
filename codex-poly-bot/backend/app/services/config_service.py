@@ -61,14 +61,57 @@ DEFAULT_EXIT_CONFIG = {
         "min_stale_price_move_pct": "0.10",
     },
     "alpaca": {
-        "profit_target_pct": "0.08",
-        "stop_loss_pct": "0.04",
-        "trailing_stop_pct": "0.05",
-        "max_position_age_hours": "168",
-        "min_stale_price_move_pct": "0.03",
+        "profit_target_pct": "0.02",
+        "stop_loss_pct": "0.01",
+        "trailing_stop_pct": "0.01",
+        "max_position_age_hours": "6",
+        "min_stale_price_move_pct": "0.005",
         "market_hours_only": True,
+        "close_before_market_close_minutes": 15,
     },
 }
+
+ACTIVE_STOCK_DAY_TRADER_PROFILE = "active_stock_day_trader"
+ACTIVE_STOCK_DAY_TRADER_PROFILE_PATHS = (
+    "trading_profile",
+    "default_selected_venue",
+    "venues.alpaca.enabled",
+    "trading_loop_interval_seconds",
+    "scanner.alpaca.min_quote_liquidity",
+    "scanner.alpaca.max_spread",
+    "scanner.alpaca.min_history_bars",
+    "scanner.alpaca.strategies.momentum.enabled",
+    "scanner.alpaca.strategies.momentum.min_change_pct",
+    "scanner.alpaca.strategies.mean_reversion.enabled",
+    "scanner.alpaca.strategies.mean_reversion.min_deviation_pct",
+    "scanner.alpaca.strategies.gap.enabled",
+    "scanner.alpaca.strategies.gap.min_gap_pct",
+    "scanner.alpaca.strategies.liquidity.enabled",
+    "scanner.alpaca.strategies.liquidity.min_volume",
+    "scanner.alpaca.strategies.volatility.enabled",
+    "scanner.alpaca.strategies.volatility.min_range_pct",
+    "scanner.alpaca.strategies.unusual_volume.enabled",
+    "scanner.alpaca.strategies.unusual_volume.min_ratio",
+    "reasoning.max_prompts_per_provider_per_run",
+    "reasoning.alpaca.min_confidence",
+    "reasoning.alpaca.min_edge",
+    "llm.openai.budget_usd",
+    "llm.openai.settings.budget_window_hours",
+    "llm.claude.budget_usd",
+    "llm.claude.settings.budget_window_hours",
+    "risk.alpaca.max_position_usd",
+    "risk.alpaca.max_daily_loss_usd",
+    "risk.alpaca.max_open_positions",
+    "risk.alpaca.max_portfolio_allocation_per_symbol",
+    "risk.alpaca.market_order_slippage_threshold",
+    "exit.alpaca.profit_target_pct",
+    "exit.alpaca.stop_loss_pct",
+    "exit.alpaca.trailing_stop_pct",
+    "exit.alpaca.max_position_age_hours",
+    "exit.alpaca.min_stale_price_move_pct",
+    "exit.alpaca.market_hours_only",
+    "exit.alpaca.close_before_market_close_minutes",
+)
 
 
 class ConfigConflictError(ValueError):
@@ -427,6 +470,10 @@ class ConfigService:
             if value not in {venue.value for venue in Venue}:
                 raise ConfigValidationError("unsupported default venue")
             return value
+        if patch.path == "trading_profile":
+            if value != ACTIVE_STOCK_DAY_TRADER_PROFILE:
+                raise ConfigValidationError("unsupported trading profile")
+            return value
         if patch.path == "live_enabled":
             return self._bool(value, patch.path)
         if parts[:1] == ["venues"] and len(parts) == 3 and parts[2] == "enabled":
@@ -620,6 +667,11 @@ class ConfigService:
             raise ConfigValidationError("unsupported exit venue")
         if parts[1] == "alpaca" and len(parts) == 3 and parts[2] == "market_hours_only":
             return self._bool(value, path)
+        if parts[1] == "alpaca" and len(parts) == 3 and parts[2] == "close_before_market_close_minutes":
+            close_before = self._positive_int(value, path)
+            if close_before > 120:
+                raise ConfigValidationError("stock close window cannot exceed 120 minutes")
+            return close_before
         if parts[-1] in {"max_thesis_age_hours", "max_position_age_hours"}:
             return str(self._positive_decimal(value, path))
         if parts[-1] in {
@@ -764,12 +816,13 @@ def default_config_payload() -> dict[str, Any]:
     """
 
     payload = {
-        "default_selected_venue": Venue.POLYMARKET_US.value,
+        "default_selected_venue": Venue.ALPACA.value,
+        "trading_profile": ACTIVE_STOCK_DAY_TRADER_PROFILE,
         "live_enabled": False,
         "venues": {
             Venue.POLYMARKET_US.value: {"enabled": False},
             Venue.POLYMARKET_INTERNATIONAL.value: {"enabled": False},
-            Venue.ALPACA.value: {"enabled": False},
+            Venue.ALPACA.value: {"enabled": True},
         },
         "trading_loop_interval_seconds": 60,
         "strategies": {
@@ -783,6 +836,7 @@ def default_config_payload() -> dict[str, Any]:
                 "settings": {
                     "model": DEFAULT_CLAUDE_SCORING_MODEL,
                     "max_tokens": DEFAULT_CLAUDE_SCORING_MAX_TOKENS,
+                    "budget_window_hours": 24,
                 },
             },
             ModelProvider.OPENAI.value: {
@@ -791,6 +845,7 @@ def default_config_payload() -> dict[str, Any]:
                     "model": DEFAULT_OPENAI_SCORING_MODEL,
                     "max_output_tokens": DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS,
                     "reasoning_effort": DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
+                    "budget_window_hours": 24,
                 },
             },
         },
@@ -833,6 +888,31 @@ def default_config_payload() -> dict[str, Any]:
     }
     payload["alpaca"]["preset_metadata"] = stock_universe_metadata(payload)
     return payload
+
+
+def trading_profile_patches(profile: str) -> list[ConfigPatchOperation]:
+    """Return one audited patch set for a supported trading profile."""
+
+    if profile != ACTIVE_STOCK_DAY_TRADER_PROFILE:
+        raise ConfigValidationError("unsupported trading profile")
+    payload = default_config_payload()
+    return [
+        ConfigPatchOperation(
+            op="replace",
+            path=path,
+            value=deepcopy(_profile_value_at_path(payload, path)),
+        )
+        for path in ACTIVE_STOCK_DAY_TRADER_PROFILE_PATHS
+    ]
+
+
+def _profile_value_at_path(payload: dict[str, Any], path: str) -> Any:
+    value: Any = payload
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            raise ConfigValidationError(f"trading profile path is unavailable: {path}")
+        value = value[part]
+    return value
 
 
 def _deep_merge_missing(defaults: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:

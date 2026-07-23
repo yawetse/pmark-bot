@@ -13,7 +13,7 @@ export default async function ActivityPage() {
   if (sessionCheck.status === "denied") redirect("/access-denied");
 
   const operations = await serverDashboardApi<OperationsSummaryView>(
-    "operations/summary",
+    "operations/summary?include_details=true",
     sessionCheck.session.username,
   );
   return (

@@ -2032,9 +2032,11 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
         source=StaticStockUniverseSource({"sp500": ["AAPL"], "nasdaq100": ["MSFT"]}),
     )
 
+    config_payload = app.state.services.runtime_status.runtime_config_payload()
+    config_payload["default_selected_venue"] = Venue.ALPACA.value
     result = app.state.services.runtime_status.trigger_scheduled_run(
         environment=Environment.DEVELOPMENT,
-        config_payload=app.state.services.runtime_status.runtime_config_payload(),
+        config_payload=config_payload,
     )
     job_rows = app.state.services.registry.state.rows("shared.job_runs")
     pull_rows = app.state.services.registry.state.rows("shared.dashboard_market_data_pulls")
@@ -2060,6 +2062,12 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
     assert len(pipeline_step_rows) == 5
     assert job_rows[-1]["job_name"] == "market-data-ingestion"
     assert job_rows[-1]["status"] == "partial"
+    assert [call["venue"] for call in app.state.services.runtime_status.market_data_fetcher.calls] == [
+        Venue.POLYMARKET_US.value,
+        Venue.ALPACA.value,
+    ]
+    assert job_rows[-1]["heartbeat_at"] == pipeline_rows[0]["completed_at"]
+    assert pipeline_rows[0]["completed_at"] >= pipeline_rows[0]["started_at"]
 
 
 def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() -> None:
@@ -2494,6 +2502,61 @@ def test_req_ui_006_03_config_api_audits_authorized_mutations() -> None:
     assert response.json()["applies_on_next_loop"] is True
     assert audit_rows[0]["actor"] == "yaw"
     assert audit_rows[0]["metadata"]["path"] == "venues.polymarket_us.enabled"
+
+
+def test_req_ui_006_04_config_api_applies_active_stock_profile_as_one_version() -> None:
+    """The active profile updates stock behavior without changing the live gate or account mode."""
+
+    client, token = _client()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Origin": "http://localhost:3100",
+        "X-CSRF-Token": "csrf-token",
+    }
+    initial = client.put(
+        "/api/config",
+        headers=headers,
+        json={
+            "environment": "development",
+            "version": "v1",
+            "patches": [
+                {"op": "replace", "path": "live_enabled", "value": True},
+                {"op": "replace", "path": "alpaca.account_mode", "value": "live"},
+                {"op": "replace", "path": "reasoning.alpaca.min_edge", "value": "0.09"},
+            ],
+        },
+    )
+    applied = client.post(
+        "/api/config",
+        headers=headers,
+        json={
+            "environment": "development",
+            "expected_version": "v1",
+            "version": "v2",
+            "profile": "active_stock_day_trader",
+        },
+    )
+    current = client.get("/api/config/current", headers={"Authorization": f"Bearer {token}"})
+
+    assert initial.status_code == 200
+    assert applied.status_code == 200
+    assert applied.json()["new_version"] == "v2"
+    settings = current.json()["settings"]
+    assert settings["trading_profile"] == "active_stock_day_trader"
+    assert settings["live_enabled"] is True
+    assert settings["alpaca"]["account_mode"] == "live"
+    assert settings["default_selected_venue"] == "alpaca"
+    assert settings["venues"]["alpaca"]["enabled"] is True
+    assert settings["reasoning"]["alpaca"]["min_edge"] == "0.015"
+    assert settings["reasoning"]["max_prompts_per_provider_per_run"] == 4
+    assert settings["scanner"]["alpaca"]["min_quote_liquidity"] == "0.5"
+    assert settings["scanner"]["alpaca"]["max_spread"] == "1.00"
+    assert settings["scanner"]["alpaca"]["strategies"]["momentum"]["min_change_pct"] == "0.005"
+    assert settings["exit"]["alpaca"]["profit_target_pct"] == "0.02"
+    assert settings["risk"]["alpaca"]["market_order_slippage_threshold"] == "0.005"
+    assert settings["llm"]["openai"]["settings"]["budget_window_hours"] == 24
+    audit_rows = client.app.state.services.registry.state.rows("shared.audit_events")
+    assert audit_rows[-1]["metadata"]["path"] == "trading_profile"
 
 
 def test_req_ui_005_04_config_api_persists_settings_per_user() -> None:

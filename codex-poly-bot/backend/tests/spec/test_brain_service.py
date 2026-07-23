@@ -8,6 +8,7 @@ from decimal import Decimal
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider, Venue
 from app.services import BrainService, FakeLlmProvider, ScannerService
+from app.services.brain_service import _remaining_budget
 
 
 def test_req_llm_001_04_brain_scores_polymarket_and_stock_scanner_survivors() -> None:
@@ -107,6 +108,68 @@ def test_req_llm_001_04_brain_scores_polymarket_and_stock_scanner_survivors() ->
     assert providers[1].call_count == 2
 
 
+def test_req_llm_001_05_selected_venue_receives_limited_prompt_slots_first() -> None:
+    """Alpaca candidates must not be starved by earlier Polymarket rows."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 7, 22, 15, 0, tzinfo=UTC)
+    provider = FakeLlmProvider(ModelProvider.OPENAI, cost_estimate=Decimal("0.01"))
+    result = BrainService(registry, providers=(provider,)).run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-priority",
+        trigger="scheduled",
+        scanner_run={
+            "id": "scanner-priority",
+            "candidates": [
+                {
+                    "id": "pm-first",
+                    "status": "accepted",
+                    "venue": Venue.POLYMARKET_US.value,
+                    "instrumentId": "market-1:yes",
+                    "marketId": "market-1",
+                    "outcomeId": "yes",
+                    "price": "0.50",
+                },
+                {
+                    "id": "stock-second",
+                    "status": "accepted",
+                    "venue": Venue.ALPACA.value,
+                    "instrumentId": "alpaca:SPY",
+                    "symbol": "SPY",
+                    "price": "500",
+                    "strategyNames": ["liquidity"],
+                },
+                {
+                    "id": "stock-stronger",
+                    "status": "accepted",
+                    "venue": Venue.ALPACA.value,
+                    "instrumentId": "alpaca:QQQ",
+                    "symbol": "QQQ",
+                    "price": "450",
+                    "strategyNames": ["momentum", "liquidity", "unusual_volume"],
+                },
+            ],
+        },
+        config_payload={
+            "default_selected_venue": Venue.ALPACA.value,
+            "reasoning": {"max_prompts_per_provider_per_run": 1},
+        },
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["scoredCount"] == 1
+    scored = [output for output in result.payload["outputs"] if output["status"] == "scored"]
+    skipped = [output for output in result.payload["outputs"] if output["status"] == "skipped"]
+    assert scored[0]["venue"] == Venue.ALPACA.value
+    assert scored[0]["instrumentId"] == "alpaca:QQQ"
+    assert {output["venue"] for output in skipped} == {
+        Venue.ALPACA.value,
+        Venue.POLYMARKET_US.value,
+    }
+    assert {output["refusalReason"] for output in skipped} == {"provider rate limit reached"}
+
+
 def test_req_llm_004_04_brain_records_budget_and_credential_skips() -> None:
     """TST-REQ-LLM-004-04: Validates REQ-LLM-004
 
@@ -178,6 +241,36 @@ def test_req_llm_004_04_brain_records_budget_and_credential_skips() -> None:
         "provider budget exhausted",
         "provider disabled or credential missing",
     }
+
+
+def test_req_llm_004_05_provider_budget_uses_rolling_24_hour_window() -> None:
+    """Old model spend must not permanently stop the trading pipeline."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 7, 22, 15, 0, tzinfo=UTC)
+    for created_at, cost in (
+        (now - timedelta(hours=25), Decimal("19.00")),
+        (now - timedelta(hours=2), Decimal("3.00")),
+    ):
+        registry.shared().record_ai_usage_event(
+            environment=Environment.PRODUCTION,
+            provider=ModelProvider.OPENAI,
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=cost,
+            created_at=created_at,
+        )
+
+    remaining = _remaining_budget(
+        registry=registry,
+        environment=Environment.PRODUCTION,
+        provider=ModelProvider.OPENAI,
+        budget=Decimal("20.00"),
+        window_hours=24,
+        now=now,
+    )
+
+    assert remaining == Decimal("17.00")
 
 
 def _record_stock_bars(registry: RepositoryRegistry, now: datetime) -> None:

@@ -86,6 +86,7 @@ def test_req_ui_020_01_activity_uses_one_completed_run_contract() -> None:
     """
     model = _read("lib/dashboard-activity-view-model.ts")
     view = _read("components/dashboard/activity-view.tsx")
+    page = _read("app/dashboard/activity/page.tsx")
 
     for token in (
         "latestCompletedActivityRun",
@@ -99,6 +100,17 @@ def test_req_ui_020_01_activity_uses_one_completed_run_contract() -> None:
         assert token in model
     assert "setLoadErrors([])" in view
     assert "activity-stage-status" in view
+    assert "operations/summary?include_details=true" in page
+    assert "current?.pipelineRuns ?? []" in view
+
+
+def test_req_ui_020_02_operations_preserves_detailed_realtime_stages() -> None:
+    page = _read("app/dashboard/operations/page.tsx")
+    view = _read("components/dashboard/operations-view.tsx")
+
+    assert "operations/summary?include_details=true&include_history=true" in page
+    assert "preserveDetailedRealtimeStage" in view
+    assert 'incoming.status === "deferred"' in view
 
 
 def test_req_ui_021_01_performance_uses_confirmed_portfolio_contract() -> None:

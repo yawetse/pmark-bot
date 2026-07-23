@@ -32,7 +32,27 @@ export function ActivityView({
   const [operations, setOperations] = useState(summary);
   const [loadErrors, setLoadErrors] = useState(initialErrors);
   const onSnapshot = useCallback((snapshot: DashboardRealtimeSnapshot) => {
-    setOperations(snapshot.operations);
+    setOperations((current) => ({
+      ...snapshot.operations,
+      pipelineRuns: snapshot.operations.pipelineRuns.length
+        ? snapshot.operations.pipelineRuns
+        : current?.pipelineRuns ?? [],
+      scanner: snapshot.operations.scanner?.status === "deferred"
+        ? current?.scanner ?? snapshot.operations.scanner
+        : snapshot.operations.scanner ?? current?.scanner,
+      reasoning: snapshot.operations.reasoning?.status === "deferred"
+        ? current?.reasoning ?? snapshot.operations.reasoning
+        : snapshot.operations.reasoning ?? current?.reasoning,
+      strategyConsensus: snapshot.operations.strategyConsensus?.status === "deferred"
+        ? current?.strategyConsensus ?? snapshot.operations.strategyConsensus
+        : snapshot.operations.strategyConsensus ?? current?.strategyConsensus,
+      execution: snapshot.operations.execution?.status === "deferred"
+        ? current?.execution ?? snapshot.operations.execution
+        : snapshot.operations.execution ?? current?.execution,
+      exit: snapshot.operations.exit?.status === "deferred"
+        ? current?.exit ?? snapshot.operations.exit
+        : snapshot.operations.exit ?? current?.exit,
+    }));
     setLoadErrors([]);
   }, []);
   const realtime = useDashboardRealtime({ onSnapshot });

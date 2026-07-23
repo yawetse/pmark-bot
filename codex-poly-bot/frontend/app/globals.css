@@ -3760,6 +3760,51 @@ th {
   padding: 22px;
 }
 
+.trading-profile-card {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 86%, var(--accent-soft));
+  border: 1px solid var(--mode-ok-border);
+  border-radius: 10px;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 18px;
+}
+
+.trading-profile-copy h3 {
+  font-size: 18px;
+  margin: 2px 0 5px;
+}
+
+.trading-profile-copy p:last-child {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 68ch;
+}
+
+.trading-profile-actions {
+  align-items: flex-end;
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.profile-confirmation-body {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-live-warning {
+  background: var(--status-blocked-bg);
+  border: 1px solid var(--mode-blocked-border);
+  border-radius: 8px;
+  color: var(--foreground) !important;
+  font-weight: 750;
+  padding: 12px;
+}
+
 .common-settings {
   display: grid;
   gap: 14px;
@@ -4114,6 +4159,16 @@ th {
   .common-settings-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .trading-profile-card {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .trading-profile-actions {
+    align-items: flex-start;
+    justify-items: start;
   }
 
   .overview-state-card,

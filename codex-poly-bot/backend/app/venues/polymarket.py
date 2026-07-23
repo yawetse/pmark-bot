@@ -571,6 +571,8 @@ def build_polymarket_order_payload(request: PolymarketLiveOrderRequest) -> Venue
             reasons.append("limit orders require quantity")
     if order_type == "ORDER_TYPE_MARKET" and quantity is None and cash_order_qty is None:
         reasons.append("market orders require quantity or cash order quantity")
+    if order_type == "ORDER_TYPE_MARKET" and quantity is not None and cash_order_qty is not None:
+        reasons.append("market orders require either quantity or cash order quantity, not both")
     if request.slippage_tolerance_bips is not None and request.slippage_tolerance_bips < 0:
         reasons.append("slippage tolerance bips cannot be negative")
     if request.slippage_tolerance_ticks is not None and request.slippage_tolerance_ticks < 0:
