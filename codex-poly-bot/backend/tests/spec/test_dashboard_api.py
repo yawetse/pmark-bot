@@ -13,9 +13,15 @@ from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
 from app.services.runtime_status_service import (
     DASHBOARD_DATA_EXPLORER_ROW_LIMIT,
+    DASHBOARD_EXECUTION_INTENT_ROW_LIMIT,
+    DASHBOARD_EXIT_INTENT_ROW_LIMIT,
     DASHBOARD_PIPELINE_RECORD_ROW_LIMIT,
     DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
     DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
+    DASHBOARD_REASONING_OUTPUT_ROW_LIMIT,
+    DASHBOARD_SCANNER_CANDIDATE_ROW_LIMIT,
+    DASHBOARD_STRATEGY_OUTPUT_ROW_LIMIT,
+    DASHBOARD_STRATEGY_VOTE_ROW_LIMIT,
     DATA_EXPLORER_DATASETS,
     _config_for_manual_mode,
 )
@@ -245,6 +251,155 @@ def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch)
         and kwargs.get("filters") == environment_filter
         for table_name, kwargs in calls
     )
+
+
+def test_req_ui_008_10_operations_details_read_only_the_latest_run(monkeypatch) -> None:
+    """Detailed activity must not load full historical stage tables."""
+
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    service = app.state.services.runtime_status
+    state = app.state.services.registry.state
+    now = datetime.now(UTC)
+    environment = Environment.DEVELOPMENT.value
+    run_rows = {
+        service.SCANNER_RUNS_TABLE: {
+            "id": "scanner-latest",
+            "pipeline_run_id": "pipeline-latest",
+            "trigger": "scheduled",
+            "status": "completed",
+            "config": {},
+            "source_pull_ids": [],
+            "accepted_count": 0,
+            "rejected_count": 0,
+        },
+        service.REASONING_RUNS_TABLE: {
+            "id": "reasoning-latest",
+            "pipeline_run_id": "pipeline-latest",
+            "scanner_run_id": "scanner-latest",
+            "trigger": "scheduled",
+            "status": "completed",
+            "config": {},
+            "provider_count": 0,
+            "prompt_count": 0,
+            "scored_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+        },
+        service.STRATEGY_CONSENSUS_RUNS_TABLE: {
+            "id": "strategy-latest",
+            "pipeline_run_id": "pipeline-latest",
+            "reasoning_run_id": "reasoning-latest",
+            "trigger": "scheduled",
+            "status": "completed",
+            "config": {},
+            "vote_count": 0,
+            "approved_count": 0,
+            "refused_count": 0,
+        },
+        service.EXECUTION_RUNS_TABLE: {
+            "id": "execution-latest",
+            "pipeline_run_id": "pipeline-latest",
+            "strategy_consensus_run_id": "strategy-latest",
+            "trigger": "scheduled",
+            "status": "completed",
+            "config": {},
+            "intent_count": 0,
+            "simulated_count": 0,
+            "submitted_count": 0,
+            "refused_count": 0,
+        },
+        service.EXIT_RUNS_TABLE: {
+            "id": "exit-latest",
+            "pipeline_run_id": "pipeline-latest",
+            "trigger": "scheduled",
+            "status": "completed",
+            "config": {},
+            "open_position_count": 0,
+            "triggered_count": 0,
+            "simulated_count": 0,
+            "submitted_count": 0,
+            "refused_count": 0,
+        },
+    }
+    for table_name, values in run_rows.items():
+        state.insert(
+            table_name,
+            {
+                **values,
+                "environment": environment,
+                "started_at": now,
+                "completed_at": now,
+                "created_at": now,
+            },
+        )
+
+    original_rows = state.rows
+    calls: list[tuple[str, dict]] = []
+
+    def observed_rows(table_name: str, *args, **kwargs):
+        calls.append((table_name, kwargs))
+        return original_rows(table_name, *args, **kwargs)
+
+    monkeypatch.setattr(state, "rows", observed_rows)
+
+    service.scanner_summary(Environment.DEVELOPMENT)
+    service.reasoning_summary(Environment.DEVELOPMENT)
+    service.strategy_consensus_summary(Environment.DEVELOPMENT)
+    service.execution_summary(Environment.DEVELOPMENT)
+    service.exit_summary(Environment.DEVELOPMENT)
+
+    expected_calls = {
+        service.SCANNER_CANDIDATES_TABLE: (
+            DASHBOARD_SCANNER_CANDIDATE_ROW_LIMIT,
+            "scanner_run_id",
+            "scanner-latest",
+        ),
+        service.REASONING_OUTPUTS_TABLE: (
+            DASHBOARD_REASONING_OUTPUT_ROW_LIMIT,
+            "reasoning_run_id",
+            "reasoning-latest",
+        ),
+        service.STRATEGY_VOTES_TABLE: (
+            DASHBOARD_STRATEGY_VOTE_ROW_LIMIT,
+            "consensus_run_id",
+            "strategy-latest",
+        ),
+        service.STRATEGY_CONSENSUS_OUTPUTS_TABLE: (
+            DASHBOARD_STRATEGY_OUTPUT_ROW_LIMIT,
+            "consensus_run_id",
+            "strategy-latest",
+        ),
+        service.ORDER_INTENTS_TABLE: (
+            DASHBOARD_EXECUTION_INTENT_ROW_LIMIT,
+            "execution_run_id",
+            "execution-latest",
+        ),
+        service.EXIT_INTENTS_TABLE: (
+            DASHBOARD_EXIT_INTENT_ROW_LIMIT,
+            "exit_run_id",
+            "exit-latest",
+        ),
+    }
+    for table_name, (limit, run_key, run_id) in expected_calls.items():
+        assert any(
+            called_table == table_name
+            and kwargs.get("limit") == limit
+            and kwargs.get("newest_first") is True
+            and kwargs.get("filters") == {
+                "environment": environment,
+                run_key: run_id,
+            }
+            for called_table, kwargs in calls
+        )
+    for table_name in run_rows:
+        assert any(
+            called_table == table_name
+            and kwargs.get("limit") == 1
+            and kwargs.get("newest_first") is True
+            and kwargs.get("filters") == {"environment": environment}
+            for called_table, kwargs in calls
+        )
 
 
 def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypatch) -> None:
