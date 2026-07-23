@@ -470,6 +470,7 @@ class RuntimeStatusService:
 
         payload = {
             "default_selected_venue": self.settings.default_selected_venue.value,
+            "trading_profile": "active_stock_day_trader",
             "live_enabled": self.settings.live_enabled,
             "venues": {
                 Venue.POLYMARKET_US.value: {"enabled": self.settings.polymarket_us_enabled},
@@ -485,8 +486,14 @@ class RuntimeStatusService:
                 "whale_copy": {"enabled": True, "settings": {}},
             },
             "llm": {
-                ModelProvider.CLAUDE.value: {"budget_usd": "20.00", "settings": {}},
-                ModelProvider.OPENAI.value: {"budget_usd": "20.00", "settings": {}},
+                ModelProvider.CLAUDE.value: {
+                    "budget_usd": "20.00",
+                    "settings": {"budget_window_hours": 24},
+                },
+                ModelProvider.OPENAI.value: {
+                    "budget_usd": "20.00",
+                    "settings": {"budget_window_hours": 24},
+                },
             },
             "risk": {
                 "polymarket": {
@@ -1095,35 +1102,39 @@ class RuntimeStatusService:
             environment=environment,
             config_payload=config_payload,
         )
-        market_data_pulls = [
-            self._fetch_and_record_market_data_pull(
-                environment=environment,
-                venue=venue,
-                trigger="scheduled",
-                config_payload=config_payload,
-                created_at=now,
-                run_id=run_id,
+        market_data_pulls = []
+        for venue in self._scheduled_market_data_fetch_order(config_payload):
+            market_data_pulls.append(
+                self._fetch_and_record_market_data_pull(
+                    environment=environment,
+                    venue=venue,
+                    trigger="scheduled",
+                    config_payload=config_payload,
+                    created_at=datetime.now(UTC),
+                    run_id=run_id,
+                )
             )
-            for venue in self._market_data_venues(config_payload)
-        ]
+        scanner_started_at = datetime.now(UTC)
         scanner_run = self.scanner.run(
             environment=environment,
             pipeline_run_id=run_id,
             trigger="scheduled",
             market_data_pulls=market_data_pulls,
             config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
+            started_at=scanner_started_at,
+            completed_at=None,
         )
+        reasoning_started_at = datetime.now(UTC)
         reasoning_run = self.brain.run(
             environment=environment,
             pipeline_run_id=run_id,
             trigger="scheduled",
             scanner_run=scanner_run.payload,
             config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
+            started_at=reasoning_started_at,
+            completed_at=None,
         )
+        strategy_started_at = datetime.now(UTC)
         strategy_run = self.strategy_consensus.run(
             environment=environment,
             pipeline_run_id=run_id,
@@ -1131,9 +1142,10 @@ class RuntimeStatusService:
             scanner_run=scanner_run.payload,
             reasoning_run=reasoning_run.payload,
             config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
+            started_at=strategy_started_at,
+            completed_at=strategy_started_at,
         )
+        execution_started_at = datetime.now(UTC)
         execution_run = self.lifecycle.run_execution(
             environment=environment,
             pipeline_run_id=run_id,
@@ -1142,18 +1154,20 @@ class RuntimeStatusService:
             market_data_pulls=market_data_pulls,
             config_payload=config_payload,
             credential_status=self._venue_credential_status(environment),
-            started_at=now,
-            completed_at=now,
+            started_at=execution_started_at,
+            completed_at=execution_started_at,
         )
+        exit_started_at = datetime.now(UTC)
         exit_run = self.lifecycle.run_exit(
             environment=environment,
             pipeline_run_id=run_id,
             trigger="scheduled",
             market_data_pulls=market_data_pulls,
             config_payload=config_payload,
-            started_at=now,
-            completed_at=now,
+            started_at=exit_started_at,
+            completed_at=exit_started_at,
         )
+        completed_at = datetime.now(UTC)
         status = _aggregate_market_data_pull_status([pull["status"] for pull in market_data_pulls])
         try:
             self.registry.state.insert(
@@ -1162,7 +1176,7 @@ class RuntimeStatusService:
                     "id": run_id,
                     "job_name": self.WORKER_JOB_NAME,
                     "status": status,
-                    "heartbeat_at": now,
+                    "heartbeat_at": completed_at,
                     "metadata": {
                         "message": "scheduled provider market data ingestion",
                         "scheduled": True,
@@ -1191,7 +1205,7 @@ class RuntimeStatusService:
                         "exit_triggered": exit_run.payload["triggeredCount"],
                         "exit_refused": exit_run.payload["refusedCount"],
                     },
-                    "created_at": now,
+                    "created_at": completed_at,
                 },
             )
         except PersistenceUnavailableError:
@@ -1201,7 +1215,7 @@ class RuntimeStatusService:
             run_id=run_id,
             trigger="scheduled",
             started_at=now,
-            completed_at=now,
+            completed_at=completed_at,
             market_data_pulls=market_data_pulls,
             scanner_run=scanner_run.payload,
             reasoning_run=reasoning_run.payload,
@@ -3794,6 +3808,16 @@ class RuntimeStatusService:
             if venue in enabled and venue not in ordered:
                 ordered.append(venue)
         return ordered
+
+    def _scheduled_market_data_fetch_order(self, config_payload: dict[str, Any]) -> list[str]:
+        venues = self._market_data_venues(config_payload)
+        selected_venue = str(
+            config_payload.get("default_selected_venue")
+            or self.settings.default_selected_venue.value
+        )
+        if selected_venue not in venues or len(venues) < 2:
+            return venues
+        return [venue for venue in venues if venue != selected_venue] + [selected_venue]
 
     def _enabled_config_venues(self, config_payload: dict[str, Any]) -> list[str]:
         supported = [

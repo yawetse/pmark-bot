@@ -66,6 +66,10 @@ assert.match(configControls, /selectedDetail\.description/);
 assert.match(configControls, /selectedDetail\.effect/);
 assert.match(configControls, /Expected value/);
 assert.match(configControls, /Current value/);
+assert.match(configControls, /Active day trader/);
+assert.match(configControls, /active_stock_day_trader/);
+assert.match(configControls, /profile: ACTIVE_STOCK_PROFILE/);
+assert.match(configControls, /The current account is live/);
 assert.doesNotMatch(configControls, /unsupported\.path/);
 
 const apiClient = read("lib/api.ts");

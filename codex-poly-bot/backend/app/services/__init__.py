@@ -27,6 +27,7 @@ from app.services.audit_service import (
     ObservabilitySnapshot,
 )
 from app.services.config_service import (
+    ACTIVE_STOCK_DAY_TRADER_PROFILE,
     ConfigAuthorizationError,
     ConfigConflictError,
     ConfigPatchOperation,
@@ -37,6 +38,7 @@ from app.services.config_service import (
     DEFAULT_ALPACA_SYMBOL_UNIVERSE,
     RuntimeConfigSnapshot,
     default_config_payload,
+    trading_profile_patches,
 )
 from app.services.comparison_service import (
     ComparisonGroup,
@@ -263,6 +265,7 @@ from app.services.wallet_service import (
 )
 
 __all__ = [
+    "ACTIVE_STOCK_DAY_TRADER_PROFILE",
     "ActorContext",
     "ALPACA_BROKER_HISTORY_SOURCE_PREFIX",
     "ALPACA_DATA_BASE_URL",
@@ -416,6 +419,7 @@ __all__ = [
     "detect_daily_pnl_alert",
     "detect_large_movement_alert",
     "default_config_payload",
+    "trading_profile_patches",
     "default_alpaca_risk_config",
     "default_polymarket_risk_config",
     "check_market_data_freshness",

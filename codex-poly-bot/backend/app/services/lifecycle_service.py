@@ -14,6 +14,7 @@ from datetime import UTC, datetime, time
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.domain import (
@@ -53,6 +54,8 @@ from app.services.risk_engine import (
     LiveOrderGateInput,
     PolymarketRiskInput,
     RiskLimitResult,
+    default_alpaca_risk_config,
+    default_polymarket_risk_config,
     evaluate_alpaca_risk_limits,
     evaluate_live_order_gates,
     evaluate_polymarket_risk_limits,
@@ -83,12 +86,13 @@ DEFAULT_EXIT_CONFIG: dict[str, Any] = {
         "min_stale_price_move_pct": "0.10",
     },
     "alpaca": {
-        "profit_target_pct": "0.08",
-        "stop_loss_pct": "0.04",
-        "trailing_stop_pct": "0.05",
-        "max_position_age_hours": "168",
-        "min_stale_price_move_pct": "0.03",
+        "profit_target_pct": "0.02",
+        "stop_loss_pct": "0.01",
+        "trailing_stop_pct": "0.01",
+        "max_position_age_hours": "6",
+        "min_stale_price_move_pct": "0.005",
         "market_hours_only": True,
+        "close_before_market_close_minutes": 15,
     },
 }
 
@@ -241,7 +245,7 @@ class PipelineLifecycleService:
             completed_at=completed_at,
         )
         market_candidates = _market_candidates_by_key(market_data_pulls)
-        positions = self._open_positions(environment)
+        positions = self._open_positions(environment, config_payload=config_payload)
         intents: list[dict[str, Any]] = []
         for position in positions:
             triggers = self._exit_triggers_for_position(
@@ -250,7 +254,8 @@ class PipelineLifecycleService:
                 config=config,
                 now=completed_at,
             )
-            for exit_trigger in triggers:
+            exit_trigger = _primary_exit_trigger(triggers)
+            if exit_trigger is not None:
                 intents.append(
                     self._record_exit_intent(
                         environment=environment,
@@ -488,24 +493,46 @@ class PipelineLifecycleService:
                 AlpacaRiskInput(
                     proposed_notional=notional,
                     projected_symbol_exposure=notional,
-                    daily_loss=self._daily_loss(environment),
-                    open_positions=self._provider_open_position_count(_model_provider(output)),
+                    daily_loss=self._daily_loss(
+                        environment,
+                        Venue.ALPACA.value,
+                        created_at,
+                        config_payload=config_payload,
+                    ),
+                    open_positions=self._open_position_count(
+                        environment,
+                        Venue.ALPACA.value,
+                        config_payload=config_payload,
+                    ),
                     creates_new_position=True,
                     model_capital=str(config["alpaca"]["model_capital_usd"]),
-                )
+                ),
+                config=default_alpaca_risk_config(config_payload),
             )
         else:
             venue_risk = evaluate_polymarket_risk_limits(
                 PolymarketRiskInput(
                     proposed_notional=notional,
-                    daily_loss=self._daily_loss(environment),
-                    open_positions=self._provider_open_position_count(_model_provider(output)),
+                    daily_loss=self._daily_loss(
+                        environment,
+                        venue,
+                        created_at,
+                        config_payload=config_payload,
+                    ),
+                    open_positions=self._open_position_count(
+                        environment,
+                        venue,
+                        config_payload=config_payload,
+                    ),
                     creates_new_position=True,
-                )
+                ),
+                config=default_polymarket_risk_config(config_payload),
             )
         reasons = list(venue_risk.refusal_reasons)
         if venue == Venue.ALPACA.value and side != OrderSide.BUY.value:
             reasons.append("ALPACA_ENTRY_SELL_UNSUPPORTED")
+        if venue == Venue.ALPACA.value:
+            reasons.extend(_alpaca_entry_time_refusals(created_at, config_payload))
         if kill_switch_active:
             reasons.append("KILL_SWITCH_ACTIVE")
         if not _market_data_is_fresh(candidate, market_data_pulls, config, created_at):
@@ -618,10 +645,20 @@ class PipelineLifecycleService:
             "payload": result.payload,
         }
 
-    def _open_positions(self, environment: Environment) -> list[dict[str, Any]]:
+    def _open_positions(
+        self,
+        environment: Environment,
+        *,
+        config_payload: Mapping[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         positions: list[dict[str, Any]] = []
         positions.extend(self._open_polymarket_positions(environment))
-        positions.extend(self._open_alpaca_positions(environment))
+        account_mode = None
+        if config_payload is not None:
+            alpaca_config = config_payload.get("alpaca", {})
+            if isinstance(alpaca_config, Mapping):
+                account_mode = str(alpaca_config.get("account_mode") or "paper")
+        positions.extend(self._open_alpaca_positions(environment, account_mode=account_mode))
         return positions
 
     def _alpaca_submitter_for(self, provider: ModelProvider) -> AlpacaVenueSubmitter | None:
@@ -663,23 +700,39 @@ class PipelineLifecycleService:
             )
         return positions
 
-    def _open_alpaca_positions(self, environment: Environment) -> list[dict[str, Any]]:
+    def _open_alpaca_positions(
+        self,
+        environment: Environment,
+        *,
+        account_mode: str | None = None,
+    ) -> list[dict[str, Any]]:
         try:
             rows = self.registry.shared().alpaca_historical_positions(environment=environment)
         except PersistenceUnavailableError:
             return []
-        latest_by_symbol: dict[str, dict[str, Any]] = {}
+        if account_mode:
+            rows = [row for row in rows if str(row.get("account_mode") or "") == account_mode]
+        latest_by_symbol: dict[tuple[str, str], dict[str, Any]] = {}
         for row in rows:
             symbol = str(row["symbol"]).upper()
-            current = latest_by_symbol.get(symbol)
-            if current is None or row.get("observed_at") > current.get("observed_at"):
-                latest_by_symbol[symbol] = row
+            key = (str(row.get("account_id") or ""), symbol)
+            current = latest_by_symbol.get(key)
+            if current is None or _datetime_or_min(row.get("observed_at")) > _datetime_or_min(
+                current.get("observed_at")
+            ):
+                latest_by_symbol[key] = row
         positions = []
         for row in latest_by_symbol.values():
             quantity = _decimal_or_zero(row.get("quantity"))
             if quantity <= 0:
                 continue
             symbol = str(row["symbol"]).upper()
+            opened_at = self._stock_opened_at(
+                environment,
+                symbol,
+                account_mode=str(row.get("account_mode") or ""),
+                account_id=str(row.get("account_id") or ""),
+            )
             positions.append(
                 {
                     "position_id": row["id"],
@@ -690,24 +743,40 @@ class PipelineLifecycleService:
                     "entry_price": _decimal_or_none(row.get("average_entry_price")),
                     "current_price": _decimal_or_none(row.get("current_price")),
                     "unrealized_pnl": _decimal_or_zero(row.get("unrealized_pnl_usd")),
-                    "opened_at": self._stock_opened_at(environment, symbol),
+                    "opened_at": opened_at,
+                    "high_watermark_price": _stock_position_high_watermark(
+                        rows,
+                        symbol=symbol,
+                        account_mode=str(row.get("account_mode") or ""),
+                        account_id=str(row.get("account_id") or ""),
+                        opened_at=opened_at,
+                    ),
                     "source": row,
                 }
             )
         return positions
 
-    def _stock_opened_at(self, environment: Environment, symbol: str) -> datetime | None:
+    def _stock_opened_at(
+        self,
+        environment: Environment,
+        symbol: str,
+        *,
+        account_mode: str = "",
+        account_id: str = "",
+    ) -> datetime | None:
         try:
             fills = [
                 row
                 for row in self.registry.shared().alpaca_historical_fills(environment=environment)
                 if row["symbol"] == symbol.upper()
+                and (not account_mode or str(row.get("account_mode") or "") == account_mode)
+                and (not account_id or str(row.get("account_id") or "") == account_id)
             ]
         except PersistenceUnavailableError:
             return None
         if not fills:
             return None
-        return min((row["filled_at"] for row in fills if row.get("filled_at")), default=None)
+        return _current_stock_position_opened_at(fills)
 
     def _exit_triggers_for_position(
         self,
@@ -744,10 +813,46 @@ class PipelineLifecycleService:
         idempotency_key = _idempotency_key(
             "exit",
             environment.value,
-            pipeline_run_id,
-            position["position_id"],
-            exit_trigger.trigger_type.value,
+            _exit_position_identity(position),
         )
+        existing_submission = next(
+            (
+                intent
+                for intent in self.registry.shared().exit_intents(
+                    environment=environment,
+                    status="submitted",
+                )
+                if intent.get("idempotency_key") == idempotency_key
+            ),
+            None,
+        )
+        if existing_submission is not None:
+            return self.registry.shared().record_exit_intent(
+                environment=environment,
+                exit_run_id=exit_run_id,
+                pipeline_run_id=pipeline_run_id,
+                venue=venue,
+                instrument_id=position["instrument_id"],
+                position_id=position["position_id"],
+                trigger_type=exit_trigger.trigger_type.value,
+                status="submitted",
+                side=OrderSide.SELL.value,
+                quantity=position.get("quantity"),
+                notional_usd=_position_notional(position),
+                threshold=exit_trigger.threshold,
+                observed_value=exit_trigger.observed_value,
+                idempotency_key=idempotency_key,
+                refusal_reason=None,
+                venue_order_id=existing_submission.get("venue_order_id"),
+                source_payload={
+                    "position": _json_ready(position["source"]),
+                    "triggerReason": exit_trigger.reason,
+                    "executionMode": _execution_mode(config_payload),
+                    "reusedSubmittedExit": True,
+                },
+                created_at=existing_submission.get("created_at") or created_at,
+                updated_at=created_at,
+            )
         execution_mode = _execution_mode(config_payload)
         risk_approved = not kill_switch_active
         refusal_reason = "KILL_SWITCH_ACTIVE" if kill_switch_active else None
@@ -932,34 +1037,61 @@ class PipelineLifecycleService:
             multiplier = Decimal("0.5")
         return (max_position * multiplier).quantize(Decimal("0.00000001"))
 
-    def _daily_loss(self, environment: Environment) -> Decimal:
-        loss = Decimal("0")
-        for provider in ModelProvider:
+    def _daily_loss(
+        self,
+        environment: Environment,
+        venue: str,
+        now: datetime,
+        *,
+        config_payload: Mapping[str, Any] | None = None,
+    ) -> Decimal:
+        if venue == Venue.ALPACA.value:
             try:
-                rows = self.registry.state.rows(f"{provider.value}.positions")
+                fills = self.registry.shared().alpaca_historical_fills(environment=environment)
             except PersistenceUnavailableError:
-                continue
-            for row in rows:
-                if row.get("state") == PositionState.CLOSED.value:
-                    realized = _decimal_or_zero(row.get("realized_pnl"))
-                    if realized < 0:
-                        loss += abs(realized)
+                return Decimal("0")
+            account_mode = ""
+            if config_payload is not None:
+                alpaca_config = config_payload.get("alpaca", {})
+                if isinstance(alpaca_config, Mapping):
+                    account_mode = str(alpaca_config.get("account_mode") or "")
+            if account_mode:
+                fills = [
+                    fill
+                    for fill in fills
+                    if str(fill.get("account_mode") or "") == account_mode
+                ]
+            return _alpaca_realized_loss_for_day(fills, now)
         try:
-            pnl_rows = self.registry.shared().alpaca_symbol_pnl_snapshots(environment=environment)
+            fills = self.registry.state.rows(
+                "shared.venue_confirmed_fills",
+                filters={"environment": environment.value, "venue": venue},
+            )
         except PersistenceUnavailableError:
-            pnl_rows = []
-        for row in pnl_rows:
-            realized = _decimal_or_zero(row.get("realized_pnl_usd"))
-            if realized < 0:
-                loss += abs(realized)
-        return loss
+            return Decimal("0")
+        local_day = _market_local_datetime(now).date()
+        return sum(
+            (
+                abs(realized)
+                for row in fills
+                if _same_market_day(row.get("executed_at"), local_day)
+                if (realized := _decimal_or_zero(row.get("realized_pnl_usd"))) < 0
+            ),
+            Decimal("0"),
+        )
 
-    def _provider_open_position_count(self, provider: ModelProvider) -> int:
-        try:
-            rows = self.registry.state.rows(f"{provider.value}.positions")
-        except PersistenceUnavailableError:
-            return 0
-        return sum(1 for row in rows if row.get("state") != PositionState.CLOSED.value)
+    def _open_position_count(
+        self,
+        environment: Environment,
+        venue: str,
+        *,
+        config_payload: Mapping[str, Any] | None = None,
+    ) -> int:
+        return sum(
+            1
+            for position in self._open_positions(environment, config_payload=config_payload)
+            if position["venue"] == venue
+        )
 
     def _target_wallet_exit_benchmark(self) -> dict[str, Any]:
         try:
@@ -1252,7 +1384,7 @@ def _stock_exit_triggers(
                 reason="stock stop loss reached",
             )
         )
-    high_watermark = _decimal_or_none(
+    high_watermark = _decimal_or_none(position.get("high_watermark_price")) or _decimal_or_none(
         position.get("source", {}).get("raw_payload", {}).get("high_watermark_price")
     )
     trailing_stop = _decimal_or_zero(config["trailing_stop_pct"])
@@ -1283,14 +1415,20 @@ def _stock_exit_triggers(
                     reason="stock stale position threshold reached",
                 )
             )
-    if config.get("market_hours_only", True) and not _is_market_hours(now):
+    close_before = max(0, int(config.get("close_before_market_close_minutes", 15)))
+    minutes_to_close = _minutes_until_regular_market_close(now)
+    if (
+        config.get("market_hours_only", True)
+        and minutes_to_close is not None
+        and 0 <= minutes_to_close <= close_before
+    ):
         triggers.append(
             ExitTrigger(
                 trigger_type=ExitTriggerType.MARKET_HOURS,
                 position_id=position["position_id"],
-                threshold=Decimal("1"),
-                observed_value=Decimal("0"),
-                reason="outside stock market hours",
+                threshold=Decimal(close_before),
+                observed_value=Decimal(minutes_to_close),
+                reason="stock market close window reached",
             )
         )
     return _dedupe_triggers(triggers)
@@ -1367,7 +1505,15 @@ def _slippage_ok(
     threshold = _decimal_or_zero(
         config_payload.get("risk", {}).get(risk_key, {}).get("market_order_slippage_threshold")
     )
-    observed = _decimal_or_zero(candidate.get("spread"))
+    raw_spread = candidate.get("spread")
+    if raw_spread is None:
+        return False
+    observed = _decimal_or_zero(raw_spread)
+    if venue == Venue.ALPACA.value:
+        price = _decimal_or_zero(candidate.get("price"))
+        if price <= 0:
+            return False
+        observed = observed / price
     return observed <= threshold
 
 
@@ -1432,12 +1578,14 @@ def _polymarket_order_request(
         or source_candidate_payload.get("market_slug")
         or ""
     )
+    is_market_order = str(order_type).lower() == OrderType.MARKET.value
     return PolymarketLiveOrderRequest(
         market_slug=str(market_slug),
         intent=_polymarket_entry_intent(side=side, output=output),
         order_type=order_type,
-        quantity=quantity,
-        cash_order_qty=notional,
+        price=None if is_market_order else price,
+        quantity=None if is_market_order else quantity,
+        cash_order_qty=notional if is_market_order else None,
         current_price=price,
     )
 
@@ -1479,11 +1627,96 @@ def _position_notional(position: dict[str, Any]) -> Decimal:
 
 
 def _is_market_hours(value: datetime) -> bool:
-    eastern_hour = value.astimezone(UTC).hour - 4
-    if eastern_hour < 0:
-        eastern_hour += 24
-    local_time = time(eastern_hour, value.minute)
-    return value.weekday() < 5 and time(9, 30) <= local_time <= time(16, 0)
+    local = _market_local_datetime(value)
+    return local.weekday() < 5 and time(9, 30) <= local.time() <= time(16, 0)
+
+
+def _market_local_datetime(value: datetime) -> datetime:
+    observed = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return observed.astimezone(ZoneInfo("America/New_York"))
+
+
+def _minutes_until_regular_market_close(value: datetime) -> int | None:
+    local = _market_local_datetime(value)
+    if local.weekday() >= 5 or not _is_market_hours(value):
+        return None
+    close = local.replace(hour=16, minute=0, second=0, microsecond=0)
+    return max(0, int((close - local).total_seconds() // 60))
+
+
+def _alpaca_entry_time_refusals(
+    created_at: datetime,
+    config_payload: Mapping[str, Any],
+) -> list[str]:
+    exit_config = config_payload.get("exit", {})
+    alpaca_config = exit_config.get("alpaca", {}) if isinstance(exit_config, Mapping) else {}
+    if not isinstance(alpaca_config, Mapping) or not alpaca_config.get("market_hours_only", True):
+        return []
+    if not _is_market_hours(created_at):
+        return ["OUTSIDE_MARKET_HOURS"]
+    close_before = max(0, int(alpaca_config.get("close_before_market_close_minutes", 15)))
+    minutes_to_close = _minutes_until_regular_market_close(created_at)
+    if minutes_to_close is not None and minutes_to_close <= close_before:
+        return ["MARKET_CLOSE_WINDOW"]
+    return []
+
+
+def _alpaca_realized_loss_for_day(fills: list[dict[str, Any]], now: datetime) -> Decimal:
+    local_day = _market_local_datetime(now).date()
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for fill in fills:
+        key = (str(fill.get("account_id") or ""), str(fill.get("symbol") or "").upper())
+        grouped.setdefault(key, []).append(fill)
+    loss = Decimal("0")
+    for account_fills in grouped.values():
+        open_quantity = Decimal("0")
+        cost_basis = Decimal("0")
+        for fill in sorted(account_fills, key=lambda row: _datetime_or_min(row.get("filled_at"))):
+            quantity = _decimal_or_zero(fill.get("quantity"))
+            price = _decimal_or_zero(fill.get("price"))
+            side = str(fill.get("side") or "").lower()
+            if side == "buy":
+                open_quantity += quantity
+                cost_basis += quantity * price
+                continue
+            if side != "sell" or quantity <= 0 or open_quantity <= 0:
+                continue
+            average_cost = cost_basis / open_quantity
+            closed_quantity = min(quantity, open_quantity)
+            realized = (price - average_cost) * closed_quantity
+            if realized < 0 and _same_market_day(fill.get("filled_at"), local_day):
+                loss += abs(realized)
+            cost_basis -= average_cost * closed_quantity
+            open_quantity -= closed_quantity
+    return loss
+
+
+def _current_stock_position_opened_at(fills: list[dict[str, Any]]) -> datetime | None:
+    open_quantity = Decimal("0")
+    opened_at: datetime | None = None
+    for fill in sorted(fills, key=lambda row: _datetime_or_min(row.get("filled_at"))):
+        quantity = _decimal_or_zero(fill.get("quantity"))
+        side = str(fill.get("side") or "").lower()
+        filled_at = _parse_datetime(fill.get("filled_at"))
+        if side == "buy" and quantity > 0:
+            if open_quantity <= 0:
+                opened_at = filled_at
+            open_quantity += quantity
+        elif side == "sell" and quantity > 0:
+            open_quantity = max(Decimal("0"), open_quantity - quantity)
+            if open_quantity == 0:
+                opened_at = None
+    return opened_at
+
+
+def _same_market_day(value: Any, expected_day: Any) -> bool:
+    parsed = _parse_datetime(value)
+    return parsed is not None and _market_local_datetime(parsed).date() == expected_day
+
+
+def _datetime_or_min(value: Any) -> datetime:
+    parsed = _parse_datetime(value)
+    return parsed or datetime.min.replace(tzinfo=UTC)
 
 
 def _idempotency_key(*parts: str) -> str:
@@ -1539,6 +1772,60 @@ def _dedupe_triggers(triggers: list[ExitTrigger]) -> list[ExitTrigger]:
         seen.add(key)
         deduped.append(trigger)
     return deduped
+
+
+def _primary_exit_trigger(triggers: list[ExitTrigger]) -> ExitTrigger | None:
+    """Choose one full-position exit when several rules match the same position."""
+
+    if not triggers:
+        return None
+    priority = {
+        ExitTriggerType.STOP_LOSS: 0,
+        ExitTriggerType.TRAILING_STOP: 1,
+        ExitTriggerType.PROFIT_TARGET: 2,
+        ExitTriggerType.MARKET_HOURS: 3,
+        ExitTriggerType.VOLUME_SPIKE: 4,
+        ExitTriggerType.STALE_THESIS: 5,
+        ExitTriggerType.STALE_POSITION: 6,
+    }
+    return min(triggers, key=lambda trigger: priority.get(trigger.trigger_type, 99))
+
+
+def _stock_position_high_watermark(
+    rows: list[dict[str, Any]],
+    *,
+    symbol: str,
+    account_mode: str,
+    account_id: str,
+    opened_at: datetime | None,
+) -> Decimal | None:
+    prices: list[Decimal] = []
+    for row in rows:
+        if str(row.get("symbol") or "").upper() != symbol.upper():
+            continue
+        if account_mode and str(row.get("account_mode") or "") != account_mode:
+            continue
+        if account_id and str(row.get("account_id") or "") != account_id:
+            continue
+        observed_at = _parse_datetime(row.get("observed_at"))
+        if opened_at is not None and (observed_at is None or observed_at < opened_at):
+            continue
+        price = _decimal_or_none(row.get("current_price"))
+        if price is not None and price > 0:
+            prices.append(price)
+    return max(prices) if prices else None
+
+
+def _exit_position_identity(position: Mapping[str, Any]) -> str:
+    venue = str(position.get("venue") or "unknown")
+    instrument_id = str(position.get("instrument_id") or position.get("position_id") or "unknown")
+    if venue != Venue.ALPACA.value:
+        return f"{venue}:{position.get('position_id') or instrument_id}"
+    source = position.get("source") if isinstance(position.get("source"), Mapping) else {}
+    account_id = str(source.get("account_id") or "unknown")
+    opened_at = _parse_datetime(position.get("opened_at"))
+    opened_key = opened_at.isoformat() if opened_at is not None else str(position.get("position_id"))
+    return f"{venue}:{account_id}:{instrument_id}:{opened_key}"
 
 
 def _order_event_message(status: str, refusal_reason: str | None) -> str:

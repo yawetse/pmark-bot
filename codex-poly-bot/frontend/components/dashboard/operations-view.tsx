@@ -511,6 +511,13 @@ const FALLBACK_OPERATIONS: OperationsSummaryView = {
   brokerHistory: FALLBACK_BROKER_HISTORY,
 };
 
+function preserveDetailedRealtimeStage<T extends { status: string }>(
+  incoming: T | undefined,
+  current: T,
+): T {
+  return !incoming || incoming.status === "deferred" ? current : incoming;
+}
+
 export function OperationsView({
   summary = FALLBACK_OPERATIONS,
   orderHistory,
@@ -585,14 +592,39 @@ export function OperationsView({
   }, [loadingOlderOrders, nextOrderCursor]);
 
   const onRealtimeSnapshot = useCallback((snapshot: { operations: OperationsSummaryView; marketData: MarketDataPullView }) => {
-    setCurrentSummary(snapshot.operations);
+    setCurrentSummary((current) => ({
+      ...snapshot.operations,
+      pipelineRuns: snapshot.operations.pipelineRuns.length
+        ? snapshot.operations.pipelineRuns
+        : current.pipelineRuns,
+      scanner: preserveDetailedRealtimeStage(
+        snapshot.operations.scanner,
+        current.scanner ?? FALLBACK_SCANNER,
+      ),
+      reasoning: preserveDetailedRealtimeStage(
+        snapshot.operations.reasoning,
+        current.reasoning ?? FALLBACK_REASONING,
+      ),
+      strategyConsensus: preserveDetailedRealtimeStage(
+        snapshot.operations.strategyConsensus,
+        current.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS,
+      ),
+      execution: preserveDetailedRealtimeStage(
+        snapshot.operations.execution,
+        current.execution ?? FALLBACK_EXECUTION,
+      ),
+      exit: preserveDetailedRealtimeStage(
+        snapshot.operations.exit,
+        current.exit ?? FALLBACK_EXIT,
+      ),
+    }));
     setLatestMarketData(snapshot.marketData);
-    setPipelineRuns(snapshot.operations.pipelineRuns ?? []);
-    setScanner(snapshot.operations.scanner ?? FALLBACK_SCANNER);
-    setReasoning(snapshot.operations.reasoning ?? FALLBACK_REASONING);
-    setStrategyConsensus(snapshot.operations.strategyConsensus ?? FALLBACK_STRATEGY_CONSENSUS);
-    setExecution(snapshot.operations.execution ?? FALLBACK_EXECUTION);
-    setExit(snapshot.operations.exit ?? FALLBACK_EXIT);
+    setPipelineRuns((current) => snapshot.operations.pipelineRuns.length ? snapshot.operations.pipelineRuns : current);
+    setScanner((current) => preserveDetailedRealtimeStage(snapshot.operations.scanner, current));
+    setReasoning((current) => preserveDetailedRealtimeStage(snapshot.operations.reasoning, current));
+    setStrategyConsensus((current) => preserveDetailedRealtimeStage(snapshot.operations.strategyConsensus, current));
+    setExecution((current) => preserveDetailedRealtimeStage(snapshot.operations.execution, current));
+    setExit((current) => preserveDetailedRealtimeStage(snapshot.operations.exit, current));
     void refreshOrderHistory();
   }, [refreshOrderHistory]);
   const realtime = useDashboardRealtime({ onSnapshot: onRealtimeSnapshot });

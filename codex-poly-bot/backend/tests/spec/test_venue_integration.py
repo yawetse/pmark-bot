@@ -265,6 +265,23 @@ def test_req_ven_004_04_polymarket_us_order_payload_maps_to_official_sdk_shape()
     assert payload["manualOrderIndicator"] == "MANUAL_ORDER_INDICATOR_AUTOMATIC"
 
 
+def test_req_ven_004_06_polymarket_market_order_rejects_two_quantity_modes() -> None:
+    """Polymarket market orders must use cash or shares, never both."""
+
+    result = build_polymarket_order_payload(
+        PolymarketLiveOrderRequest(
+            market_slug="will-fed-cut",
+            intent="ORDER_INTENT_BUY_LONG",
+            order_type=OrderType.MARKET,
+            quantity="2",
+            cash_order_qty="10",
+        )
+    )
+
+    assert not result.ok
+    assert "not both" in result.refusal_reason
+
+
 def test_req_ven_004_05_polymarket_us_sdk_live_adapter_submits_order_through_official_sdk() -> None:
     """TST-REQ-VEN-004-05: Validates REQ-VEN-004
 

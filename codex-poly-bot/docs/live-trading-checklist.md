@@ -41,6 +41,37 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 - Confirm the kill switch can be activated from the dashboard or API.
 - Confirm the kill switch disables live trading for all venues and providers.
 
+## Active Stock Day-Trader Profile
+
+`active_stock_day_trader` is the default bootstrap profile. It selects and enables Alpaca, but starts in paper mode with live trading off. Moving the profile to a live account remains a separate operator decision.
+
+| Control | Default |
+| --- | --- |
+| Trading loop | Every 60 seconds |
+| Minimum stock quote liquidity | 0.5 |
+| Stock scanner maximum spread | $1.00 |
+| Stock confidence | 54% minimum |
+| Stock model edge | 1.5% minimum |
+| Model candidates | 4 top candidates per provider per run |
+| OpenAI and Claude spend | $20 each over a rolling 24-hour window |
+| Profit target | 2% |
+| Stop loss | 1% |
+| Trailing stop | 1% |
+| Maximum hold | 6 hours |
+| Trading session | Regular market hours only |
+| End-of-day close | 15 minutes before the regular close |
+| Maximum stock order | $100 |
+| Maximum daily stock loss | $100 |
+| Maximum open stock positions | 5 |
+| Maximum allocation per symbol | 10% |
+| Maximum estimated stock slippage | 0.5% of share price |
+
+The stock scanner also uses lower signal thresholds for momentum, mean reversion, gaps, volatility, and unusual volume. The execution gate still requires fresh data, model approval, available buying power, acceptable percentage slippage, configured credentials, and risk capacity. The profile can produce more qualified attempts, but it does not guarantee continuous orders or profit.
+
+Existing saved settings remain in force until an operator saves a new config version with these values. Record that config version in the release evidence before enabling live submissions.
+
+For an existing config, use **Settings > Stock trading profile > Review and apply**. The action saves the complete profile as one audited version. It does not change `live_enabled` or `alpaca.account_mode`; the confirmation dialog shows both current values before the save.
+
 ## Final Approval
 
 Record the operator, environment, venue, model provider, account mode, risk config version, dry-run evidence, and rollback owner before running any order-submitting live test.

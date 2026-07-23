@@ -9,7 +9,8 @@ from app.adapters.aws import InMemorySesEmailAdapter
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider, OrderSide, OrderType, PositionState, Venue
 from app.services import NotificationDeliveryLedger, PipelineLifecycleService
-from app.venues import PolymarketLiveOrderRequest, VenueCallResult
+from app.services.lifecycle_service import _slippage_ok
+from app.venues import PolymarketLiveOrderRequest, VenueCallResult, build_polymarket_order_payload
 
 
 class RecordingAlpacaSubmitter:
@@ -178,6 +179,15 @@ def test_req_exe_016_06_live_execution_submits_when_submitters_are_configured() 
     assert result.payload["submittedCount"] == 2
     assert {intent["status"] for intent in result.payload["intents"]} == {"submitted"}
     assert polymarket.submit_calls[0].market_slug == "market-1"
+    assert polymarket.submit_calls[0].quantity is None
+    assert polymarket.submit_calls[0].cash_order_qty == Decimal("25.00000000")
+    market_payload = build_polymarket_order_payload(polymarket.submit_calls[0])
+    assert market_payload.ok
+    assert "quantity" not in market_payload.payload["order_payload"]
+    assert market_payload.payload["order_payload"]["cashOrderQty"] == {
+        "value": "25.00000000",
+        "currency": "USD",
+    }
     assert alpaca.calls[0]["symbol"] == "SPY"
     assert alpaca.calls[0]["side"] == "buy"
     assert len(alpaca.calls[0]["client_order_id"]) == 64
@@ -366,6 +376,167 @@ def test_req_exe_016_08_live_execution_does_not_fallback_to_other_model_account(
     assert len(openai_alpaca.calls) == 0
 
 
+def test_req_exe_016_10_alpaca_entry_refuses_outside_regular_market_hours() -> None:
+    """The day-trading profile must not queue market orders overnight."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 2, 0, tzinfo=UTC)
+    alpaca = RecordingAlpacaSubmitter()
+    result = PipelineLifecycleService(registry, alpaca_submitter=alpaca).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-after-hours",
+        trigger="scheduled",
+        strategy_run=_strategy_run_with_outputs(registry, now, include_polymarket=False),
+        market_data_pulls=_market_data_pulls(now, include_polymarket=False),
+        config_payload=_config(live_enabled=True),
+        credential_status={Venue.ALPACA.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["refusedCount"] == 1
+    assert "OUTSIDE_MARKET_HOURS" in result.payload["intents"][0]["refusalReason"]
+    assert alpaca.calls == []
+
+
+def test_req_exe_016_11_alpaca_daily_loss_ignores_prior_days() -> None:
+    """A prior-day realized loss must not permanently block new stock entries."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="old-buy",
+        symbol="QQQ",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("300"),
+        filled_at=now - timedelta(days=2),
+        raw_payload={},
+    )
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="old-sell",
+        symbol="QQQ",
+        side="sell",
+        quantity=Decimal("1"),
+        price=Decimal("150"),
+        filled_at=now - timedelta(days=1),
+        raw_payload={},
+    )
+    alpaca = RecordingAlpacaSubmitter()
+    result = PipelineLifecycleService(registry, alpaca_submitter=alpaca).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-new-day",
+        trigger="scheduled",
+        strategy_run=_strategy_run_with_outputs(registry, now, include_polymarket=False),
+        market_data_pulls=_market_data_pulls(now, include_polymarket=False),
+        config_payload=_config(live_enabled=True),
+        credential_status={Venue.ALPACA.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 1
+    assert len(alpaca.calls) == 1
+
+
+def test_req_exe_016_12_alpaca_uses_saved_open_position_limit() -> None:
+    """Saved Alpaca risk limits must control the live entry gate."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    registry.shared().record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="QQQ",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("300"),
+        current_price=Decimal("301"),
+        market_value=Decimal("301"),
+        unrealized_pnl_usd=Decimal("1"),
+        raw_payload={},
+        observed_at=now,
+    )
+    config = _config(live_enabled=True)
+    config["risk"]["alpaca"]["max_open_positions"] = 1
+    alpaca = RecordingAlpacaSubmitter()
+    result = PipelineLifecycleService(registry, alpaca_submitter=alpaca).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-position-limit",
+        trigger="scheduled",
+        strategy_run=_strategy_run_with_outputs(registry, now, include_polymarket=False),
+        market_data_pulls=_market_data_pulls(now, include_polymarket=False),
+        config_payload=config,
+        credential_status={Venue.ALPACA.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["refusedCount"] == 1
+    assert "OPEN_POSITION_LIMIT" in result.payload["intents"][0]["refusalReason"]
+    assert alpaca.calls == []
+
+
+def test_req_exe_016_13_alpaca_risk_uses_selected_account_mode() -> None:
+    """A live-account snapshot must not block a paper-account entry."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    registry.shared().record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="live",
+        account_id="acct-live",
+        symbol="QQQ",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("300"),
+        current_price=Decimal("301"),
+        market_value=Decimal("301"),
+        unrealized_pnl_usd=Decimal("1"),
+        raw_payload={},
+        observed_at=now,
+    )
+    config = _config(live_enabled=True)
+    config["risk"]["alpaca"]["max_open_positions"] = 1
+    alpaca = RecordingAlpacaSubmitter()
+    result = PipelineLifecycleService(registry, alpaca_submitter=alpaca).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-account-mode",
+        trigger="scheduled",
+        strategy_run=_strategy_run_with_outputs(registry, now, include_polymarket=False),
+        market_data_pulls=_market_data_pulls(now, include_polymarket=False),
+        config_payload=config,
+        credential_status={Venue.ALPACA.value: True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 1
+    assert len(alpaca.calls) == 1
+
+
+def test_req_exe_016_14_alpaca_slippage_uses_spread_percentage() -> None:
+    """A stock spread is normalized by share price before applying the percentage limit."""
+
+    config = _config(live_enabled=True)
+    assert _slippage_ok(
+        venue=Venue.ALPACA.value,
+        candidate={"price": "500.00", "spread": "1.00"},
+        config_payload=config,
+    )
+    assert not _slippage_ok(
+        venue=Venue.ALPACA.value,
+        candidate={"price": "500.00", "spread": "3.00"},
+        config_payload=config,
+    )
+
+
 def test_req_not_006_04_live_execution_trade_submission_sends_email_notification() -> None:
     """TST-REQ-NOT-006-04: Validates REQ-NOT-006 and REQ-EXE-016
 
@@ -549,13 +720,262 @@ def test_req_ext_001_03_exit_run_records_polymarket_and_stock_exit_intents() -> 
 
     assert result.payload["status"] == "completed"
     assert result.payload["openPositionCount"] == 2
-    assert result.payload["triggeredCount"] >= 2
+    assert result.payload["triggeredCount"] == 2
     assert result.payload["simulatedCount"] == result.payload["triggeredCount"]
     assert {intent["venue"] for intent in result.payload["intents"]} == {
         Venue.POLYMARKET_US.value,
         Venue.ALPACA.value,
     }
     assert len(registry.state.rows("shared.exit_intents")) == result.payload["triggeredCount"]
+
+
+def test_req_ext_001_04_stock_position_closes_before_regular_market_close() -> None:
+    """The active stock profile should avoid carrying an intraday position overnight."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 19, 50, tzinfo=UTC)
+    shared = registry.shared()
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-close-window",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        filled_at=now - timedelta(hours=1),
+        raw_payload={},
+    )
+    shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("100"),
+        current_price=Decimal("100.20"),
+        market_value=Decimal("100.20"),
+        unrealized_pnl_usd=Decimal("0.20"),
+        raw_payload={},
+        observed_at=now,
+    )
+
+    result = PipelineLifecycleService(registry).run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-close-window",
+        trigger="scheduled",
+        market_data_pulls=[],
+        config_payload=_config(live_enabled=False),
+        started_at=now,
+        completed_at=now,
+    )
+
+    close_intents = [
+        intent
+        for intent in result.payload["intents"]
+        if intent["triggerType"] == "market_hours"
+    ]
+    assert len(close_intents) == 1
+    assert close_intents[0]["status"] == "simulated"
+
+
+def test_req_ext_001_05_stock_exit_submits_one_order_when_multiple_rules_match() -> None:
+    """A full stock position must produce at most one sell order per exit run."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 19, 50, tzinfo=UTC)
+    shared = registry.shared()
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-multi-trigger",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        filled_at=now - timedelta(hours=1),
+        raw_payload={},
+    )
+    shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("100"),
+        current_price=Decimal("112"),
+        market_value=Decimal("112"),
+        unrealized_pnl_usd=Decimal("12"),
+        raw_payload={},
+        observed_at=now,
+    )
+    alpaca = RecordingAlpacaSubmitter()
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_exit_submitter=alpaca,
+    ).run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-one-exit",
+        trigger="scheduled",
+        market_data_pulls=[],
+        config_payload=_config(live_enabled=True),
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["triggeredCount"] == 1
+    assert result.payload["submittedCount"] == 1
+    assert result.payload["intents"][0]["triggerType"] == "profit_target"
+    assert len(alpaca.calls) == 1
+
+
+def test_req_ext_001_06_submitted_stock_exit_is_not_resubmitted_for_same_position() -> None:
+    """A still-open position reuses its submitted exit instead of placing another sell."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-idempotent-exit",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        filled_at=now - timedelta(hours=1),
+        raw_payload={},
+    )
+    shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        symbol="SPY",
+        quantity=Decimal("1"),
+        average_entry_price=Decimal("100"),
+        current_price=Decimal("112"),
+        market_value=Decimal("112"),
+        unrealized_pnl_usd=Decimal("12"),
+        raw_payload={},
+        observed_at=now,
+    )
+    alpaca = RecordingAlpacaSubmitter()
+    service = PipelineLifecycleService(registry, alpaca_exit_submitter=alpaca)
+
+    first = service.run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-exit-first",
+        trigger="scheduled",
+        market_data_pulls=[],
+        config_payload=_config(live_enabled=True),
+        started_at=now,
+        completed_at=now,
+    )
+    second = service.run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-exit-second",
+        trigger="scheduled",
+        market_data_pulls=[],
+        config_payload=_config(live_enabled=True),
+        started_at=now + timedelta(minutes=1),
+        completed_at=now + timedelta(minutes=1),
+    )
+
+    assert first.payload["submittedCount"] == 1
+    assert second.payload["submittedCount"] == 1
+    assert len(alpaca.calls) == 1
+    assert len(registry.state.rows("shared.exit_intents")) == 1
+    assert registry.state.rows("shared.exit_intents")[0]["source_payload"][
+        "reusedSubmittedExit"
+    ] is True
+
+
+def test_req_ext_001_07_stock_trailing_stop_uses_recorded_position_high_watermark() -> None:
+    """The trailing stop should work without a nonstandard broker payload field."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-1",
+        activity_id="fill-trailing-stop",
+        symbol="SPY",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        filled_at=now - timedelta(hours=1),
+        raw_payload={},
+    )
+    for current_price, observed_at in (
+        (Decimal("110"), now - timedelta(minutes=30)),
+        (Decimal("104.30"), now),
+    ):
+        shared.record_alpaca_historical_position(
+            environment=Environment.DEVELOPMENT,
+            account_mode="paper",
+            account_id="acct-1",
+            symbol="SPY",
+            quantity=Decimal("1"),
+            average_entry_price=Decimal("100"),
+            current_price=current_price,
+            market_value=current_price,
+            unrealized_pnl_usd=current_price - Decimal("100"),
+            raw_payload={},
+            observed_at=observed_at,
+        )
+
+    result = PipelineLifecycleService(registry).run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-trailing-stop",
+        trigger="scheduled",
+        market_data_pulls=[],
+        config_payload=_config(live_enabled=False),
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["triggeredCount"] == 1
+    assert result.payload["intents"][0]["triggerType"] == "trailing_stop"
+
+
+def test_req_ext_001_08_stock_open_time_resets_after_a_closed_position() -> None:
+    """A new position must not inherit the age of an older round trip."""
+
+    registry = RepositoryRegistry()
+    now = datetime(2026, 6, 25, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    for activity_id, side, filled_at in (
+        ("old-buy", "buy", now - timedelta(days=2)),
+        ("old-sell", "sell", now - timedelta(days=1)),
+        ("new-buy", "buy", now - timedelta(hours=1)),
+    ):
+        shared.record_alpaca_historical_fill(
+            environment=Environment.DEVELOPMENT,
+            account_mode="paper",
+            account_id="acct-1",
+            activity_id=activity_id,
+            symbol="SPY",
+            side=side,
+            quantity=Decimal("1"),
+            price=Decimal("100"),
+            filled_at=filled_at,
+            raw_payload={},
+        )
+
+    opened_at = PipelineLifecycleService(registry)._stock_opened_at(
+        Environment.DEVELOPMENT,
+        "SPY",
+        account_mode="paper",
+        account_id="acct-1",
+    )
+
+    assert opened_at == now - timedelta(hours=1)
 
 
 def test_req_ext_006_01_live_exit_submits_through_configured_venue_submitters() -> None:
@@ -640,6 +1060,7 @@ def _strategy_run_with_outputs(
     now: datetime,
     *,
     include_alpaca: bool = True,
+    include_polymarket: bool = True,
 ) -> dict:
     shared = registry.shared()
     run = shared.record_strategy_consensus_run(
@@ -649,14 +1070,15 @@ def _strategy_run_with_outputs(
         trigger="manual",
         status="approved",
         config={},
-        vote_count=2,
-        approved_count=2 if include_alpaca else 1,
+        vote_count=int(include_polymarket) + int(include_alpaca),
+        approved_count=int(include_polymarket) + int(include_alpaca),
         refused_count=0,
         started_at=now,
         completed_at=now,
     )
-    outputs = [
-        shared.record_strategy_consensus_output(
+    outputs = []
+    if include_polymarket:
+        outputs.append(shared.record_strategy_consensus_output(
             environment=Environment.DEVELOPMENT,
             consensus_run_id=run["id"],
             venue=Venue.POLYMARKET_US.value,
@@ -669,8 +1091,7 @@ def _strategy_run_with_outputs(
             strategy_names=["arbitrage", "convergence"],
             source_payload={"candidate": {"marketSlug": "market-1"}},
             created_at=now,
-        )
-    ]
+        ))
     if include_alpaca:
         outputs.append(
             shared.record_strategy_consensus_output(
@@ -702,9 +1123,11 @@ def _market_data_pulls(
     pulled_at: datetime,
     *,
     include_alpaca: bool = True,
+    include_polymarket: bool = True,
 ) -> list[dict]:
-    pulls = [
-        {
+    pulls = []
+    if include_polymarket:
+        pulls.append({
             "id": "pull-polymarket",
             "venue": Venue.POLYMARKET_US.value,
             "status": "pulled",
@@ -722,8 +1145,7 @@ def _market_data_pulls(
                     "metrics": {"volume10m": "300", "baselineVolume10m": "80"},
                 }
             ],
-        }
-    ]
+        })
     if include_alpaca:
         pulls.append(
             {

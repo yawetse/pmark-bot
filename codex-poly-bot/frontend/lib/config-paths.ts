@@ -32,6 +32,12 @@ export const ALLOWED_CONFIG_PATHS = [
   "risk.alpaca.max_open_positions",
   "risk.alpaca.max_portfolio_allocation_per_symbol",
   "risk.alpaca.market_order_slippage_threshold",
+  "exit.alpaca.profit_target_pct",
+  "exit.alpaca.stop_loss_pct",
+  "exit.alpaca.trailing_stop_pct",
+  "exit.alpaca.max_position_age_hours",
+  "exit.alpaca.market_hours_only",
+  "exit.alpaca.close_before_market_close_minutes",
   "scanner.polymarket.market_data_limit",
   "scanner.polymarket.min_depth",
   "scanner.polymarket.min_liquidity",
@@ -144,9 +150,9 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   },
   "llm.openai.budget_usd": {
     label: "OpenAI budget",
-    description: "Caps OpenAI model spend for scoring.",
+    description: "Caps OpenAI model spend for scoring over a rolling 24-hour window.",
     valueHint: "Positive dollar value, such as 20.00",
-    effect: "The bot stops sending new OpenAI scoring requests after budget is exhausted.",
+    effect: "The bot resumes OpenAI scoring as older usage leaves the 24-hour window.",
   },
   "llm.openai.settings.model": {
     label: "OpenAI scoring model",
@@ -156,14 +162,14 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   },
   "llm.claude.budget_usd": {
     label: "Claude budget",
-    description: "Caps Claude model spend for scoring.",
+    description: "Caps Claude model spend for scoring over a rolling 24-hour window.",
     valueHint: "Positive dollar value, such as 20.00",
-    effect: "The bot stops sending new Claude scoring requests after budget is exhausted.",
+    effect: "The bot resumes Claude scoring as older usage leaves the 24-hour window.",
   },
   "reasoning.max_prompts_per_provider_per_run": {
     label: "Reasoning prompt cap",
     description: "Maximum prompts one model provider can receive in one run.",
-    valueHint: "Positive whole number, such as 100",
+    valueHint: "Positive whole number, such as 4",
     effect: "Extra scanner survivors are skipped before a provider call.",
   },
   "reasoning.polymarket.prompt_version": {
@@ -240,7 +246,7 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   },
   "risk.alpaca.max_position_usd": {
     label: "Alpaca max position",
-    description: "Maximum stock or ETF exposure per symbol and model provider.",
+    description: "Maximum stock or ETF exposure for one order.",
     valueHint: "Positive dollar value",
     effect: "Orders above the limit are refused.",
   },
@@ -252,7 +258,7 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   },
   "risk.alpaca.max_open_positions": {
     label: "Alpaca open positions",
-    description: "Maximum number of open stock or ETF positions per model provider.",
+    description: "Maximum number of open stock or ETF positions across the active Alpaca account.",
     valueHint: "Positive whole number",
     effect: "The risk gate blocks new positions above the limit.",
   },
@@ -267,6 +273,42 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "Maximum estimated slippage allowed for Alpaca market orders.",
     valueHint: "Ratio, such as 0.005 for 0.5 percent",
     effect: "Market orders above the threshold are refused.",
+  },
+  "exit.alpaca.profit_target_pct": {
+    label: "Stock profit target",
+    description: "Closes a stock position when its gain reaches this percentage.",
+    valueHint: "Ratio, such as 0.02 for 2 percent",
+    effect: "The exit monitor checks this target on every trading loop.",
+  },
+  "exit.alpaca.stop_loss_pct": {
+    label: "Stock stop loss",
+    description: "Closes a stock position when its loss reaches this percentage.",
+    valueHint: "Ratio, such as 0.01 for 1 percent",
+    effect: "The exit monitor checks this loss limit on every trading loop.",
+  },
+  "exit.alpaca.trailing_stop_pct": {
+    label: "Stock trailing stop",
+    description: "Closes a profitable position after it falls this percentage from its recorded high.",
+    valueHint: "Ratio, such as 0.01 for 1 percent",
+    effect: "The trailing stop applies when a high-water mark is available.",
+  },
+  "exit.alpaca.max_position_age_hours": {
+    label: "Stock maximum hold",
+    description: "Marks a stock position stale after this many hours.",
+    valueHint: "Positive hours, such as 6",
+    effect: "A stale position can exit when its minimum movement rule is also met.",
+  },
+  "exit.alpaca.market_hours_only": {
+    label: "Regular-hours stock trading",
+    description: "Restricts new stock entries and exit submissions to the regular market session.",
+    valueHint: "true or false",
+    effect: "When enabled, the bot does not queue new stock orders outside regular hours.",
+  },
+  "exit.alpaca.close_before_market_close_minutes": {
+    label: "Close stocks before market close",
+    description: "Closes stock positions this many minutes before the regular session ends.",
+    valueHint: "Whole minutes from 1 to 120",
+    effect: "New stock entries are also blocked during the close window.",
   },
   "scanner.polymarket.market_data_limit": {
     label: "Polymarket candidates",
@@ -325,13 +367,13 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   "scanner.alpaca.min_quote_liquidity": {
     label: "Stock quote liquidity",
     description: "Minimum bid plus ask size required for stock scanner input.",
-    valueHint: "Positive number, such as 1",
+    valueHint: "Positive number, such as 0.5",
     effect: "Thin quotes are rejected before stock strategy checks.",
   },
   "scanner.alpaca.max_spread": {
     label: "Stock max spread",
     description: "Maximum dollar spread allowed for stock scanner input.",
-    valueHint: "Positive number, such as 0.50",
+    valueHint: "Positive number, such as 1.00",
     effect: "Wide-spread symbols are rejected before strategy checks.",
   },
   "scanner.alpaca.min_history_bars": {
