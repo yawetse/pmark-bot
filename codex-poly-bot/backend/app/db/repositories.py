@@ -164,8 +164,9 @@ class DatabaseState:
         *,
         filters: dict[str, Any] | None = None,
         created_at_gte: datetime | None = None,
+        timeout_ms: int | None = None,
     ) -> Decimal:
-        """Sum matching in-memory decimal values without copying row payloads."""
+        """Sum matching in-memory values; timeout_ms applies to Postgres only."""
 
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
@@ -439,6 +440,7 @@ class PersistentDatabaseState(DatabaseState):
         *,
         filters: dict[str, Any] | None = None,
         created_at_gte: datetime | None = None,
+        timeout_ms: int | None = None,
     ) -> Decimal:
         """Sum matching Postgres decimal values without loading row payloads."""
 
@@ -469,6 +471,12 @@ class PersistentDatabaseState(DatabaseState):
         if owns_session:
             session = self.session_factory()
         try:
+            if timeout_ms is not None:
+                bounded_timeout_ms = max(1, int(timeout_ms))
+                session.execute(
+                    text("SELECT set_config('statement_timeout', :timeout, true)"),
+                    {"timeout": f"{bounded_timeout_ms}ms"},
+                )
             return Decimal(str(session.execute(statement).scalar_one()))
         except SQLAlchemyError as exc:
             if owns_session:

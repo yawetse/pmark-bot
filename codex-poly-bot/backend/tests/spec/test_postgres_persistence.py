@@ -14,6 +14,7 @@ from app.db import (
     DatabaseState,
     PersistenceConfigurationError,
     PersistenceUnavailableError,
+    PersistentDatabaseState,
     RepositoryRegistry,
     SHARED_CONFIG_USERNAME,
     SchemaViolationError,
@@ -1190,6 +1191,48 @@ def test_req_db_007_04_postgres_session_factory_bounds_connection_waits(monkeypa
         "pool_timeout": db_session_module.DEFAULT_POOL_TIMEOUT_SECONDS,
         "connect_args": {"connect_timeout": db_session_module.DEFAULT_CONNECT_TIMEOUT_SECONDS},
     }
+
+
+def test_req_db_007_05_postgres_decimal_aggregate_sets_local_statement_timeout() -> None:
+    """Budget aggregates must not leave the scheduler waiting on a blocked query."""
+
+    class FakeResult:
+        def scalar_one(self) -> Decimal:
+            return Decimal("3.25")
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str] | None]] = []
+            self.closed = False
+
+        def execute(self, statement: object, parameters: dict[str, str] | None = None):
+            self.calls.append((str(statement), parameters))
+            return FakeResult()
+
+        def rollback(self) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+
+    session = FakeSession()
+    state = PersistentDatabaseState(lambda: session)
+
+    spent = state.sum_decimal(
+        "shared.ai_usage_events",
+        "cost_usd",
+        filters={"environment": "production", "provider": "openai"},
+        created_at_gte=datetime(2026, 7, 21, tzinfo=UTC),
+        timeout_ms=2_000,
+    )
+
+    assert spent == Decimal("3.25")
+    assert session.calls[0] == (
+        "SELECT set_config('statement_timeout', :timeout, true)",
+        {"timeout": "2000ms"},
+    )
+    assert "sum(shared.ai_usage_events.cost_usd)" in session.calls[1][0]
+    assert session.closed
 
 def test_req_db_007_02_postgres_unavailable_live_order_placement_requested_order_blocked() -> None:
     """TST-REQ-DB-007-02: Validates REQ-DB-007
