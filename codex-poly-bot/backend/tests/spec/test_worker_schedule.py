@@ -1,6 +1,10 @@
 """Scheduler configuration tests."""
 
-from app.main import _configured_worker_interval, _worker_sleep_delay
+from app.main import (
+    _configured_worker_interval,
+    _scheduler_failure_message,
+    _worker_sleep_delay,
+)
 from app.services.config_service import default_config_payload, trading_profile_patches
 
 
@@ -53,3 +57,13 @@ def test_trading_loop_rejects_interval_below_safe_minimum() -> None:
 def test_trading_loop_interval_is_measured_start_to_start() -> None:
     assert _worker_sleep_delay(60, 17.5) == 42.5
     assert _worker_sleep_delay(60, 75) == 0
+
+
+def test_scheduler_failure_message_is_safe_for_dashboard_heartbeat() -> None:
+    message = _scheduler_failure_message(
+        RuntimeError("reasoning insert failed\n" + ("x" * 300))
+    )
+
+    assert message.startswith("scheduler tick failed: RuntimeError: reasoning insert failed ")
+    assert "\n" not in message
+    assert len(message) <= 250
