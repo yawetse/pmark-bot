@@ -509,9 +509,9 @@ def test_req_ui_004_03_authenticated_dashboard_api_returns_secret_safe_sections(
 def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch) -> None:
     """TST-REQ-UI-004-04: Validates REQ-UI-004, REQ-UI-009, and REQ-OBS-005
 
-    Given: deployed runtime flags and provider credentials
+    Given: deployed live-capable runtime flags and provider credentials without a saved config
     When: the dashboard summary is requested
-    Then: worker, notification, wallet, and account status are rendered from runtime state
+    Then: readiness is rendered while trading remains in the fail-closed dry-run state
     """
 
     monkeypatch.setenv("APP_ENV", "production")
@@ -552,7 +552,7 @@ def test_req_ui_004_04_dashboard_summary_reflects_runtime_readiness(monkeypatch)
     assert status_by_label["Wallet"]["value"] == "2 missing"
     assert status_by_label["Ingestion"]["state"] == "ok"
     assert status_by_label["Notification"]["state"] == "ok"
-    assert status_by_label["Trading loop"]["value"] == "Live gated"
+    assert status_by_label["Trading loop"]["value"] == "Dry run"
     credentials = {item["id"]: item for item in payload["wallet"]["credentials"]}
     assert credentials["polymarket_us-openai-wallet"]["status"] == "present"
     assert credentials["polymarket_us-claude-wallet"]["status"] == "present"
