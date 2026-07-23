@@ -112,6 +112,10 @@ class BrainService:
             100,
         )
 
+        # Production keeps completed_at non-null. Use the start time as the
+        # provisional value while scoring is in progress, then replace it with
+        # the real completion time after every provider attempt finishes.
+        provisional_completed_at = completed_at or started_at
         run_row = self.registry.shared().record_reasoning_run(
             environment=environment,
             pipeline_run_id=pipeline_run_id,
@@ -125,7 +129,7 @@ class BrainService:
             skipped_count=0,
             failed_count=0,
             started_at=started_at,
-            completed_at=completed_at,
+            completed_at=provisional_completed_at,
         )
 
         for candidate in accepted_candidates:
