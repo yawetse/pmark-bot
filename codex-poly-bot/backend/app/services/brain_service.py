@@ -30,6 +30,9 @@ from app.services.llm_service import (
 )
 
 
+AI_USAGE_BUDGET_QUERY_TIMEOUT_MS = 2_000
+
+
 DEFAULT_REASONING_CONFIG: dict[str, Any] = {
     "max_prompts_per_provider_per_run": 4,
     "polymarket": {
@@ -744,6 +747,7 @@ def _remaining_budget(
                 "provider": provider.value,
             },
             created_at_gte=cutoff,
+            timeout_ms=AI_USAGE_BUDGET_QUERY_TIMEOUT_MS,
         )
     except PersistenceUnavailableError:
         return Decimal("0")

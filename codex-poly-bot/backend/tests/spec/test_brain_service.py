@@ -8,7 +8,7 @@ from decimal import Decimal
 from app.db import DatabaseState, RepositoryRegistry
 from app.domain import Environment, ModelProvider, Venue
 from app.services import BrainService, FakeLlmProvider, ScannerService
-from app.services.brain_service import _remaining_budget
+from app.services.brain_service import AI_USAGE_BUDGET_QUERY_TIMEOUT_MS, _remaining_budget
 
 
 class _ReasoningRunNotNullState(DatabaseState):
@@ -23,10 +23,17 @@ class _ReasoningRunNotNullState(DatabaseState):
 class _AiUsageRowsMustStayBoundedState(DatabaseState):
     """Fail if a budget check attempts to load every AI usage payload."""
 
+    budget_timeout_ms: int | None = None
+
     def rows(self, table_name: str, **kwargs):
         if table_name == "shared.ai_usage_events":
             raise AssertionError("budget checks must use a database aggregate")
         return super().rows(table_name, **kwargs)
+
+    def sum_decimal(self, table_name: str, column_name: str, **kwargs) -> Decimal:
+        if table_name == "shared.ai_usage_events":
+            self.budget_timeout_ms = kwargs.get("timeout_ms")
+        return super().sum_decimal(table_name, column_name, **kwargs)
 
 
 def test_req_llm_001_04_brain_scores_polymarket_and_stock_scanner_survivors() -> None:
@@ -313,6 +320,7 @@ def test_req_llm_004_05_provider_budget_uses_rolling_24_hour_window() -> None:
     )
 
     assert remaining == Decimal("17.00")
+    assert registry.state.budget_timeout_ms == AI_USAGE_BUDGET_QUERY_TIMEOUT_MS
 
 
 def _record_stock_bars(registry: RepositoryRegistry, now: datetime) -> None:
