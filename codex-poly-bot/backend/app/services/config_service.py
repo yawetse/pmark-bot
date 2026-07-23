@@ -410,17 +410,21 @@ class ConfigService:
         return self._default_payload(environment)
 
     def _default_payload(self, environment: Environment) -> dict[str, Any]:
-        return self._with_stock_universe_snapshots(
-            environment,
-            deepcopy(self._default_payload_factory()),
-        )
+        payload = deepcopy(self._default_payload_factory())
+        # A deployed live-capable runtime is not an operator-approved config.
+        # Bootstrap and degraded reloads must fail closed until persistence
+        # supplies a saved version that explicitly enables live execution.
+        payload["live_enabled"] = False
+        return self._with_stock_universe_snapshots(environment, payload)
 
     def _payload_with_defaults(
         self,
         environment: Environment,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        merged = _deep_merge_missing(deepcopy(self._default_payload_factory()), payload)
+        defaults = deepcopy(self._default_payload_factory())
+        defaults["live_enabled"] = False
+        merged = _deep_merge_missing(defaults, payload)
         return self._with_stock_universe_snapshots(environment, merged)
 
     def _with_stock_universe_snapshots(

@@ -398,12 +398,12 @@ def test_req_ui_007_03_user_config_saved_next_user_loop_does_not_replace_shared_
     assert {row["username"] for row in rows} == {"__shared__", "yaw"}
     assert all(row["active"] for row in rows)
 
-def test_req_ui_007_04_first_user_config_save_preserves_runtime_defaults() -> None:
-    """TST-REQ-UI-007-04: Validates REQ-UI-007
+def test_req_ui_007_04_first_user_config_save_preserves_safe_runtime_defaults() -> None:
+    """TST-REQ-UI-007-04: Validates REQ-UI-007 and REQ-EXE-001
 
     Given: a user has no prior saved config row
     When: the dashboard saves a settings patch
-    Then: the new user config starts from deployed runtime defaults instead of static safe defaults
+    Then: runtime defaults are preserved while live trading remains explicitly gated
     """
     registry = RepositoryRegistry()
     runtime_defaults = default_config_payload()
@@ -438,10 +438,30 @@ def test_req_ui_007_04_first_user_config_save_preserves_runtime_defaults() -> No
     )
     snapshot = service.config_for_next_loop(Environment.PRODUCTION, username="yaw").snapshot
 
-    assert snapshot.payload["live_enabled"] is True
+    assert snapshot.payload["live_enabled"] is False
     assert snapshot.payload["venues"][Venue.POLYMARKET_US.value]["enabled"] is True
     assert snapshot.payload["alpaca"]["account_mode"] == "live"
     assert snapshot.payload["reasoning"]["polymarket"]["min_confidence"] == "0.69"
+
+
+def test_req_ui_007_06_unavailable_persistence_bootstrap_fails_closed() -> None:
+    """TST-REQ-UI-007-06: Validates REQ-UI-007 and REQ-EXE-001
+
+    Given: the deployed runtime is live-capable and config persistence is unavailable
+    When: the first next-loop config reload falls back to bootstrap settings
+    Then: live trading remains disabled until a saved config explicitly enables it
+    """
+    registry = RepositoryRegistry()
+    runtime_defaults = default_config_payload()
+    runtime_defaults["live_enabled"] = True
+    service = ConfigService(registry, default_payload_factory=lambda: runtime_defaults)
+
+    registry.state.fail_on_read_tables.add("shared.config_versions")
+    result = service.config_for_next_loop(Environment.PRODUCTION, username="yaw")
+
+    assert result.degraded
+    assert result.snapshot.version == "bootstrap"
+    assert result.snapshot.payload["live_enabled"] is False
 
 def test_req_ui_007_05_multi_user_scheduler_uses_latest_database_config_owner() -> None:
     """TST-REQ-UI-007-05: Validates REQ-UI-007
