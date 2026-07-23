@@ -105,6 +105,11 @@ DASHBOARD_PIPELINE_RUN_ROW_LIMIT = 250
 DASHBOARD_PIPELINE_STEP_ROW_LIMIT = 1_250
 DASHBOARD_PIPELINE_RECORD_ROW_LIMIT = 1_000
 DASHBOARD_TICK_SUMMARY_ROW_LIMIT = 100
+DASHBOARD_REASONING_OUTPUT_ROW_LIMIT = 100
+DASHBOARD_STRATEGY_VOTE_ROW_LIMIT = 200
+DASHBOARD_STRATEGY_OUTPUT_ROW_LIMIT = 100
+DASHBOARD_EXECUTION_INTENT_ROW_LIMIT = 100
+DASHBOARD_EXIT_INTENT_ROW_LIMIT = 100
 DASHBOARD_AI_USAGE_ROW_LIMIT = 2_000
 DASHBOARD_AI_USAGE_IMPORT_ROW_LIMIT = 250
 DASHBOARD_ECONOMICS_SNAPSHOT_ROW_LIMIT = 400
@@ -1896,14 +1901,21 @@ class RuntimeStatusService:
         }
 
     def scanner_summary(self, environment: Environment) -> dict[str, Any]:
-        """Return latest scanner status and candidate rows for operations UI.
+        """Return latest scanner aggregates without loading historical candidates.
 
         REQ: REQ-STR-003, REQ-UI-004, REQ-OBS-005
         """
 
         try:
-            runs = self.registry.shared().scanner_runs(environment=environment)
-            candidates = self.registry.shared().scanner_candidates(environment=environment)
+            latest = self.registry.shared().latest_scanner_run(environment=environment)
+            rejection_breakdown = (
+                self.registry.shared().scanner_rejection_breakdown(
+                    environment=environment,
+                    pipeline_run_id=latest["pipeline_run_id"],
+                )
+                if latest is not None
+                else []
+            )
         except PersistenceUnavailableError:
             return {
                 "status": "unavailable",
@@ -1913,8 +1925,9 @@ class RuntimeStatusService:
                 "acceptedCount": 0,
                 "rejectedCount": 0,
                 "candidates": [],
+                "detailsDeferred": True,
             }
-        if not runs:
+        if latest is None:
             return {
                 "status": "idle",
                 "message": "No scanner run has been recorded yet.",
@@ -1923,27 +1936,21 @@ class RuntimeStatusService:
                 "acceptedCount": 0,
                 "rejectedCount": 0,
                 "candidates": [],
+                "detailsDeferred": True,
             }
-        runs.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
-        latest = runs[0]
-        latest_candidates = [
-            candidate for candidate in candidates if candidate["scanner_run_id"] == latest["id"]
-        ]
-        latest_candidates.sort(key=lambda row: row.get("created_at"), reverse=True)
-        payload = scanner_run_payload(
-            latest,
-            _balanced_scanner_candidate_items(latest_candidates, limit=100),
-        )
-        rejection_breakdown = _scanner_rejection_breakdown(latest_candidates)
+        payload = scanner_run_payload(latest, [])
+        candidate_count = payload["acceptedCount"] + payload["rejectedCount"]
+        payload["candidateCount"] = candidate_count
         return {
             "status": payload["status"],
             "message": _scanner_summary_message({**payload, "rejectionBreakdown": rejection_breakdown}),
             "latestRun": payload,
-            "candidateCount": payload["candidateCount"],
+            "candidateCount": candidate_count,
             "acceptedCount": payload["acceptedCount"],
             "rejectedCount": payload["rejectedCount"],
             "rejectionBreakdown": rejection_breakdown,
-            "candidates": payload["candidates"],
+            "candidates": [],
+            "detailsDeferred": True,
         }
 
     def scanner_overview(self, environment: Environment) -> dict[str, Any]:
@@ -2011,8 +2018,25 @@ class RuntimeStatusService:
         """
 
         try:
-            runs = self.registry.shared().reasoning_runs(environment=environment)
-            outputs = self.registry.shared().reasoning_outputs(environment=environment)
+            runs = self.registry.state.rows(
+                self.REASONING_RUNS_TABLE,
+                limit=1,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
+            outputs = (
+                self.registry.state.rows(
+                    self.REASONING_OUTPUTS_TABLE,
+                    limit=DASHBOARD_REASONING_OUTPUT_ROW_LIMIT,
+                    newest_first=True,
+                    filters={
+                        "environment": environment.value,
+                        "reasoning_run_id": runs[0]["id"],
+                    },
+                )
+                if runs
+                else []
+            )
         except PersistenceUnavailableError:
             return {
                 "status": "unavailable",
@@ -2060,9 +2084,38 @@ class RuntimeStatusService:
         """
 
         try:
-            runs = self.registry.shared().strategy_consensus_runs(environment=environment)
-            votes = self.registry.shared().strategy_votes(environment=environment)
-            outputs = self.registry.shared().strategy_consensus_outputs(environment=environment)
+            runs = self.registry.state.rows(
+                self.STRATEGY_CONSENSUS_RUNS_TABLE,
+                limit=1,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
+            votes = (
+                self.registry.state.rows(
+                    self.STRATEGY_VOTES_TABLE,
+                    limit=DASHBOARD_STRATEGY_VOTE_ROW_LIMIT,
+                    newest_first=True,
+                    filters={
+                        "environment": environment.value,
+                        "consensus_run_id": runs[0]["id"],
+                    },
+                )
+                if runs
+                else []
+            )
+            outputs = (
+                self.registry.state.rows(
+                    self.STRATEGY_CONSENSUS_OUTPUTS_TABLE,
+                    limit=DASHBOARD_STRATEGY_OUTPUT_ROW_LIMIT,
+                    newest_first=True,
+                    filters={
+                        "environment": environment.value,
+                        "consensus_run_id": runs[0]["id"],
+                    },
+                )
+                if runs
+                else []
+            )
         except PersistenceUnavailableError:
             return {
                 "status": "unavailable",
@@ -2107,8 +2160,25 @@ class RuntimeStatusService:
         """Return latest order-intent execution status for operations UI."""
 
         try:
-            runs = self.registry.shared().execution_runs(environment=environment)
-            intents = self.registry.shared().order_intents(environment=environment)
+            runs = self.registry.state.rows(
+                self.EXECUTION_RUNS_TABLE,
+                limit=1,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
+            intents = (
+                self.registry.state.rows(
+                    self.ORDER_INTENTS_TABLE,
+                    limit=DASHBOARD_EXECUTION_INTENT_ROW_LIMIT,
+                    newest_first=True,
+                    filters={
+                        "environment": environment.value,
+                        "execution_run_id": runs[0]["id"],
+                    },
+                )
+                if runs
+                else []
+            )
         except PersistenceUnavailableError:
             return {
                 "status": "unavailable",
@@ -2151,8 +2221,25 @@ class RuntimeStatusService:
         """Return latest open-position exit status for operations UI."""
 
         try:
-            runs = self.registry.shared().exit_runs(environment=environment)
-            intents = self.registry.shared().exit_intents(environment=environment)
+            runs = self.registry.state.rows(
+                self.EXIT_RUNS_TABLE,
+                limit=1,
+                newest_first=True,
+                filters={"environment": environment.value},
+            )
+            intents = (
+                self.registry.state.rows(
+                    self.EXIT_INTENTS_TABLE,
+                    limit=DASHBOARD_EXIT_INTENT_ROW_LIMIT,
+                    newest_first=True,
+                    filters={
+                        "environment": environment.value,
+                        "exit_run_id": runs[0]["id"],
+                    },
+                )
+                if runs
+                else []
+            )
         except PersistenceUnavailableError:
             return {
                 "status": "unavailable",
