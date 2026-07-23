@@ -1278,6 +1278,16 @@ class RuntimeStatusService:
             status=heartbeat_status,
             age_seconds=age_seconds,
         )
+        metadata = latest.get("metadata")
+        heartbeat_message = (
+            str(metadata.get("message", "")).strip()
+            if isinstance(metadata, dict)
+            else ""
+        )
+        if heartbeat_status == "failed" and heartbeat_message.startswith(
+            "scheduler tick failed:"
+        ):
+            value = heartbeat_message
         return {
             "state": state,
             "value": value,

@@ -97,6 +97,44 @@ def test_req_obs_005_worker_status_blocks_stale_scheduler_heartbeats() -> None:
     assert worker["heartbeatStatus"] == "pulled"
 
 
+def test_req_obs_005_worker_status_exposes_bounded_scheduler_failure_detail() -> None:
+    """TST-REQ-OBS-005-09: Validates REQ-OBS-005
+
+    Given: the scheduled worker records a safe bounded failure detail
+    When: the dashboard evaluates scheduler liveness
+    Then: the ingestion status identifies the failed operation
+    """
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    now = datetime.now(UTC)
+    app.state.services.registry.state.rows("shared.job_runs").clear()
+    app.state.services.registry.state.insert(
+        "shared.job_runs",
+        {
+            "id": "scheduled-failure",
+            "job_name": app.state.services.runtime_status.WORKER_JOB_NAME,
+            "status": "failed",
+            "heartbeat_at": now,
+            "metadata": {
+                "message": (
+                    "scheduler tick failed: PersistenceUnavailableError: "
+                    "Postgres persistence is unavailable for shared.reasoning_runs"
+                )
+            },
+            "created_at": now,
+        },
+    )
+
+    worker = app.state.services.runtime_status.worker_status()
+
+    assert worker["state"] == "blocked"
+    assert worker["value"] == (
+        "scheduler tick failed: PersistenceUnavailableError: "
+        "Postgres persistence is unavailable for shared.reasoning_runs"
+    )
+    assert worker["heartbeatStatus"] == "failed"
+
+
 class FakeAwsBillingAdapter:
     def dashboard_costs(self, *, environment: Environment) -> AwsBillingCost:
         return AwsBillingCost(

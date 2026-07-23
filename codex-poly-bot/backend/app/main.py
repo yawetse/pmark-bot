@@ -416,11 +416,11 @@ async def _worker_heartbeat_loop(
                 environment=environment,
                 config_payload=config_payload,
             )
-        except Exception:
+        except Exception as exc:
             LOGGER.exception("background scheduler tick failed")
             services.runtime_status.record_worker_heartbeat(
                 status="failed",
-                message="scheduler tick failed",
+                message=_scheduler_failure_message(exc),
             )
         elapsed_seconds = asyncio.get_running_loop().time() - loop_started_at
         await asyncio.sleep(_worker_sleep_delay(next_interval_seconds, elapsed_seconds))
@@ -432,6 +432,14 @@ def _configured_worker_interval(config_payload: dict[str, object], *, fallback: 
     except (TypeError, ValueError):
         configured = fallback
     return max(ConfigService.SAFE_MINIMUM_LOOP_INTERVAL_SECONDS, configured)
+
+
+def _scheduler_failure_message(exc: Exception) -> str:
+    """Return a bounded, single-line scheduler failure for operator diagnostics."""
+
+    detail = " ".join(str(exc).split())
+    prefix = f"scheduler tick failed: {type(exc).__name__}"
+    return f"{prefix}: {detail[:200]}" if detail else prefix
 
 
 def _worker_sleep_delay(interval_seconds: int, elapsed_seconds: float) -> float:
