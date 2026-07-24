@@ -252,8 +252,8 @@ def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch)
     )
 
 
-def test_req_ui_008_11_activity_reads_runs_without_stage_detail_tables(monkeypatch) -> None:
-    """Activity must not load detailed operations tables."""
+def test_req_ui_008_11_activity_reads_compact_run_metadata_only(monkeypatch) -> None:
+    """Activity must not load step JSON or detailed operations tables."""
 
     settings = AppSettings(environment=Environment.DEVELOPMENT)
     app = create_app(settings)
@@ -283,14 +283,13 @@ def test_req_ui_008_11_activity_reads_runs_without_stage_detail_tables(monkeypat
         }
         for table_name, kwargs in calls
     )
-    assert any(
+    assert not any(
         table_name == service.PIPELINE_STEPS_TABLE
-        and kwargs.get("limit") == 100
-        and kwargs.get("newest_first") is True
-        and kwargs.get("filters") == {
-            "environment": Environment.DEVELOPMENT.value,
-        }
-        for table_name, kwargs in calls
+        for table_name, _ in calls
+    )
+    assert not any(
+        table_name == service.SCANNER_RUNS_TABLE
+        for table_name, _ in calls
     )
     detailed_tables = {
         service.REASONING_RUNS_TABLE,

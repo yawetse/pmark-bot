@@ -3491,7 +3491,21 @@ th {
 .activity-funnel {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.activity-outcome-summary {
+  background: var(--surface-tint);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+  padding: 12px 14px;
+}
+
+.activity-outcome-summary strong {
+  color: var(--text);
 }
 
 .activity-stage {
