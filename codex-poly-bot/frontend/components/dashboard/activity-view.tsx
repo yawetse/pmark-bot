@@ -16,6 +16,7 @@ import type { OperationsSummaryView } from "@/components/dashboard/operations-vi
 import {
   buildActivityFunnel,
   latestCompletedActivityRun,
+  latestTradeOutcome,
   type ActivityStageKey,
 } from "@/lib/dashboard-activity-view-model";
 import { useDashboardRealtime, type DashboardRealtimeSnapshot } from "@/lib/use-dashboard-realtime";
@@ -65,7 +66,7 @@ export function ActivityView({
         <div>
           <p className="section-label">Activity</p>
           <h1 id="activity-title">What the bot checked</h1>
-          <p>Follow the latest market check from the initial scan through the risk gate.</p>
+          <p>Follow the latest market check from the initial scan through order handling.</p>
         </div>
         <span className={`ia-update-chip ${realtime.status}`}>
           <span aria-hidden="true" />
@@ -87,6 +88,11 @@ export function ActivityView({
           </div>
           <span className={`status ${statusTone(latestRun?.status)}`}>{latestRun?.status ?? "not recorded"}</span>
         </div>
+        {latestRun ? (
+          <p className="activity-outcome-summary">
+            <strong>Why no trade:</strong> {latestTradeOutcome(operations)}
+          </p>
+        ) : null}
         <div className="activity-funnel" aria-label="Latest check funnel">
           {funnel.map((stage, index) => {
             const Icon = stageIcon(stage.key);
@@ -122,8 +128,8 @@ export function ActivityView({
               <article className="activity-log-row" key={run.id} role="listitem">
                 <time dateTime={run.completedAt ?? run.startedAt ?? undefined}>{formatTime(run.completedAt ?? run.startedAt)}</time>
                 <div>
-                  <strong>{checkSummary(run.steps)}</strong>
-                  <span>{run.trigger.replaceAll("_", " ")} · {run.steps.length} recorded steps</span>
+                  <strong>{checkSummary(run)}</strong>
+                  <span>{run.trigger.replaceAll("_", " ")} · {runDetail(run)}</span>
                 </div>
                 <span className={`status ${statusTone(run.status)}`}>{run.status}</span>
               </article>
@@ -150,8 +156,9 @@ function stageIcon(key: ActivityStageKey) {
   return {
     scanned: Database,
     promising: Sparkles,
-    confidence: CheckCircle2,
-    risk: ShieldCheck,
+    scored: CheckCircle2,
+    approved: ShieldCheck,
+    acted: ArrowRight,
   }[key];
 }
 
@@ -162,11 +169,45 @@ function statusTone(status?: string): "ok" | "waiting" | "blocked" | "idle" {
   return value ? "waiting" : "idle";
 }
 
-function checkSummary(steps: OperationsSummaryView["pipelineRuns"][number]["steps"]): string {
-  const stopped = steps.find((step) => statusTone(step.status) === "blocked");
+function checkSummary(run: OperationsSummaryView["pipelineRuns"][number]): string {
+  const submitted = runMetric(run, "orderSubmittedCount");
+  const simulated = runMetric(run, "orderSimulatedCount");
+  const refused = runMetric(run, "orderRefusedCount");
+  const intents = runMetric(run, "orderIntentCount");
+  const approved = runMetric(run, "strategyApprovedCount");
+  const scored = runMetric(run, "reasoningScoredCount");
+  const accepted = runMetric(run, "scannerAcceptedCount");
+  if (submitted > 0) return "Reached live order submission";
+  if (simulated > 0) return "Reached simulated execution";
+  if (refused > 0) return "Stopped at execution gates";
+  if (intents > 0) return "Reached order planning";
+  if (approved > 0) return "Reached strategy approval";
+  if (scored > 0) return "Stopped at strategy consensus";
+  if (accepted > 0) return "Stopped at model scoring";
+
+  const stopped = run.steps.find((step) => statusTone(step.status) === "blocked");
   if (stopped) return `Stopped at ${stopped.label.toLowerCase()}`;
-  const last = steps.at(-1);
+  const last = run.steps.at(-1);
   return last ? `Reached ${last.label.toLowerCase()}` : "No step detail recorded";
+}
+
+function runDetail(run: OperationsSummaryView["pipelineRuns"][number]): string {
+  const scanned = runMetric(run, "candidateCount");
+  const accepted = runMetric(run, "scannerAcceptedCount");
+  if (scanned > 0 || accepted > 0) {
+    return `${scanned.toLocaleString()} scanned · ${accepted.toLocaleString()} accepted`;
+  }
+  return run.steps.length
+    ? `${run.steps.length.toLocaleString()} recorded steps`
+    : "no candidate totals recorded";
+}
+
+function runMetric(
+  run: OperationsSummaryView["pipelineRuns"][number],
+  key: string,
+): number {
+  const value = run.metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function formatTime(value?: string | null): string {

@@ -2,7 +2,10 @@
 
 import assert from "node:assert/strict";
 
-import { buildActivityFunnel } from "../lib/dashboard-activity-view-model.ts";
+import {
+  buildActivityFunnel,
+  latestTradeOutcome,
+} from "../lib/dashboard-activity-view-model.ts";
 import {
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
@@ -19,30 +22,38 @@ const operations = {
       id: "current-run",
       status: "completed",
       completedAt: "2026-07-21T12:00:10Z",
-      steps: [
-        { key: "data_fetch", metrics: { candidateCount: 12 } },
-        { key: "scanner", metrics: { acceptedCount: 4 } },
-        { key: "brain", metrics: { scoredCount: 3 } },
-        { key: "execution", metrics: { submittedCount: 1, simulatedCount: 2 } },
-      ],
+      metadata: {
+        candidateCount: 12,
+        scannerAcceptedCount: 4,
+        reasoningScoredCount: 3,
+        strategyApprovedCount: 2,
+        orderIntentCount: 3,
+        orderRefusedCount: 0,
+        orderSubmittedCount: 1,
+        orderSimulatedCount: 2,
+      },
+      steps: [],
     },
   ],
 };
 
 const funnel = buildActivityFunnel(operations);
-assert.deepEqual(funnel.map((stage) => stage.value), [12, 4, null, 3]);
-assert.equal(funnel[2].statusLabel, "Unavailable");
-assert.match(funnel[2].detail, /does not expose/);
+assert.deepEqual(funnel.map((stage) => stage.value), [12, 4, 3, 2, 3]);
+assert.equal(funnel[4].statusLabel, "Passed");
+assert.match(funnel[4].detail, /3 planned, 0 refused, 2 simulated, 1 submitted/);
+assert.match(latestTradeOutcome(operations), /1 live order was submitted/);
 
 const missingScanner = structuredClone(operations);
-missingScanner.pipelineRuns[0].steps = missingScanner.pipelineRuns[0].steps.filter(
-  (step) => step.key !== "scanner",
-);
+delete missingScanner.pipelineRuns[0].metadata.scannerAcceptedCount;
 assert.equal(buildActivityFunnel(missingScanner)[1].value, null);
 
-const explicitConfidence = structuredClone(operations);
-explicitConfidence.pipelineRuns[0].steps.find((step) => step.key === "brain").metrics.confidencePassedCount = 2;
-assert.equal(buildActivityFunnel(explicitConfidence)[2].value, 2);
+const refusedOrders = structuredClone(operations);
+Object.assign(refusedOrders.pipelineRuns[0].metadata, {
+  orderSubmittedCount: 0,
+  orderSimulatedCount: 0,
+  orderRefusedCount: 3,
+});
+assert.match(latestTradeOutcome(refusedOrders), /3 order intents were refused/);
 
 // TST-REQ-UI-021-02: trade totals come only from venue-confirmed portfolio fills.
 
