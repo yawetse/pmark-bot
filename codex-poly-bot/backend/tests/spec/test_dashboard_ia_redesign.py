@@ -100,7 +100,7 @@ def test_req_ui_020_01_activity_uses_one_completed_run_contract() -> None:
         assert token in model
     assert "setLoadErrors([])" in view
     assert "activity-stage-status" in view
-    assert "operations/summary?include_details=true" in page
+    assert "operations/summary?include_runs=true" in page
     assert "current?.pipelineRuns ?? []" in view
 
 

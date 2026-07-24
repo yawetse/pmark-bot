@@ -1768,6 +1768,7 @@ class RuntimeStatusService:
         *,
         include_history: bool = False,
         include_details: bool = False,
+        include_runs: bool = False,
     ) -> dict[str, Any]:
         """Return operational status and latest order rows.
 
@@ -1789,7 +1790,11 @@ class RuntimeStatusService:
             "degradedVenueStatus": "none",
             "manualReviewState": "clear",
             "orderEvents": order_items,
-            "pipelineRuns": self.pipeline_runs(environment) if include_details else [],
+            "pipelineRuns": (
+                self.pipeline_runs(environment)
+                if include_details or include_runs
+                else []
+            ),
             "scanner": (
                 self.scanner_summary(environment)
                 if include_details
@@ -2425,11 +2430,19 @@ class RuntimeStatusService:
         """
 
         try:
+            run_row_limit = min(
+                DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
+                max(1, int(limit)),
+            )
+            step_row_limit = min(
+                DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
+                max(1, run_row_limit * 10),
+            )
             rows = [
                 row
                 for row in self.registry.state.rows(
                     self.PIPELINE_RUNS_TABLE,
-                    limit=max(DASHBOARD_PIPELINE_RUN_ROW_LIMIT, limit * 5),
+                    limit=run_row_limit,
                     newest_first=True,
                     filters={"environment": environment.value},
                 )
@@ -2439,7 +2452,7 @@ class RuntimeStatusService:
                 row
                 for row in self.registry.state.rows(
                     self.PIPELINE_STEPS_TABLE,
-                    limit=max(DASHBOARD_PIPELINE_STEP_ROW_LIMIT, limit * 25),
+                    limit=step_row_limit,
                     newest_first=True,
                     filters={"environment": environment.value},
                 )

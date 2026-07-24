@@ -238,18 +238,72 @@ def test_req_ui_008_08_dashboard_read_paths_use_bounded_store_reads(monkeypatch)
     )
     assert any(
         table_name == service.PIPELINE_RUNS_TABLE
-        and kwargs.get("limit") == DASHBOARD_PIPELINE_RUN_ROW_LIMIT
+        and kwargs.get("limit") == 20
         and kwargs.get("newest_first") is True
         and kwargs.get("filters") == environment_filter
         for table_name, kwargs in calls
     )
     assert any(
         table_name == service.PIPELINE_STEPS_TABLE
-        and kwargs.get("limit") == DASHBOARD_PIPELINE_STEP_ROW_LIMIT
+        and kwargs.get("limit") == 200
         and kwargs.get("newest_first") is True
         and kwargs.get("filters") == environment_filter
         for table_name, kwargs in calls
     )
+
+
+def test_req_ui_008_11_activity_reads_runs_without_stage_detail_tables(monkeypatch) -> None:
+    """Activity must not load detailed operations tables."""
+
+    settings = AppSettings(environment=Environment.DEVELOPMENT)
+    app = create_app(settings)
+    service = app.state.services.runtime_status
+    state = app.state.services.registry.state
+    original_rows = state.rows
+    calls: list[tuple[str, dict]] = []
+
+    def observed_rows(table_name: str, *args, **kwargs):
+        calls.append((table_name, kwargs))
+        return original_rows(table_name, *args, **kwargs)
+
+    monkeypatch.setattr(state, "rows", observed_rows)
+
+    summary = service.operations_summary(
+        Environment.DEVELOPMENT,
+        include_runs=True,
+    )
+
+    assert summary["pipelineRuns"] == []
+    assert any(
+        table_name == service.PIPELINE_RUNS_TABLE
+        and kwargs.get("limit") == 10
+        and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == {
+            "environment": Environment.DEVELOPMENT.value,
+        }
+        for table_name, kwargs in calls
+    )
+    assert any(
+        table_name == service.PIPELINE_STEPS_TABLE
+        and kwargs.get("limit") == 100
+        and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == {
+            "environment": Environment.DEVELOPMENT.value,
+        }
+        for table_name, kwargs in calls
+    )
+    detailed_tables = {
+        service.REASONING_RUNS_TABLE,
+        service.REASONING_OUTPUTS_TABLE,
+        service.STRATEGY_CONSENSUS_RUNS_TABLE,
+        service.STRATEGY_VOTES_TABLE,
+        service.STRATEGY_CONSENSUS_OUTPUTS_TABLE,
+        service.EXECUTION_RUNS_TABLE,
+        service.ORDER_INTENTS_TABLE,
+        service.EXIT_RUNS_TABLE,
+        service.EXIT_INTENTS_TABLE,
+    }
+    assert not any(table_name in detailed_tables for table_name, _ in calls)
 
 
 def test_req_ui_008_10_operations_details_read_only_the_latest_run(monkeypatch) -> None:
