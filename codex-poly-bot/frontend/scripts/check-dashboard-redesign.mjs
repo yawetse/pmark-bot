@@ -74,10 +74,11 @@ assert.doesNotMatch(settings, /setExpectedVersion/);
 
 assert.match(activity, /setLoadErrors\(\[\]\)/);
 const activityModel = read("lib/dashboard-activity-view-model.ts");
-for (const token of ["Markets scanned", "Looked promising", "Passed confidence rule", "Passed risk checks"]) {
+for (const token of ["Markets scanned", "Looked promising", "Scored by models", "Strategy approved", "Orders acted on"]) {
   assert.match(activityModel, new RegExp(token));
 }
-assert.match(activityModel, /confidencePassedCount/);
+assert.match(activityModel, /orderRefusedCount/);
+assert.match(activityModel, /latestTradeOutcome/);
 assert.doesNotMatch(activityModel, /reasoning\?\.scoredCount/);
 const settingsPage = read("app/dashboard/config/page.tsx");
 assert.match(settingsPage, /\/dashboard\/operations/);

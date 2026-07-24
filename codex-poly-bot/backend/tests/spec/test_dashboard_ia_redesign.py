@@ -82,7 +82,7 @@ def test_req_ui_020_01_activity_uses_one_completed_run_contract() -> None:
 
     Given: a persisted pipeline history
     When: Activity builds the latest funnel
-    Then: counts come from one completed run and missing exact metrics remain unavailable
+    Then: counts come from one compact completed-run summary without loading step JSON
     """
     model = _read("lib/dashboard-activity-view-model.ts")
     view = _read("components/dashboard/activity-view.tsx")
@@ -90,16 +90,18 @@ def test_req_ui_020_01_activity_uses_one_completed_run_contract() -> None:
 
     for token in (
         "latestCompletedActivityRun",
-        'step.key === "data_fetch"',
-        'step.key === "scanner"',
-        'step.key === "brain"',
-        'step.key === "execution"',
-        "confidencePassedCount",
+        '"candidateCount"',
+        '"scannerAcceptedCount"',
+        '"reasoningScoredCount"',
+        '"strategyApprovedCount"',
+        '"orderRefusedCount"',
+        "latestTradeOutcome",
         'statusLabel: "Unavailable"',
     ):
         assert token in model
     assert "setLoadErrors([])" in view
     assert "activity-stage-status" in view
+    assert "Why no trade:" in view
     assert "operations/summary?include_runs=true" in page
     assert "current?.pipelineRuns ?? []" in view
 

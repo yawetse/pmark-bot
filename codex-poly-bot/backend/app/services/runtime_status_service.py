@@ -1791,14 +1791,21 @@ class RuntimeStatusService:
             "manualReviewState": "clear",
             "orderEvents": order_items,
             "pipelineRuns": (
-                self.pipeline_runs(environment)
+                self.pipeline_runs(
+                    environment,
+                    include_steps=include_details,
+                )
                 if include_details or include_runs
                 else []
             ),
             "scanner": (
                 self.scanner_summary(environment)
                 if include_details
-                else self.scanner_overview(environment)
+                else (
+                    self._deferred_scanner_summary()
+                    if include_runs
+                    else self.scanner_overview(environment)
+                )
             ),
             "reasoning": (
                 self.reasoning_summary(environment)
@@ -1830,6 +1837,19 @@ class RuntimeStatusService:
                 if include_history
                 else self._deferred_broker_history_summary()
             ),
+        }
+
+    def _deferred_scanner_summary(self) -> dict[str, Any]:
+        return {
+            "status": "deferred",
+            "message": "Scanner details are deferred from the run-summary response.",
+            "latestRun": None,
+            "candidateCount": 0,
+            "acceptedCount": 0,
+            "rejectedCount": 0,
+            "rejectionBreakdown": [],
+            "candidates": [],
+            "detailsDeferred": True,
         }
 
     def _deferred_reasoning_summary(self) -> dict[str, Any]:
@@ -2423,7 +2443,13 @@ class RuntimeStatusService:
             ),
         }
 
-    def pipeline_runs(self, environment: Environment, *, limit: int = 10) -> list[dict[str, Any]]:
+    def pipeline_runs(
+        self,
+        environment: Environment,
+        *,
+        limit: int = 10,
+        include_steps: bool = True,
+    ) -> list[dict[str, Any]]:
         """Return recent loop runs with the user-visible processing stages.
 
         REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-005
@@ -2448,16 +2474,20 @@ class RuntimeStatusService:
                 )
                 if row["environment"] == environment.value
             ]
-            step_rows = [
-                row
-                for row in self.registry.state.rows(
-                    self.PIPELINE_STEPS_TABLE,
-                    limit=step_row_limit,
-                    newest_first=True,
-                    filters={"environment": environment.value},
-                )
-                if row["environment"] == environment.value
-            ]
+            step_rows = (
+                [
+                    row
+                    for row in self.registry.state.rows(
+                        self.PIPELINE_STEPS_TABLE,
+                        limit=step_row_limit,
+                        newest_first=True,
+                        filters={"environment": environment.value},
+                    )
+                    if row["environment"] == environment.value
+                ]
+                if include_steps
+                else []
+            )
         except PersistenceUnavailableError:
             return []
         rows.sort(key=lambda row: row.get("started_at") or row.get("created_at"), reverse=True)
