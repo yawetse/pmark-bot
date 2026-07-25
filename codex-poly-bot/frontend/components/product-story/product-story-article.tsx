@@ -51,21 +51,13 @@ export function ProductStoryArticle() {
       <main id="story-content">
         <article className="story-article">
           <header className="story-hero">
-            <p className="story-label">NOTES FROM BUILDING CODEX POLY BOT</p>
-            <h1>Why I built a trading bot that is allowed to do nothing</h1>
+            <p className="story-label">A PRODUCT NOTE ON CONTROLLED MARKET AUTOMATION</p>
+            <h1>Why a trading bot should be allowed to do nothing</h1>
             <p className="story-deck">
-              Most trading bots are designed around execution. I wanted to see what changes
-              when the system is designed around refusal.
+              Most trading bots are designed around execution. Poly Bot starts from a
+              different premise: refusal is part of a valid decision.
             </p>
-            <div className="story-byline">
-              <span className="story-author-mark" aria-hidden="true">
-                YE
-              </span>
-              <p>
-                <strong>Yaw Etse</strong>
-                <span>Product note · July 2026</span>
-              </p>
-            </div>
+            <p className="story-publication-note">Product note · July 2026</p>
           </header>
 
           <div className="story-reading-layout">
@@ -86,9 +78,8 @@ export function ProductStoryArticle() {
 
             <div className="story-body">
               <p className="story-opening-paragraph">
-                I have spent much of my career building systems that make or support
-                financial decisions. One lesson keeps showing up: producing a prediction
-                and authorizing an action are different problems.
+                Producing a prediction and authorizing an action are different problems.
+                Trading systems need to handle both without treating one as the other.
               </p>
               <p>
                 A model can estimate the probability of an outcome. It cannot, by itself,
@@ -98,14 +89,13 @@ export function ProductStoryArticle() {
                 still produce a bad trade.
               </p>
               <p>
-                That distinction became the starting point for Codex Poly Bot. I did not
-                want to build an application that treated every signal as a reason to move
-                money. I wanted a system that could explain why it traded, why it refused,
-                and which evidence supported either result.
+                That distinction is the starting point for Codex Poly Bot. It does not treat
+                every signal as a reason to move money. The system must be able to explain
+                why it traded, why it refused, and which evidence supported either result.
               </p>
 
               <section id="question" aria-labelledby="question-title">
-                <h2 id="question-title">The question I wanted to test</h2>
+                <h2 id="question-title">The question behind the system</h2>
                 <p>
                   Automated trading demos tend to focus on the exciting part: a model finds
                   an opportunity and an order appears. The difficult work sits between those
@@ -114,12 +104,12 @@ export function ProductStoryArticle() {
                   across the portfolio. The venue has to confirm what happened.
                 </p>
                 <p>
-                  My question was straightforward: could I build a small trading system
-                  where the quality of the control path mattered as much as the quality of
-                  the prediction?
+                  The design question is straightforward: can a small trading system make
+                  the quality of the control path matter as much as the quality of the
+                  prediction?
                 </p>
                 <p>
-                  Poly Bot is the working answer. It scans prediction markets on Polymarket
+                  Poly Bot is a working answer. It scans prediction markets on Polymarket
                   and a configured long-only stock and ETF universe through Alpaca. It can
                   run in dry-run mode or submit live orders when the operator has enabled
                   that path. The same decision process applies in both modes.
@@ -267,9 +257,9 @@ export function ProductStoryArticle() {
                 <p>
                   The dashboard exposes the current operating mode, candidate funnel, model
                   decisions, refusals, risk settings, audit events, orders, and
-                  venue-confirmed results. I recommend starting in dry-run mode. Review what
-                  the bot would have done, inspect the refusal reasons, and change the limits
-                  before considering live execution.
+                  venue-confirmed results. Start in dry-run mode. Review what the bot would
+                  have done, inspect the refusal reasons, and change the limits before
+                  considering live execution.
                 </p>
                 <p>
                   The public product overview contains the interactive five-stage method
@@ -280,8 +270,8 @@ export function ProductStoryArticle() {
 
                 <div className="story-end-note">
                   <p>
-                    Poly Bot is my attempt to make automated decisions legible. The system
-                    can act, but it must also be able to stop, refuse, and explain why.
+                    Poly Bot is designed to make automated decisions legible. The system can
+                    act, but it must also be able to stop, refuse, and explain why.
                   </p>
                   <div className="story-closing-actions">
                     <a
