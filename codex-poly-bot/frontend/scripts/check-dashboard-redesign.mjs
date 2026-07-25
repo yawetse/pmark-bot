@@ -85,7 +85,13 @@ assert.match(settingsPage, /\/dashboard\/operations/);
 assert.match(settingsPage, /\/dashboard\/scenario/);
 
 const help = read("components/dashboard/help-about-view.tsx");
-for (const step of ["Collect prices", "Find candidates", "Score", "Simulate or submit", "Monitor exits"]) assert.match(help, new RegExp(step));
+for (const token of ["Understand every decision", "Five stages, with the details behind each one", "MethodExplorer"]) {
+  assert.match(help, new RegExp(token));
+}
+const productMethod = read("components/product-story/method-explorer.tsx");
+for (const step of ["Find repeatable behavior", "Remove weak candidates", "Build the probability case", "Form a trade decision", "Size, submit, and monitor"]) {
+  assert.match(productMethod, new RegExp(step));
+}
 assert.match(help, /Back to Overview/);
 
 const css = read("app/globals.css");
