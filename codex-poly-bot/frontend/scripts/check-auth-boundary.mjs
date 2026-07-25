@@ -78,13 +78,14 @@ assert.match(productStoryPage, /ProductStoryArticle/);
 assert.match(productStoryPage, /canonical: "https:\/\/codex-poly-bot\.repetere\.net\/story"/);
 
 const productStoryArticle = read(files.productStoryArticle);
-assert.match(productStoryArticle, /Why I built a trading bot that is allowed to do nothing/);
+assert.match(productStoryArticle, /Why a trading bot should be allowed to do nothing/);
 assert.match(productStoryArticle, /Product note · July 2026/);
 assert.match(productStoryArticle, /A prediction describes what may happen/);
 assert.match(productStoryArticle, /What the product does not claim/);
 assert.match(productStoryArticle, /Explore the technical methods/);
 assert.match(productStoryArticle, /\/api\/auth\/github\/start/);
 assert.doesNotMatch(productStoryArticle, /MethodExplorer/);
+assert.doesNotMatch(productStoryArticle, /Yaw Etse|Poly Bot is my|I wanted|I recommend/);
 assert.doesNotMatch(productStoryArticle, /guaranteed returns|original post|source post/i);
 
 const methodExplorer = read(files.methodExplorer);
