@@ -13,6 +13,8 @@ const files = {
   home: "app/page.tsx",
   login: "app/login/page.tsx",
   productLanding: "components/product-story/product-landing.tsx",
+  productStoryPage: "app/story/page.tsx",
+  productStoryArticle: "components/product-story/product-story-article.tsx",
   methodExplorer: "components/product-story/method-explorer.tsx",
   help: "components/dashboard/help-about-view.tsx",
   logout: "app/api/auth/logout/route.ts",
@@ -68,7 +70,19 @@ assert.match(productLanding, /\/api\/auth\/github\/start/);
 assert.match(productLanding, /MethodExplorer/);
 assert.match(productLanding, /PublicProductLanding/);
 assert.match(productLanding, /LoginProductLanding/);
+assert.match(productLanding, /href="\/story"/);
 assert.doesNotMatch(productLanding, /original post|source post|source method/i);
+
+const productStoryPage = read(files.productStoryPage);
+assert.match(productStoryPage, /ProductStoryArticle/);
+assert.match(productStoryPage, /canonical: "https:\/\/codex-poly-bot\.repetere\.net\/story"/);
+
+const productStoryArticle = read(files.productStoryArticle);
+assert.match(productStoryArticle, /MethodExplorer/);
+assert.match(productStoryArticle, /A prediction is not permission to trade/);
+assert.match(productStoryArticle, /What it does not do/);
+assert.match(productStoryArticle, /\/api\/auth\/github\/start/);
+assert.doesNotMatch(productStoryArticle, /guaranteed returns|original post|source post/i);
 
 const methodExplorer = read(files.methodExplorer);
 assert.match(methodExplorer, /@radix-ui\/react-dialog/);

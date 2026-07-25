@@ -82,6 +82,7 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
         </a>
         <nav className="landing-nav" aria-label="Landing page">
           <a href="#method">How it works</a>
+          <a href="/story">Read the story</a>
           <a href="#gates">Safety gates</a>
           <a className="button landing-nav-cta" href="/api/auth/github/start">
             Sign in
@@ -274,7 +275,9 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
       </main>
 
       <footer className="landing-footer">
-        <span>Codex Poly Bot</span>
+        <span>
+          Codex Poly Bot · <a href="/story">Read the product note</a>
+        </span>
         <p>
           Trading involves risk. Automated decisions can be wrong. Access does not remove the
           need for operator review.
