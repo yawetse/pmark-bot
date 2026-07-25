@@ -132,17 +132,18 @@ def test_req_ui_021_01_performance_uses_confirmed_portfolio_contract() -> None:
     assert "setPortfolioError(undefined)" in view
 
 
-def test_req_ui_022_01_settings_fail_closed_and_help_stays_static() -> None:
+def test_req_ui_022_01_settings_fail_closed_and_help_reuses_product_guide() -> None:
     """TST-REQ-UI-022-01: Validates REQ-UI-022.
 
     TST-REQ-UI-023-01: Validates REQ-UI-023.
 
-    Given: common Settings and static Help pages
+    Given: common Settings and the shared product decision guide
     When: configuration is unavailable or operating help is opened
-    Then: writes fail closed, advanced controls stay available, and the five help steps remain ordered
+    Then: writes fail closed, advanced controls stay available, and the five decision stages remain ordered
     """
     settings = _read("components/dashboard/config-controls.tsx")
     help_view = _read("components/dashboard/help-about-view.tsx")
+    method_view = _read("components/product-story/method-explorer.tsx")
 
     for token in (
         "No settings can be changed until a versioned snapshot is available",
@@ -152,14 +153,15 @@ def test_req_ui_022_01_settings_fail_closed_and_help_stays_static() -> None:
     ):
         assert token in settings
     positions = [
-        help_view.index(step)
+        method_view.index(step)
         for step in (
-            "Collect prices",
-            "Find candidates",
-            "Score",
-            "Simulate or submit",
-            "Monitor exits",
+            "Find repeatable behavior",
+            "Remove weak candidates",
+            "Build the probability case",
+            "Form a trade decision",
+            "Size, submit, and monitor",
         )
     ]
     assert positions == sorted(positions)
+    assert "MethodExplorer" in help_view
     assert "Back to Overview" in help_view

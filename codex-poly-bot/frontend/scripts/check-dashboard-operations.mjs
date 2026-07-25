@@ -195,16 +195,22 @@ assert.match(aboutPage, /redirect\("\/dashboard\/help"\)/);
 
 const helpAbout = read("components/dashboard/help-about-view.tsx");
 for (const token of [
-  "How one check works",
-  "One check, five steps",
-  "Collect prices",
-  "Find candidates",
-  "Score",
-  "Simulate or submit",
-  "Monitor exits",
+  "Understand every decision",
+  "Five stages, with the details behind each one",
+  "MethodExplorer",
   "Common questions",
   "Back to Overview",
   "/dashboard/operations",
 ]) {
   assert.match(helpAbout, new RegExp(token));
+}
+const productMethod = read("components/product-story/method-explorer.tsx");
+for (const token of [
+  "Find repeatable behavior",
+  "Remove weak candidates",
+  "Build the probability case",
+  "Form a trade decision",
+  "Size, submit, and monitor",
+]) {
+  assert.match(productMethod, new RegExp(token));
 }

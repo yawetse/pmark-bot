@@ -10,7 +10,11 @@ const files = {
   apiClient: "lib/api.ts",
   dashboard: "app/dashboard/page.tsx",
   settings: "app/dashboard/config/page.tsx",
+  home: "app/page.tsx",
   login: "app/login/page.tsx",
+  productLanding: "components/product-story/product-landing.tsx",
+  methodExplorer: "components/product-story/method-explorer.tsx",
+  help: "components/dashboard/help-about-view.tsx",
   logout: "app/api/auth/logout/route.ts",
 };
 
@@ -53,7 +57,28 @@ assert.match(settings, /LogoutControl/);
 assert.match(settings, /sessionCheck\.session\.username/);
 
 const login = read(files.login);
-assert.match(login, /\/api\/auth\/github\/start/);
+assert.match(login, /LoginProductLanding/);
+
+const home = read(files.home);
+assert.match(home, /PublicProductLanding/);
+assert.doesNotMatch(home, /redirect\("\/dashboard"\)/);
+
+const productLanding = read(files.productLanding);
+assert.match(productLanding, /\/api\/auth\/github\/start/);
+assert.match(productLanding, /MethodExplorer/);
+assert.match(productLanding, /PublicProductLanding/);
+assert.match(productLanding, /LoginProductLanding/);
+assert.doesNotMatch(productLanding, /original post|source post|source method/i);
+
+const methodExplorer = read(files.methodExplorer);
+assert.match(methodExplorer, /@radix-ui\/react-dialog/);
+assert.match(methodExplorer, /Remove weak candidates/);
+assert.match(methodExplorer, /Strategies and algorithms/);
+assert.match(methodExplorer, /Whale copy/);
+assert.match(methodExplorer, /Fractional Kelly/);
+
+const help = read(files.help);
+assert.match(help, /MethodExplorer/);
 
 const logout = read(files.logout);
 assert.match(logout, /clearDashboardSession/);
