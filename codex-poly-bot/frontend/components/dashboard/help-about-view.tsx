@@ -2,44 +2,13 @@ import Link from "next/link";
 import {
   ArrowLeft,
   ArrowRight,
-  BrainCircuit,
   CircleHelp,
-  Database,
-  GitBranch,
-  MonitorCheck,
-  Send,
   ShieldAlert,
 } from "lucide-react";
 
-// REQ: REQ-UI-016, REQ-UI-023
+import { MethodExplorer } from "@/components/product-story/method-explorer";
 
-const STEPS = [
-  {
-    title: "Collect prices",
-    body: "Pull current prices, spreads, liquidity, and market availability from each enabled venue.",
-    icon: Database,
-  },
-  {
-    title: "Find candidates",
-    body: "Apply market filters so only candidates that match the current rules move forward.",
-    icon: GitBranch,
-  },
-  {
-    title: "Score",
-    body: "Ask the configured models to score direction and confidence within the saved budget.",
-    icon: BrainCircuit,
-  },
-  {
-    title: "Simulate or submit",
-    body: "Apply strategy and risk gates, then record a practice order or submit a real one when every gate passes.",
-    icon: Send,
-  },
-  {
-    title: "Monitor exits",
-    body: "Check confirmed positions for stop, target, stale-thesis, and closing rules.",
-    icon: MonitorCheck,
-  },
-] as const;
+// REQ: REQ-UI-016, REQ-UI-023
 
 const FAQS = [
   {
@@ -70,28 +39,21 @@ export function HelpAboutView() {
       <header className="ia-page-heading help-heading">
         <div>
           <p className="section-label">Help</p>
-          <h1 id="help-title">How one check works</h1>
-          <p>The dashboard follows the same five steps for scheduled and manual checks.</p>
+          <h1 id="help-title">Understand every decision</h1>
+          <p>Inspect how Codex Poly Bot finds evidence, narrows candidates, makes decisions, and controls exposure.</p>
         </div>
         <CircleHelp aria-hidden="true" size={30} />
       </header>
 
-      <section className="ia-panel help-process" aria-labelledby="help-process-title">
+      <section className="ia-panel help-process help-method-guide" aria-labelledby="help-process-title">
         <div className="ia-section-heading">
-          <div><p className="section-label">Process</p><h2 id="help-process-title">One check, five steps</h2></div>
+          <div>
+            <p className="section-label">Decision engine</p>
+            <h2 id="help-process-title">Five stages, with the details behind each one</h2>
+            <p>Open a stage for its inputs, strategies, decision rule, output, and operator controls.</p>
+          </div>
         </div>
-        <ol className="help-step-list">
-          {STEPS.map((step, index) => {
-            const Icon = step.icon;
-            return (
-              <li key={step.title}>
-                <div className="help-step-marker"><span>{index + 1}</span><Icon aria-hidden="true" size={17} /></div>
-                <strong>{step.title}</strong>
-                <p>{step.body}</p>
-              </li>
-            );
-          })}
-        </ol>
+        <MethodExplorer />
       </section>
 
       <section className="ia-panel help-faq" aria-labelledby="help-faq-title">
