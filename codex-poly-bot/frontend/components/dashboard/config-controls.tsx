@@ -355,7 +355,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
       {
         path: "trading_loop_interval_seconds",
         kind: "range",
-        fallback: 60,
+        fallback: 900,
         min: 5,
         max: 3600,
         step: 5,
@@ -2095,7 +2095,7 @@ function activeStockProfileIsApplied(settings: Record<string, unknown> | undefin
     trading_profile: ACTIVE_STOCK_PROFILE,
     default_selected_venue: "alpaca",
     "venues.alpaca.enabled": true,
-    trading_loop_interval_seconds: 60,
+    trading_loop_interval_seconds: 900,
     "scanner.alpaca.min_quote_liquidity": 0.5,
     "scanner.alpaca.max_spread": 1,
     "scanner.alpaca.min_history_bars": 2,

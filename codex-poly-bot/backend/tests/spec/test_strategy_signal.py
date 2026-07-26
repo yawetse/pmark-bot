@@ -107,17 +107,17 @@ def test_req_str_001_01_default_scheduler_config_worker_starts_trading_loop_inte
 
     Given: default scheduler config
     When: the worker starts
-    Then: the trading loop interval is 60 seconds
+    Then: the trading loop interval is 15 minutes
     """
-    now = datetime(2026, 5, 10, 12, 1, tzinfo=UTC)
+    now = datetime(2026, 5, 10, 12, 15, tzinfo=UTC)
     decision = schedule_next_trading_loop(
-        last_started_at=now - timedelta(seconds=60),
+        last_started_at=now - timedelta(minutes=15),
         now=now,
     )
 
-    assert default_trading_loop_interval_seconds() == 60
+    assert default_trading_loop_interval_seconds() == 900
     assert decision.should_run
-    assert decision.interval_seconds == 60
+    assert decision.interval_seconds == 900
 
 
 def test_req_str_001_02_scheduler_drift_slow_loop_body_next_loop_scheduled() -> None:
@@ -135,7 +135,7 @@ def test_req_str_001_02_scheduler_drift_slow_loop_body_next_loop_scheduled() -> 
         running=True,
     )
     slow_loop = schedule_next_trading_loop(
-        last_started_at=now - timedelta(seconds=95),
+        last_started_at=now - timedelta(seconds=935),
         now=now,
     )
 

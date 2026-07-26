@@ -80,7 +80,7 @@ class AppSettings:
     ses_identity_email: str = ""
     notification_recipients: dict[str, str] = field(default_factory=dict)
     background_worker_enabled: bool = False
-    worker_heartbeat_interval_seconds: int = 60
+    worker_heartbeat_interval_seconds: int = 900
     portfolio_refresh_interval_seconds: int = 60
 
     @classmethod
@@ -127,7 +127,7 @@ class AppSettings:
             ses_identity_email=os.environ.get("SES_IDENTITY_EMAIL", "").strip(),
             notification_recipients=_notification_recipients_from_env(),
             background_worker_enabled=_bool_env("ENABLE_BACKGROUND_WORKER", False),
-            worker_heartbeat_interval_seconds=_int_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 60),
+            worker_heartbeat_interval_seconds=_int_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 900),
             portfolio_refresh_interval_seconds=_int_env(
                 "PORTFOLIO_REFRESH_INTERVAL_SECONDS",
                 60,

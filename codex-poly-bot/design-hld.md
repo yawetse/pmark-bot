@@ -306,7 +306,7 @@ The first migration seeds shared configuration with these defaults:
 - `alpaca_allowed_asset_classes`: `stocks`, `etfs`.
 - `alpaca_allow_shorting`: `false`.
 - `alpaca_allow_margin`: `false`.
-- `trading_loop_interval_seconds`: `60`.
+- `trading_loop_interval_seconds`: `900`.
 - `max_kelly_fraction`: `0.25`.
 
 Environment-specific overrides are stored as config versions in Postgres. The dashboard edits those config versions rather than editing bootstrap secrets.

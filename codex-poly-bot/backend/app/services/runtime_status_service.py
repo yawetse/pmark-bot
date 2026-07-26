@@ -484,7 +484,7 @@ class RuntimeStatusService:
                 },
                 Venue.ALPACA.value: {"enabled": self.settings.alpaca_enabled},
             },
-            "trading_loop_interval_seconds": 60,
+            "trading_loop_interval_seconds": 900,
             "strategies": {
                 "arbitrage": {"enabled": True, "settings": {}},
                 "convergence": {"enabled": True, "settings": {}},
@@ -1535,7 +1535,7 @@ class RuntimeStatusService:
         now = datetime.now(UTC)
         interval_seconds = _positive_int(
             config_payload.get("trading_loop_interval_seconds"),
-            default=60,
+            default=900,
         )
         worker = worker_status or self.worker_status()
         try:
@@ -2801,7 +2801,7 @@ class RuntimeStatusService:
         worker = worker_status or self.worker_status()
         interval_seconds = _positive_int(
             config_payload.get("trading_loop_interval_seconds"),
-            default=60,
+            default=900,
         )
         resolved_tick_schedule = tick_schedule or self.tick_schedule(
             environment=environment,

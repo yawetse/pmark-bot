@@ -838,7 +838,7 @@ def test_req_obs_005_03_dashboard_summary_visualizes_loop_observability(monkeypa
     loop = payload["loop"]
 
     assert response.status_code == 200
-    assert loop["schedule"]["intervalSeconds"] == 60
+    assert loop["schedule"]["intervalSeconds"] == 900
     assert loop["schedule"]["nextRunAt"]
     assert loop["currentPhase"]["label"] == "Waiting for next scheduler tick"
     assert {stage["id"] for stage in loop["stages"]} >= {

@@ -91,7 +91,7 @@ type MutationState =
 const FALLBACK_SCHEDULE: TickScheduleView = {
   environment: "local",
   generatedAt: new Date(0).toISOString(),
-  intervalSeconds: 60,
+  intervalSeconds: 900,
   lastTickAt: null,
   lastTickStatus: null,
   lastTickRunId: null,
@@ -307,7 +307,7 @@ export function OverviewDashboard() {
             value={formatDateTime(scheduleData.lastTickAt)}
           />
           <OverviewFact
-            detail={`Runs about every ${scheduleData.intervalSeconds ?? 60} seconds.`}
+            detail={`Runs about every ${scheduleData.intervalSeconds ?? 900} seconds.`}
             label="Next check"
             value={formatDateTime(scheduleData.nextTickAt)}
           />
