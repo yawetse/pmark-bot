@@ -47,7 +47,7 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 
 | Control | Default |
 | --- | --- |
-| Trading loop | Every 60 seconds |
+| Trading loop | Every 15 minutes |
 | Minimum stock quote liquidity | 0.5 |
 | Stock scanner maximum spread | $1.00 |
 | Stock confidence | 54% minimum |

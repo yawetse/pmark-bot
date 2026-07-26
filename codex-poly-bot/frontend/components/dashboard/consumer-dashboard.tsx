@@ -170,7 +170,7 @@ const DAILY_WINDOW_MINUTES = 24 * 60;
 const FALLBACK_TICK_SCHEDULE: TickScheduleView = {
   environment: "local",
   generatedAt: new Date(0).toISOString(),
-  intervalSeconds: 60,
+  intervalSeconds: 900,
   lastTickAt: null,
   lastTickStatus: null,
   lastTickRunId: null,
@@ -178,8 +178,8 @@ const FALLBACK_TICK_SCHEDULE: TickScheduleView = {
   lastHeartbeatAt: null,
   heartbeatStatus: null,
   ageSeconds: null,
-  nextTickAt: new Date(Date.now() + 60_000).toISOString(),
-  secondsUntilNextTick: 60,
+  nextTickAt: new Date(Date.now() + 900_000).toISOString(),
+  secondsUntilNextTick: 900,
   due: false,
   source: "waiting for scheduler",
 };

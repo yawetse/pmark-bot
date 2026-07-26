@@ -120,7 +120,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 
 | ID | Priority | EARS Requirement |
 |----|----------|------------------|
-| REQ-STR-001 | P0 | The system shall run the trading loop every 60 seconds by default. |
+| REQ-STR-001 | P0 | The system shall run the trading loop every 15 minutes by default. |
 | REQ-STR-002 | P0 | The system shall allow the trading loop interval to be changed through dashboard configuration. |
 | REQ-STR-003 | P0 | When the trading loop runs, the system shall scan enabled venues for markets that pass deterministic filters before requesting LLM scoring. |
 | REQ-STR-004 | P0 | The system shall implement an arbitrage strategy for related-market price dislocations. |

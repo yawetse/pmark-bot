@@ -16,7 +16,7 @@ def test_active_stock_day_trader_is_safe_bootstrap_profile() -> None:
     assert payload["venues"]["alpaca"]["enabled"] is True
     assert payload["live_enabled"] is False
     assert payload["alpaca"]["account_mode"] == "paper"
-    assert payload["trading_loop_interval_seconds"] == 60
+    assert payload["trading_loop_interval_seconds"] == 900
     assert payload["scanner"]["alpaca"]["min_quote_liquidity"] == "0.5"
     assert payload["scanner"]["alpaca"]["max_spread"] == "1.00"
     assert payload["reasoning"]["max_prompts_per_provider_per_run"] == 4
