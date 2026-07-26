@@ -175,7 +175,7 @@
 
 | Test ID | Type | Validates | Test Description |
 |---------|------|-----------|------------------|
-| TST-REQ-STR-001-01 | Happy | REQ-STR-001 | Given default scheduler config, When the worker starts, Then the trading loop interval is 60 seconds. |
+| TST-REQ-STR-001-01 | Happy | REQ-STR-001 | Given default scheduler config, When the worker starts, Then the trading loop interval is 15 minutes. |
 | TST-REQ-STR-001-02 | Edge | REQ-STR-001 | Given scheduler drift or a slow loop body, When the next loop is scheduled, Then the cadence is measured and logged without overlapping unsafe work. |
 | TST-REQ-STR-002-01 | Happy | REQ-STR-002 | Given an authorized dashboard update to loop interval, When config is saved, Then the new interval is persisted. |
 | TST-REQ-STR-002-02 | Edge | REQ-STR-002 | Given an invalid loop interval, When dashboard config is saved, Then validation rejects the value. |

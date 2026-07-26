@@ -130,7 +130,7 @@ Parameters:
       - "false"
   WorkerHeartbeatIntervalSeconds:
     Type: Number
-    Default: 60
+    Default: 900
     MinValue: 15
   ManageSesIdentity:
     Type: String

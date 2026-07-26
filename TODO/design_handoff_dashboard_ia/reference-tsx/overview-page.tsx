@@ -58,7 +58,7 @@ export function OverviewPage(props: OverviewPageProps) {
       <div className="overview-header">
         <div>
           <h1>Overview</h1>
-          <p className="muted">Updated {updatedAgoLabel} &middot; checks itself every minute</p>
+          <p className="muted">Updated {updatedAgoLabel} &middot; checks itself every 15 minutes</p>
         </div>
       </div>
 

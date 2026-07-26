@@ -521,7 +521,7 @@
 | `alpaca.allow_shorting` | `false` | REQ-ALP-008 |
 | `alpaca.allow_margin` | `false` | REQ-ALP-008 |
 | `alpaca.extended_hours_enabled` | `false` | REQ-ALP-015 |
-| `trading_loop_interval_seconds` | `60` | REQ-STR-001 |
+| `trading_loop_interval_seconds` | `900` | REQ-STR-001 |
 | `max_kelly_fraction` | `0.25` | REQ-EXE-008 |
 
 ### 3.4 Edge Cases & Boundary Conditions

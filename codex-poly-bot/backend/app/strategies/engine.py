@@ -22,7 +22,7 @@ from app.domain import (
 from app.venues.polymarket import VenueCallResult
 
 
-DEFAULT_TRADING_LOOP_INTERVAL_SECONDS = 60
+DEFAULT_TRADING_LOOP_INTERVAL_SECONDS = 900
 
 
 @dataclass(frozen=True)

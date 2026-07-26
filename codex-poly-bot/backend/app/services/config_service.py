@@ -828,7 +828,7 @@ def default_config_payload() -> dict[str, Any]:
             Venue.POLYMARKET_INTERNATIONAL.value: {"enabled": False},
             Venue.ALPACA.value: {"enabled": True},
         },
-        "trading_loop_interval_seconds": 60,
+        "trading_loop_interval_seconds": 900,
         "strategies": {
             "arbitrage": {"enabled": True, "settings": {}},
             "convergence": {"enabled": True, "settings": {}},
