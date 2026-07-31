@@ -102,6 +102,10 @@ def test_req_ui_020_01_activity_uses_one_completed_run_contract() -> None:
     assert "setLoadErrors([])" in view
     assert "activity-stage-status" in view
     assert "Why no trade:" in view
+    assert "View details" in view
+    assert "operations/runs/" in view
+    assert "activity-detail-dialog" in view
+    assert "DashboardDataGrid" in view
     assert "operations/summary?include_runs=true" in page
     assert "current?.pipelineRuns ?? []" in view
 

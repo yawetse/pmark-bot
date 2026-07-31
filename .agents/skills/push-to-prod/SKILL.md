@@ -105,6 +105,16 @@ After deployment, collect evidence without printing secret values:
 - SES identity verification status for `asyncdoc.net`.
 - ACM certificate status for the repetere.net hostnames.
 
+## Goal Completion Handoff
+
+For every completed push-to-production goal:
+
+1. Keep the goal active until the production deployment and every required evidence check pass.
+2. Add the final commit, pull requests, GitHub Actions, CloudFormation, ECS, HTTPS, SES, ACM, and screenshot evidence to the tracking GitHub issue.
+3. Email the authenticated user with the same evidence. For Gmail self-delivery, send directly to `me`, then verify the message in Sent.
+4. Archive the current Codex thread only after the evidence email is confirmed sent.
+5. If email delivery or thread archival is unavailable, keep the goal active and report the blocker. Never archive before a failed or unverified delivery.
+
 ## Publish Rules
 
 Stage only files related to this deployment. Do not stage unrelated dirty files from other bot projects.
