@@ -1,24 +1,38 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import Link from "next/link";
 import {
   ArrowRight,
   CheckCircle2,
+  ChevronRight,
   CircleAlert,
   Database,
   GitBranch,
+  LoaderCircle,
   ShieldCheck,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
+import {
+  DashboardDataGrid,
+  type DashboardGridColumn,
+} from "@/components/dashboard/data-grid";
 import type { OperationsSummaryView } from "@/components/dashboard/operations-view";
+import {
+  buildActivityStageDetail,
+  type ActivityDetailRow,
+  type ActivityRunDetail,
+} from "@/lib/dashboard-activity-detail";
 import {
   buildActivityFunnel,
   latestCompletedActivityRun,
   latestTradeOutcome,
   type ActivityStageKey,
 } from "@/lib/dashboard-activity-view-model";
+import { dashboardApi } from "@/lib/api";
 import { useDashboardRealtime, type DashboardRealtimeSnapshot } from "@/lib/use-dashboard-realtime";
 
 // REQ: REQ-UI-016, REQ-UI-020, REQ-UI-025
@@ -59,6 +73,50 @@ export function ActivityView({
   const realtime = useDashboardRealtime({ onSnapshot });
   const funnel = useMemo(() => buildActivityFunnel(operations), [operations]);
   const latestRun = latestCompletedActivityRun(operations);
+  const [selectedStageKey, setSelectedStageKey] = useState<ActivityStageKey | null>(null);
+  const [detailState, setDetailState] = useState<ActivityDetailLoadState>({ status: "idle" });
+  const selectedStage = useMemo(() => {
+    const sourceFunnel =
+      detailState.status === "ready"
+        ? buildActivityFunnel({ pipelineRuns: [detailState.detail.run] })
+        : funnel;
+    return sourceFunnel.find((stage) => stage.key === selectedStageKey);
+  }, [detailState, funnel, selectedStageKey]);
+  const selectedDetail = useMemo(
+    () =>
+      selectedStage && detailState.status === "ready"
+        ? buildActivityStageDetail(selectedStage, detailState.detail)
+        : null,
+    [detailState, selectedStage],
+  );
+
+  async function openStage(key: ActivityStageKey) {
+    setSelectedStageKey(key);
+    if (!latestRun) {
+      setDetailState({
+        status: "error",
+        runId: null,
+        message: "No completed check is available yet. Run a check and try again.",
+      });
+      return;
+    }
+    if (detailState.status === "ready" && detailState.runId === latestRun.id) {
+      return;
+    }
+    setDetailState({ status: "loading", runId: latestRun.id });
+    const result = await dashboardApi<ActivityRunDetail>(
+      `operations/runs/${encodeURIComponent(latestRun.id)}`,
+    );
+    setDetailState(
+      result.ok
+        ? { status: "ready", runId: latestRun.id, detail: result.data }
+        : {
+            status: "error",
+            runId: latestRun.id,
+            message: result.message,
+          },
+    );
+  }
 
   return (
     <div className="ia-page activity-page" aria-labelledby="activity-title">
@@ -97,16 +155,27 @@ export function ActivityView({
           {funnel.map((stage, index) => {
             const Icon = stageIcon(stage.key);
             return (
-              <article className={`activity-stage ${stage.tone}`} key={stage.label}>
-                <div className="activity-stage-top">
+              <button
+                aria-label={`View details for ${stage.label.toLowerCase()}: ${
+                  stage.value === null ? "unavailable" : stage.value.toLocaleString()
+                }`}
+                className={`activity-stage ${stage.tone}`}
+                key={stage.label}
+                type="button"
+                onClick={() => void openStage(stage.key)}
+              >
+                <span className="activity-stage-top">
                   <span className="activity-stage-index">{index + 1}</span>
                   <Icon aria-hidden="true" size={18} />
-                </div>
-                <span>{stage.label}</span>
+                </span>
+                <span className="activity-stage-label">{stage.label}</span>
                 <strong>{stage.value === null ? "Unavailable" : stage.value.toLocaleString()}</strong>
                 <span className={`activity-stage-status ${stage.tone}`}>{stage.statusLabel}</span>
-                <p>{stage.detail}</p>
-              </article>
+                <span className="activity-stage-description">{stage.detail}</span>
+                <span className="activity-stage-open">
+                  View details <ChevronRight aria-hidden="true" size={14} />
+                </span>
+              </button>
             );
           })}
         </div>
@@ -148,8 +217,173 @@ export function ActivityView({
         <Link href="/dashboard/data"><Database aria-hidden="true" size={17} /><span><strong>Market data</strong><small>Review venue inputs and freshness.</small></span><ArrowRight aria-hidden="true" size={15} /></Link>
         <Link href="/dashboard/operations"><ShieldCheck aria-hidden="true" size={17} /><span><strong>Detailed operations</strong><small>Run checks, review orders, or use the emergency stop.</small></span><ArrowRight aria-hidden="true" size={15} /></Link>
       </div>
+
+      <Dialog.Root
+        open={selectedStageKey !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedStageKey(null);
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content
+            aria-describedby="activity-detail-summary"
+            className="dialog-content activity-detail-dialog"
+          >
+            <div className="activity-detail-header">
+              <div>
+                <p className="section-label">Latest check details</p>
+                <Dialog.Title>
+                  {selectedDetail?.title ?? selectedStage?.label ?? "Activity details"}
+                </Dialog.Title>
+                <Dialog.Description id="activity-detail-summary">
+                  {selectedDetail?.summary ??
+                    (detailState.status === "loading"
+                      ? "Loading the records behind this count."
+                      : "Review the records behind this activity count.")}
+                </Dialog.Description>
+              </div>
+              <Dialog.Close
+                aria-label="Close activity details"
+                className="activity-detail-close"
+                type="button"
+              >
+                <X aria-hidden="true" size={18} />
+              </Dialog.Close>
+            </div>
+
+            {detailState.status === "loading" ? (
+              <p className="activity-detail-loading" role="status">
+                <LoaderCircle aria-hidden="true" size={18} />
+                Loading persisted run details
+              </p>
+            ) : null}
+
+            {detailState.status === "error" ? (
+              <p className="ia-degraded-message" role="alert">
+                <CircleAlert aria-hidden="true" size={16} />
+                Details could not be loaded. {detailState.message}
+              </p>
+            ) : null}
+
+            {selectedDetail ? (
+              <>
+                <p className="activity-detail-explanation">
+                  <strong>Recorded result:</strong> {selectedDetail.explanation}
+                </p>
+                {selectedDetail.recordCountNote ? (
+                  <p className="activity-detail-record-note" role="status">
+                    {selectedDetail.recordCountNote}
+                  </p>
+                ) : null}
+                <DashboardDataGrid
+                  columns={activityDetailColumns(selectedDetail.key)}
+                  description={activityGridDescription(selectedDetail.key)}
+                  emptyBody={selectedDetail.emptyBody}
+                  emptyTitle={selectedDetail.emptyTitle}
+                  getRowId={(row) => row.id}
+                  height={520}
+                  pageSize={25}
+                  rows={selectedDetail.rows}
+                  searchPlaceholder={activitySearchPlaceholder(selectedDetail.key)}
+                  title={selectedDetail.gridTitle}
+                />
+              </>
+            ) : null}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
+}
+
+type ActivityDetailLoadState =
+  | { status: "idle" }
+  | { status: "loading"; runId: string }
+  | { status: "ready"; runId: string; detail: ActivityRunDetail }
+  | { status: "error"; runId: string | null; message: string };
+
+function activityDetailColumns(
+  key: ActivityStageKey,
+): DashboardGridColumn<ActivityDetailRow>[] {
+  const common: DashboardGridColumn<ActivityDetailRow>[] = [
+    { field: "venue", headerName: "Venue", minWidth: 150 },
+    { field: "name", headerName: key === "scanned" || key === "promising" ? "Market" : "Instrument", minWidth: 250 },
+  ];
+  if (key === "scanned") {
+    return [
+      ...common,
+      { field: "status", headerName: "State", minWidth: 120 },
+      { field: "price", headerName: "Price", minWidth: 110 },
+      { field: "liquidity", headerName: "Liquidity", minWidth: 130 },
+      { field: "spread", headerName: "Spread", minWidth: 110 },
+      { field: "volume", headerName: "Volume", minWidth: 120 },
+      { field: "outcome", headerName: "Outcome", minWidth: 160 },
+    ];
+  }
+  if (key === "promising") {
+    return [
+      ...common,
+      { field: "status", headerName: "State", minWidth: 120 },
+      { field: "price", headerName: "Price", minWidth: 110 },
+      { field: "liquidity", headerName: "Liquidity", minWidth: 130 },
+      { field: "spread", headerName: "Spread", minWidth: 110 },
+      { field: "strategies", headerName: "Strategies", minWidth: 210 },
+    ];
+  }
+  if (key === "scored") {
+    return [
+      ...common,
+      { field: "provider", headerName: "Model", minWidth: 130 },
+      { field: "signal", headerName: "Signal", minWidth: 130 },
+      { field: "strength", headerName: "Signal score", minWidth: 150 },
+      { field: "confidence", headerName: "Confidence score", minWidth: 170 },
+      { field: "probability", headerName: "Model probability", minWidth: 170 },
+      { field: "thesis", headerName: "Model explanation", minWidth: 320 },
+      { field: "reason", headerName: "Stop reason", minWidth: 220 },
+    ];
+  }
+  if (key === "approved") {
+    return [
+      ...common,
+      { field: "provider", headerName: "Model", minWidth: 130 },
+      { field: "status", headerName: "Decision", minWidth: 130 },
+      { field: "side", headerName: "Side", minWidth: 100 },
+      { field: "size", headerName: "Size multiplier", minWidth: 140 },
+      { field: "strategies", headerName: "Strategies", minWidth: 220 },
+      { field: "reason", headerName: "Stop reason", minWidth: 240 },
+    ];
+  }
+  return [
+    ...common,
+    { field: "provider", headerName: "Model", minWidth: 130 },
+    { field: "status", headerName: "Order result", minWidth: 140 },
+    { field: "side", headerName: "Side", minWidth: 100 },
+    { field: "orderType", headerName: "Order type", minWidth: 120 },
+    { field: "notional", headerName: "Notional USD", minWidth: 140 },
+    { field: "reason", headerName: "Why it stopped", minWidth: 320 },
+    { field: "venueOrder", headerName: "Venue order", minWidth: 180 },
+  ];
+}
+
+function activityGridDescription(key: ActivityStageKey): string {
+  return {
+    scanned: "Every priced market record stored at the start of this check.",
+    promising: "The scanner candidates that passed deterministic market filters.",
+    scored: "Each usable model output, including its signal, confidence, and estimated probability.",
+    approved: "The scored opportunities approved before order sizing and execution checks.",
+    acted: "Every order intent, including refused, simulated, and submitted outcomes.",
+  }[key];
+}
+
+function activitySearchPlaceholder(key: ActivityStageKey): string {
+  return {
+    scanned: "Filter the scanned markets",
+    promising: "Filter the accepted markets",
+    scored: "Filter model scores",
+    approved: "Filter strategy approvals",
+    acted: "Filter order decisions",
+  }[key];
 }
 
 function stageIcon(key: ActivityStageKey) {
