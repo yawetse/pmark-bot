@@ -7,6 +7,7 @@ import {
   latestTradeOutcome,
 } from "../lib/dashboard-activity-view-model.ts";
 import {
+  buildPerformanceAccountBalances,
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
 } from "../lib/dashboard-performance-view-model.ts";
@@ -87,3 +88,56 @@ assert.deepEqual(
   [["Alpaca", 5, null], ["Polymarket US", 2, null]],
 );
 assert.equal(buildPerformanceHeadline(undefined).tradeCount, null);
+
+// TST-REQ-UI-013-06: account balances prefer buying power and fall back to cash.
+
+const accountBalances = buildPerformanceAccountBalances({
+  accounts: [
+    {
+      venue: "alpaca",
+      accountRef: "alpaca-live",
+      accountMode: "live",
+      providers: ["openai"],
+      accountValueUsd: "120.00",
+      cashUsd: "75.00",
+      buyingPowerUsd: "100.00",
+      status: "ready",
+      lastUpdatedAt: "2026-07-31T12:00:00Z",
+    },
+    {
+      venue: "polymarket_us",
+      accountRef: "polymarket-live",
+      accountMode: "live",
+      providers: ["openai", "claude"],
+      accountValueUsd: "80.00",
+      cashUsd: "45.00",
+      buyingPowerUsd: null,
+      status: "stale",
+      lastUpdatedAt: "2026-07-31T11:55:00Z",
+    },
+    {
+      venue: "alpaca",
+      accountRef: "alpaca-paper",
+      accountMode: "paper",
+      providers: ["claude"],
+      accountValueUsd: null,
+      cashUsd: null,
+      buyingPowerUsd: null,
+      status: "unavailable",
+      lastUpdatedAt: null,
+    },
+  ],
+});
+
+assert.deepEqual(
+  accountBalances.map((account) => [
+    account.availableToTradeUsd,
+    account.availableToTradeSource,
+    account.status,
+  ]),
+  [
+    ["100.00", "Buying power", "ready"],
+    ["45.00", "Cash balance", "stale"],
+    [null, null, "unavailable"],
+  ],
+);

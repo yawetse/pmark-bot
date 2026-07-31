@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import type { VenuePortfolioView } from "@/components/dashboard/venue-portfolio-panel";
 import {
+  buildPerformanceAccountBalances,
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
 } from "@/lib/dashboard-performance-view-model";
@@ -31,6 +32,7 @@ export function PerformanceView({
   }, []);
   useDashboardRealtime({ onSnapshot });
   const headline = useMemo(() => buildPerformanceHeadline(currentPortfolio), [currentPortfolio]);
+  const accountBalances = useMemo(() => buildPerformanceAccountBalances(currentPortfolio), [currentPortfolio]);
   const marketRows = useMemo(() => buildPerformanceVenueRows(currentPortfolio), [currentPortfolio]);
 
   return (
@@ -55,6 +57,47 @@ export function PerformanceView({
         <PerformanceMetric label="Open positions" value={formatCount(currentPortfolio?.overall.openPositions)} detail="Venue-confirmed holdings" />
         <PerformanceMetric label="Win rate" value={formatRate(headline.winRate)} detail={headline.winRateDetail} />
         <PerformanceMetric label="Trades" value={formatCount(headline.tradeCount)} detail="Venue-confirmed fills" />
+      </section>
+
+      <section className="ia-panel performance-account-balances" aria-labelledby="account-balances-title">
+        <div className="ia-section-heading">
+          <div>
+            <p className="section-label">Trading capacity</p>
+            <h2 id="account-balances-title">Available to trade</h2>
+          </div>
+          <span>{accountBalances.length} confirmed account{accountBalances.length === 1 ? "" : "s"}</span>
+        </div>
+        <p className="performance-account-note">
+          Equity includes cash and open positions. Available to trade uses current buying power when the venue provides it, or cash otherwise.
+        </p>
+        <div className="performance-table-wrap">
+          <table className="performance-table performance-account-table">
+            <thead>
+              <tr><th>Account</th><th>Venue</th><th>Equity</th><th>Cash</th><th>Available to trade</th><th>Status</th><th>Updated</th></tr>
+            </thead>
+            <tbody>
+              {accountBalances.length ? accountBalances.map((account) => (
+                <tr key={account.key}>
+                  <th scope="row">
+                    <strong>{providerLabel(account.providers)}</strong>
+                    <span>{account.accountMode} account</span>
+                  </th>
+                  <td>{venueLabel(account.venue)}</td>
+                  <td>{formatUsd(account.equityUsd)}</td>
+                  <td>{formatUsd(account.cashUsd)}</td>
+                  <td className="performance-available-balance">
+                    <strong>{formatUsd(account.availableToTradeUsd)}</strong>
+                    <span>{account.availableToTradeSource ?? "No venue balance"}</span>
+                  </td>
+                  <td><span className={`status ${statusTone(account.status)}`}>{account.status}</span></td>
+                  <td>{formatDate(account.lastUpdatedAt)}</td>
+                </tr>
+              )) : (
+                <tr><td className="performance-empty-cell" colSpan={7}>No venue-confirmed account balances are available.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="ia-panel" aria-labelledby="by-market-title">
@@ -105,4 +148,6 @@ function formatUsd(value: string | null | undefined): string { if (value === nul
 function formatCount(value: number | null | undefined): string { return value === null || value === undefined ? "Unavailable" : value.toLocaleString(); }
 function pnlTone(value: string | null | undefined): string { const number = Number(value); return !Number.isFinite(number) || number === 0 ? "" : number > 0 ? "positive" : "negative"; }
 function venueLabel(value: string): string { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function providerLabel(providers: string[]): string { return providers.map((provider) => provider === "openai" ? "OpenAI" : provider === "claude" ? "Claude" : provider).join(" + "); }
+function statusTone(status: "ready" | "stale" | "unavailable"): string { return status === "ready" ? "ok" : status === "stale" ? "waiting" : "blocked"; }
 function formatDate(value: string | null | undefined): string { if (!value) return "Unavailable"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "Unavailable" : new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date); }

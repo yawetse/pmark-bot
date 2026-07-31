@@ -311,6 +311,8 @@
 | TST-REQ-UI-013-03 | Focus | REQ-UI-013 | Given the main dashboard frontend is checked, When dashboard contract tests run, Then the actual portfolio, venue breakdown, open holdings, confirmed fills, freshness, and unavailable states are present. |
 | TST-REQ-UI-013-04 | Focus | REQ-UI-013 | Given configured venue credentials and provider responses, When portfolio sources refresh, Then current Polymarket US decimal positions, confirmed activity, settlements, and Alpaca account data are normalized without exposing credentials. |
 | TST-REQ-UI-013-05 | Edge | REQ-UI-013 | Given venue accounts refresh in adjacent minute buckets, When portfolio history is produced, Then each point carries forward the latest confirmed value for accounts that did not refresh in that minute. |
+| TST-REQ-UI-013-06 | Focus | REQ-UI-013 | Given venue-confirmed account snapshots include equity, cash, and optional buying power, When Performance renders account balances, Then each model-provider account shows equity, cash, and available-to-trade balance using buying power when present and cash otherwise, while missing values remain unavailable. |
+| TST-REQ-UI-013-07 | Edge | REQ-UI-013 | Given Polymarket US returns cash without a buying-power field, When the venue account snapshot is normalized, Then buying power remains unavailable so the dashboard can use the confirmed cash balance instead of showing a fabricated zero. |
 
 ### Cross-Market Comparison Analytics
 

@@ -5951,6 +5951,44 @@ th {
   margin-top: 3px;
 }
 
+.performance-account-balances {
+  display: grid;
+  gap: 14px;
+}
+
+.performance-account-balances .ia-section-heading > span,
+.performance-account-note,
+.performance-available-balance span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.performance-account-note {
+  line-height: 1.5;
+  margin: -2px 0 0;
+}
+
+.performance-account-table {
+  min-width: 860px;
+}
+
+.performance-account-table tbody th {
+  min-width: 160px;
+}
+
+.performance-available-balance strong,
+.performance-available-balance span {
+  display: block;
+}
+
+.performance-available-balance strong {
+  font-size: 15px;
+}
+
+.performance-available-balance span {
+  margin-top: 3px;
+}
+
 .performance-empty-cell {
   color: var(--muted);
   padding: 26px !important;
@@ -7082,7 +7120,7 @@ th {
   align-items: center;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(120px, 1fr) repeat(2, minmax(76px, 0.65fr)) auto;
+  grid-template-columns: minmax(120px, 1fr) repeat(4, minmax(76px, 0.65fr)) auto;
   min-width: 0;
   padding: 9px 0 9px 12px;
 }
