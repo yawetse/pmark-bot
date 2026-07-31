@@ -2510,31 +2510,37 @@ class RuntimeStatusService:
         """Return one pipeline run and the records created by each step."""
 
         try:
-            run_rows = [
-                row
-                for row in self.registry.state.rows(
-                    self.PIPELINE_RUNS_TABLE,
-                    limit=DASHBOARD_PIPELINE_RUN_ROW_LIMIT,
-                    newest_first=True,
-                    filters={"environment": environment.value},
-                )
-                if row["environment"] == environment.value and row["id"] == run_id
-            ]
-            step_rows = [
-                row
-                for row in self.registry.state.rows(
-                    self.PIPELINE_STEPS_TABLE,
-                    limit=DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
-                    newest_first=True,
-                    filters={"environment": environment.value},
-                )
-                if row["environment"] == environment.value and row["run_id"] == run_id
-            ]
+            run_rows = self.registry.state.rows(
+                self.PIPELINE_RUNS_TABLE,
+                limit=1,
+                newest_first=True,
+                filters={"environment": environment.value, "id": run_id},
+            )
+            step_rows = self.registry.state.rows(
+                self.PIPELINE_STEPS_TABLE,
+                limit=DASHBOARD_PIPELINE_STEP_ROW_LIMIT,
+                newest_first=True,
+                filters={"environment": environment.value, "run_id": run_id},
+            )
         except PersistenceUnavailableError:
             return None
         if not run_rows:
             return None
         step_rows.sort(key=lambda step: step.get("step_order", 0))
+        record_ids = list(
+            dict.fromkeys(
+                record_id
+                for step in step_rows
+                for record_id in step.get("record_ids", [])
+            )
+        )
+        hydrated_records = self._pipeline_step_records(
+            environment=environment,
+            record_ids=record_ids,
+        )
+        records_by_id: dict[str, list[dict[str, Any]]] = {}
+        for record in hydrated_records:
+            records_by_id.setdefault(record["id"], []).append(record)
         return {
             "environment": environment.value,
             "run": self._pipeline_run_payload(run_rows[0], step_rows),
@@ -2544,10 +2550,11 @@ class RuntimeStatusService:
                     "stepLabel": step["label"],
                     "recordIds": step.get("record_ids", []),
                     "recordCount": len(step.get("record_ids", [])),
-                    "items": self._pipeline_step_records(
-                        environment=environment,
-                        record_ids=step.get("record_ids", []),
-                    ),
+                    "items": [
+                        record
+                        for record_id in step.get("record_ids", [])
+                        for record in records_by_id.get(record_id, [])
+                    ],
                 }
                 for step in step_rows
             ],
@@ -3749,6 +3756,8 @@ class RuntimeStatusService:
                     table,
                     limit=DASHBOARD_PIPELINE_RECORD_ROW_LIMIT,
                     newest_first=True,
+                    filters={"environment": environment.value},
+                    ids=wanted,
                 )
             except PersistenceUnavailableError:
                 continue
