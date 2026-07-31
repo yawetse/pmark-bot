@@ -118,9 +118,13 @@ class ProviderBackedVenuePortfolioSource:
                 (_decimal_or_zero(_field(row, "currentBalance")) for row in usd_balances),
                 Decimal("0"),
             )
-            buying_power = sum(
-                (_decimal_or_zero(_field(row, "buyingPower")) for row in usd_balances),
-                Decimal("0"),
+            buying_power_values = [
+                value
+                for row in usd_balances
+                if (value := _decimal_or_none(_field(row, "buyingPower"))) is not None
+            ]
+            buying_power = (
+                sum(buying_power_values, Decimal("0")) if buying_power_values else None
             )
             position_value = sum(
                 (_decimal_or_zero(row.get("marketValueUsd")) for row in positions), Decimal("0")

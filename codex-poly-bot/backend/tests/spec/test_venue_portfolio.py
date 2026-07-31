@@ -509,3 +509,41 @@ def test_req_cmp_005_03_provider_source_uses_venue_account_identity() -> None:
 
     assert [row["status"] for row in accounts] == ["ready", "ready"]
     assert accounts[0]["accountRef"] == accounts[1]["accountRef"]
+
+
+def test_req_ui_013_07_polymarket_missing_buying_power_preserves_cash_fallback() -> None:
+    """TST-REQ-UI-013-07: missing buying power remains absent so cash can be used."""
+
+    class CashOnlyAccount:
+        def balances(self) -> dict:
+            return {
+                "balances": [
+                    {
+                        "currency": "USD",
+                        "currentBalance": "42.50",
+                        "assetNotional": "30.00",
+                    }
+                ]
+            }
+
+    def client_factory(_env: dict) -> _FakePolymarketClient:
+        client = _FakePolymarketClient()
+        client.account = CashOnlyAccount()
+        return client
+
+    source = ProviderBackedVenuePortfolioSource(
+        {
+            "POLYMARKET_OPENAI_KEY_ID": "pm-openai-key",
+            "POLYMARKET_OPENAI_SECRET_KEY": "pm-openai-secret",
+        },
+        polymarket_client_factory=client_factory,
+    )
+
+    account = next(
+        row
+        for row in source.fetch_accounts(Environment.PRODUCTION)
+        if row["venue"] == "polymarket_us" and row["provider"] == "openai"
+    )
+
+    assert account["cashUsd"] == 42.5
+    assert account["buyingPowerUsd"] is None
