@@ -75,6 +75,7 @@ No external UI package is added. The redesign uses the installed React, Next.js,
 - [x] Derive one Overview state from real data with `live > attention > clear` precedence.
 - [x] Remove prototype controls and duplicate detail sections from Overview.
 - [x] Add focused Activity funnel and recent check log.
+- [x] Make each Activity funnel count open the exact persisted market, score, strategy, or order records behind the latest run.
 - [x] Add confirmed Performance metrics and by-market summary.
 - [x] Put common Settings controls first and preserve advanced controls.
 - [x] Replace Help with five ordered steps and concise FAQs.

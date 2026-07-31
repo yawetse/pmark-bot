@@ -13,13 +13,15 @@ export type ActivityStageView = {
   statusLabel: "Passed" | "Stopped" | "No records" | "Unavailable";
 };
 
-export function latestCompletedActivityRun(operations?: OperationsSummaryView) {
+type ActivityOperationsView = Pick<OperationsSummaryView, "pipelineRuns">;
+
+export function latestCompletedActivityRun(operations?: ActivityOperationsView) {
   return operations?.pipelineRuns.find(
     (run) => Boolean(run.completedAt) || isTerminalStatus(run.status),
   );
 }
 
-export function buildActivityFunnel(operations?: OperationsSummaryView): ActivityStageView[] {
+export function buildActivityFunnel(operations?: ActivityOperationsView): ActivityStageView[] {
   const run = latestCompletedActivityRun(operations);
   const metadata = run?.metadata;
   const scanned = metric(metadata, "candidateCount");
@@ -71,7 +73,7 @@ export function buildActivityFunnel(operations?: OperationsSummaryView): Activit
   ];
 }
 
-export function latestTradeOutcome(operations?: OperationsSummaryView): string {
+export function latestTradeOutcome(operations?: ActivityOperationsView): string {
   const run = latestCompletedActivityRun(operations);
   const metadata = run?.metadata;
   const accepted = metric(metadata, "scannerAcceptedCount");

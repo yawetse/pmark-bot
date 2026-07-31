@@ -7,6 +7,9 @@ import {
   latestTradeOutcome,
 } from "../lib/dashboard-activity-view-model.ts";
 import {
+  buildActivityStageDetail,
+} from "../lib/dashboard-activity-detail.ts";
+import {
   buildPerformanceAccountBalances,
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
@@ -55,6 +58,150 @@ Object.assign(refusedOrders.pipelineRuns[0].metadata, {
   orderRefusedCount: 3,
 });
 assert.match(latestTradeOutcome(refusedOrders), /3 order intents were refused/);
+
+// TST-REQ-UI-020-03: each Activity count resolves to the persisted records behind it.
+
+const drilldownOperations = structuredClone(operations);
+Object.assign(drilldownOperations.pipelineRuns[0].metadata, {
+  candidateCount: 717,
+  scannerAcceptedCount: 9,
+  reasoningScoredCount: 8,
+  strategyApprovedCount: 8,
+  orderIntentCount: 8,
+  orderRefusedCount: 8,
+  orderSubmittedCount: 0,
+  orderSimulatedCount: 0,
+});
+
+const runDetail = {
+  environment: "development",
+  run: drilldownOperations.pipelineRuns[0],
+  records: [
+    {
+      stepKey: "data_fetch",
+      stepLabel: "Collect prices",
+      recordIds: ["pull-1"],
+      recordCount: 1,
+      items: [
+        {
+          table: "shared.dashboard_market_data_pulls",
+          id: "pull-1",
+          record: {
+            id: "pull-1",
+            venue: "polymarket_us",
+            candidates: Array.from({ length: 717 }, (_, index) => ({
+              id: `market-${index + 1}`,
+              venue: "polymarket_us",
+              market: `Market ${index + 1}`,
+              state: "priced",
+              price: "0.50",
+            })),
+          },
+        },
+      ],
+    },
+    {
+      stepKey: "scanner",
+      stepLabel: "Find candidates",
+      recordIds: ["scanner-1", "candidate-1", "candidate-2"],
+      recordCount: 3,
+      items: [
+        ...Array.from({ length: 9 }, (_, index) => ({
+          table: "shared.scanner_candidates",
+          id: `candidate-${index + 1}`,
+          record: {
+            id: `candidate-${index + 1}`,
+            venue: "polymarket_us",
+            instrument_id: `market-${index + 1}`,
+            display_name: `Accepted market ${index + 1}`,
+            status: "accepted",
+          },
+        })),
+        {
+          table: "shared.scanner_candidates",
+          id: "candidate-rejected",
+          record: {
+            id: "candidate-rejected",
+            venue: "polymarket_us",
+            instrument_id: "market-rejected",
+            display_name: "Rejected market",
+            status: "rejected",
+            refusal_reason: "spread too wide",
+          },
+        },
+      ],
+    },
+    {
+      stepKey: "brain",
+      stepLabel: "Score trade",
+      recordIds: ["reasoning-1", "score-1", "score-2", "score-3"],
+      recordCount: 4,
+      items: Array.from({ length: 8 }, (_, index) => ({
+        table: "shared.reasoning_outputs",
+        id: `score-${index + 1}`,
+        record: {
+          id: `score-${index + 1}`,
+          venue: "polymarket_us",
+          instrument_id: `market-${index + 1}`,
+          model_provider: index % 2 ? "claude" : "openai",
+          status: "scored",
+          directional_signal: "buy",
+          signal_strength: "0.22",
+          confidence: "0.71",
+          estimated_probability: "0.64",
+          output_thesis: `Score ${index + 1} thesis`,
+        },
+      })),
+    },
+    {
+      stepKey: "execution",
+      stepLabel: "Handle order",
+      recordIds: ["strategy-1", "approval-1", "approval-2", "intent-1", "intent-2", "intent-3"],
+      recordCount: 6,
+      items: [
+        ...Array.from({ length: 8 }, (_, index) => ({
+          table: "shared.strategy_consensus_outputs",
+          id: `approval-${index + 1}`,
+          record: {
+            id: `approval-${index + 1}`,
+            venue: "polymarket_us",
+            instrument_id: `market-${index + 1}`,
+            model_provider: "openai",
+            status: "approved",
+            side: "buy",
+          },
+        })),
+        ...Array.from({ length: 8 }, (_, index) => ({
+          table: "shared.order_intents",
+          id: `intent-${index + 1}`,
+          record: {
+            id: `intent-${index + 1}`,
+            venue: "polymarket_us",
+            instrument_id: `market-${index + 1}`,
+            model_provider: "openai",
+            status: "refused",
+            side: "buy",
+            refusal_reason: `Execution gate ${index + 1}`,
+          },
+        })),
+      ],
+    },
+  ],
+};
+
+const drilldownFunnel = buildActivityFunnel(drilldownOperations);
+const detailStages = new Map(drilldownFunnel.map((stage) => [stage.key, stage]));
+assert.equal(buildActivityStageDetail(detailStages.get("scanned"), runDetail).rows.length, 717);
+assert.equal(buildActivityStageDetail(detailStages.get("promising"), runDetail).rows.length, 9);
+const scoreDetail = buildActivityStageDetail(detailStages.get("scored"), runDetail);
+assert.equal(scoreDetail.rows.length, 8);
+assert.equal(scoreDetail.rows[0].confidence, "0.71 (71%)");
+assert.equal(scoreDetail.rows[0].probability, "0.64 (64%)");
+assert.equal(buildActivityStageDetail(detailStages.get("approved"), runDetail).rows.length, 8);
+const orderDetail = buildActivityStageDetail(detailStages.get("acted"), runDetail);
+assert.equal(orderDetail.expectedCount, 0);
+assert.equal(orderDetail.rows.length, 8);
+assert.equal(orderDetail.rows[0].reason, "Execution gate 1");
 
 // TST-REQ-UI-021-02: trade totals come only from venue-confirmed portfolio fills.
 
