@@ -1306,10 +1306,11 @@
 | AC ID | EARS Criterion |
 |-------|----------------|
 | AC-033-01 | When venue portfolio reconciliation runs, the system shall persist sanitized balances, positions, and confirmed fills by environment, venue, provider, and account reference. |
-| AC-033-02 | When the main dashboard loads, the system shall show actual account value, realized P&L, unrealized P&L, open holdings, and recent confirmed fills for Polymarket US and Alpaca. |
+| AC-033-02 | When the main dashboard loads, the system shall show actual account value, cash, available-to-trade balance, realized P&L, unrealized P&L, open holdings, and recent confirmed fills for each Polymarket US and Alpaca model-provider account. |
 | AC-033-03 | When multiple model credentials resolve to one venue account, the system shall count the account once and retain OpenAI and Claude attribution. |
 | AC-033-04 | If venue data is missing or a refresh fails, then the dashboard shall show unavailable or stale status without replacing missing money values with zero. |
 | AC-033-05 | When portfolio totals are calculated, the system shall exclude submitted, unfilled, and simulated orders and keep AI and AWS costs in separate economics views. |
+| AC-033-06 | When an account provides buying power, the dashboard shall use it as available to trade; otherwise it shall use venue-confirmed cash, and if neither value exists it shall show unavailable rather than zero. |
 
 **Definition of Done:**
 - [x] Portfolio, migration, API, and frontend contract tests pass
@@ -1455,7 +1456,7 @@
 | AC ID | EARS Criterion |
 |-------|----------------|
 | AC-038-01 | When Activity loads, it shall show the latest funnel, update time, and recent check log from persisted or realtime operations data. |
-| AC-038-02 | When Performance loads, it shall show confirmed aggregate metrics and a by-market summary without counting simulated or unfilled orders. |
+| AC-038-02 | When Performance loads, it shall show confirmed aggregate metrics, a per-account equity, cash, and available-to-trade table, and a by-market summary without counting simulated or unfilled orders. |
 | AC-038-03 | When authoritative closed-trade outcomes are missing, Performance shall show Win rate as unavailable and shall not infer wins from raw fills. |
 | AC-038-04 | When a financial metric is missing or stale, Performance shall show unavailable or stale status rather than a fabricated zero. |
 | AC-038-05 | When Activity or Performance renders, it shall expose the contextual links assigned to that page while retained direct routes remain valid. |

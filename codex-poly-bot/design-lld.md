@@ -2786,7 +2786,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | `OverviewState` | TypeScript discriminated union | `live`, `attention`, or `clear` state with state-specific fields | Exactly one state is rendered and it is derived from real snapshot data |
 | `DashboardPrimaryRoute` | TypeScript literal union | Overview, Activity, Performance, Settings, Help route metadata | Five items, no overflow destination |
 | `RecommendationUndo` | TypeScript type | Config path, previous typed value, applied typed value, resulting version | Retains only the most recent successful recommendation and is cleared by the next config mutation, navigation, or reload |
-| `PerformanceData` | TypeScript type | `VenuePortfolioView` confirmed account, position, and fill totals | Trade counts use `overall.filledTrades` and each venue's `filledTrades`; Win rate remains unavailable until confirmed closed outcomes exist |
+| `PerformanceData` | TypeScript type | `VenuePortfolioView` confirmed account, balance, position, and fill totals | Each account exposes equity and cash; available-to-trade uses `buyingPowerUsd` when present and `cashUsd` otherwise; trade counts use `overall.filledTrades` and each venue's `filledTrades`; Win rate remains unavailable until confirmed closed outcomes exist |
 
 ### 22.4 Edge Cases & Boundary Conditions
 
@@ -2813,6 +2813,7 @@ The backend token signing secret is only available to Next.js server runtime and
 | 19 | Another config mutation occurs after a recommendation save | Clear the prior undo action before or with the new mutation | REQ-UI-026 |
 | 20 | Latest execution summary contains an older submitted order than the latest pipeline run | Do not render live state unless the execution run ID or bounded timestamps correlate it to the latest pipeline | REQ-UI-017 |
 | 21 | Portfolio fills exist but authoritative closed-trade outcomes do not | Render Win rate as unavailable and do not infer wins from fills | REQ-UI-021, REQ-CMP-004, REQ-CMP-005 |
+| 22 | An account omits buying power but includes cash, or omits both values | Use cash as the available-to-trade fallback; if neither exists, render unavailable rather than zero | REQ-UI-013, REQ-CMP-005 |
 
 ### 22.5 Error Handling
 

@@ -201,6 +201,8 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
                       <span>{account.accountMode} account</span>
                     </div>
                     <PortfolioDatum label="Value" value={formatOptionalUsd(account.accountValueUsd)} />
+                    <PortfolioDatum label="Cash" value={formatOptionalUsd(account.cashUsd)} />
+                    <PortfolioDatum label="Available" value={formatOptionalUsd(availableToTradeUsd(account))} />
                     <PortfolioDatum label="P&L" value={formatOptionalUsd(account.totalPnlUsd)} tone={pnlTone(account.totalPnlUsd)} />
                     <span className={`status ${account.status === "ready" ? "ok" : account.status === "stale" ? "waiting" : "blocked"}`}>
                       {account.status}
@@ -356,6 +358,10 @@ function formatOptionalUsd(value: string | null): string {
 
 function formatOptionalCount(value: number | null): string {
   return value === null ? "Unavailable" : String(value);
+}
+
+function availableToTradeUsd(account: PortfolioAccountView): string | null {
+  return account.buyingPowerUsd ?? account.cashUsd;
 }
 
 function formatChartTime(value: string): string {

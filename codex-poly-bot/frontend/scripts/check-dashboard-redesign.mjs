@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 // TST-REQ-UI-016-01, TST-REQ-UI-017-01, TST-REQ-UI-018-01,
 // TST-REQ-UI-019-01, TST-REQ-UI-020-01, TST-REQ-UI-021-01,
 // TST-REQ-UI-022-01, TST-REQ-UI-023-01, TST-REQ-UI-024-01,
-// TST-REQ-UI-025-01, TST-REQ-UI-026-01
+// TST-REQ-UI-025-01, TST-REQ-UI-026-01, TST-REQ-UI-013-06
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -53,7 +53,7 @@ for (const token of ["Recent checks", "/dashboard/data", "/dashboard/operations"
 }
 
 const performance = read("components/dashboard/performance-view.tsx");
-for (const token of ["Equity", "Realized P&L", "Unrealized P&L", "Open positions", "Win rate", "Trades", "By market", "Confirmed fills", "/dashboard/comparison", "/dashboard/models"]) {
+for (const token of ["Equity", "Cash", "Available to trade", "buildPerformanceAccountBalances", "Realized P&L", "Unrealized P&L", "Open positions", "Win rate", "Trades", "By market", "Confirmed fills", "/dashboard/comparison", "/dashboard/models"]) {
   assert.match(performance, new RegExp(token));
 }
 assert.doesNotMatch(performance, /fills\.length\.toLocaleString\(\)/);

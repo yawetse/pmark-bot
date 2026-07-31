@@ -16,6 +16,19 @@ export type PerformanceVenueRow = {
   pnlUsd: string | null;
 };
 
+export type PerformanceAccountBalanceRow = {
+  key: string;
+  venue: string;
+  providers: string[];
+  accountMode: string;
+  equityUsd: string | null;
+  cashUsd: string | null;
+  availableToTradeUsd: string | null;
+  availableToTradeSource: "Buying power" | "Cash balance" | null;
+  status: "ready" | "stale" | "unavailable";
+  lastUpdatedAt: string | null;
+};
+
 export function buildPerformanceHeadline(
   portfolio?: VenuePortfolioView,
 ): PerformanceHeadlineView {
@@ -38,4 +51,37 @@ export function buildPerformanceVenueRows(
     winRate: null,
     pnlUsd: venue.totalPnlUsd,
   }));
+}
+
+// REQ: REQ-UI-013
+export function buildPerformanceAccountBalances(
+  portfolio?: Pick<VenuePortfolioView, "accounts">,
+): PerformanceAccountBalanceRow[] {
+  return (portfolio?.accounts ?? []).map((account) => {
+    const buyingPowerUsd = validMoney(account.buyingPowerUsd);
+    const cashUsd = validMoney(account.cashUsd);
+    return {
+      key: `${account.venue}:${account.accountRef}`,
+      venue: account.venue,
+      providers: account.providers,
+      accountMode: account.accountMode,
+      equityUsd: validMoney(account.accountValueUsd),
+      cashUsd,
+      availableToTradeUsd: buyingPowerUsd ?? cashUsd,
+      availableToTradeSource: buyingPowerUsd !== null
+        ? "Buying power"
+        : cashUsd !== null
+          ? "Cash balance"
+          : null,
+      status: account.status,
+      lastUpdatedAt: account.lastUpdatedAt,
+    };
+  });
+}
+
+function validMoney(value: string | null): string | null {
+  if (value === null || value.trim() === "") {
+    return null;
+  }
+  return Number.isFinite(Number(value)) ? value : null;
 }
