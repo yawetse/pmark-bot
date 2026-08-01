@@ -91,7 +91,7 @@ The verification browser did not have an authenticated GitHub session. Authentic
 | REQ-FND-011 | DD-053; LLD 28.4, 28.5 | TASK-041, TASK-046, TASK-047, TASK-049 | TST-REQ-FND-011-01, TST-REQ-FND-011-02 | `funding_service.py`; `performance-view.tsx`; funding tests | Implemented; locally verified |
 | REQ-FND-012 | DD-053; LLD 28.4, 28.5 | TASK-041, TASK-046, TASK-047, TASK-049 | TST-REQ-FND-012-01, TST-REQ-FND-012-02, TST-REQ-FND-012-03 | `funding_service.py`; `test_recurring_funding.py` | Implemented; locally verified |
 | REQ-FND-013 | DD-054; LLD 28.3, 28.7 | TASK-045, TASK-048, TASK-049 | TST-REQ-FND-013-01, TST-REQ-FND-013-02, TST-REQ-FND-013-03, TST-REQ-FND-013-04, TST-REQ-FND-013-05 | `alpaca_funding.py`; CloudFormation; direct and deployment tests | Implemented; locally verified |
-| REQ-FND-014 | DD-054, DD-055; LLD 28.1, 28.2, 28.4 | TASK-042, TASK-045, TASK-048, TASK-049 | TST-REQ-FND-014-01, TST-REQ-FND-014-02, TST-REQ-FND-014-03, TST-REQ-FND-014-04, TST-REQ-FND-014-05, TST-REQ-FND-014-06, TST-REQ-FND-014-07, TST-REQ-FND-014-08 | defaults; direct service; infrastructure tests; deployed readback pending | Implemented locally; release evidence pending |
+| REQ-FND-014 | DD-054, DD-055; LLD 28.1, 28.2, 28.4 | TASK-042, TASK-045, TASK-048, TASK-049 | TST-REQ-FND-014-01, TST-REQ-FND-014-02, TST-REQ-FND-014-03, TST-REQ-FND-014-04, TST-REQ-FND-014-05, TST-REQ-FND-014-06, TST-REQ-FND-014-07, TST-REQ-FND-014-08 | defaults; direct service; infrastructure tests; [development gate](https://github.com/yawetse/pmark-bot/actions/runs/30680452086); [production gate](https://github.com/yawetse/pmark-bot/actions/runs/30680683629) | Implemented; development and production verified |
 | REQ-FND-015 | DD-050, DD-055; LLD 28.2, 28.4 | TASK-042, TASK-045, TASK-049 | TST-REQ-FND-015-01, TST-REQ-FND-015-02, TST-REQ-FND-015-03, TST-REQ-FND-015-04 | `funding_service.py`; `schema.py`; `test_direct_funding.py` | Implemented; locally verified |
 | REQ-FND-016 | DD-050, DD-055; LLD 28.2, 28.3, 28.4 | TASK-042, TASK-044, TASK-045, TASK-049 | TST-REQ-FND-016-01, TST-REQ-FND-016-02, TST-REQ-FND-016-03, TST-REQ-FND-016-04 | `direct_funding_service.py`; `alpaca_funding.py`; direct tests | Implemented; locally verified |
 | REQ-FND-017 | DD-055; LLD 28.2, 28.4 | TASK-042, TASK-044, TASK-045, TASK-049 | TST-REQ-FND-017-01, TST-REQ-FND-017-02 | `direct_funding_service.py`; `funding_service.py`; direct tests | Implemented; locally verified |
@@ -103,16 +103,16 @@ The verification browser did not have an authenticated GitHub session. Authentic
 
 | Evidence | Development | Production |
 |----------|-------------|------------|
-| Tracking issue and pull requests | Pending | Pending |
-| GitHub Actions run URL and final status | Pending | Pending |
-| Database migration | Pending | Pending |
-| CloudFormation stack status | Pending | Pending |
-| ECS backend and frontend health | Pending | Pending |
-| HTTPS `/health` | Pending | Pending |
-| Authenticated sanitized `/api/funding` | Pending | Pending |
-| Dashboard browser evidence | Pending | Pending |
-| Direct transfers disabled and both limits `0.00` | Pending | Pending |
-| CloudWatch Broker POST events in release window | Must equal zero | Must equal zero |
-| SES identity and ACM certificate | Pending | Pending |
+| Tracking issue and pull requests | [Issue #236](https://github.com/yawetse/pmark-bot/issues/236); implementation [#237](https://github.com/yawetse/pmark-bot/pull/237); release gates [#238](https://github.com/yawetse/pmark-bot/pull/238), [#239](https://github.com/yawetse/pmark-bot/pull/239), [#241](https://github.com/yawetse/pmark-bot/pull/241), [#242](https://github.com/yawetse/pmark-bot/pull/242) | Promotion [#240](https://github.com/yawetse/pmark-bot/pull/240) merged to `main` |
+| GitHub Actions run URL and final status | [30680452086](https://github.com/yawetse/pmark-bot/actions/runs/30680452086): success | [30680683629](https://github.com/yawetse/pmark-bot/actions/runs/30680683629): success |
+| Database migration | Migration safety and backend startup passed | Migration safety and backend startup passed |
+| CloudFormation stack status | `codex-poly-bot-development`: `UPDATE_COMPLETE`; certificate output matched | `codex-poly-bot-production`: `UPDATE_COMPLETE`; certificate output matched |
+| ECS backend and frontend health | Both services stabilized | Both services stabilized |
+| HTTPS `/health` | `https://dev-codex-poly-bot.repetere.net/health`: `ok` | `https://codex-poly-bot.repetere.net/health`: `ok`; independent curl also passed |
+| Authenticated sanitized `/api/funding` | Release gate passed sanitized readback using a signed runtime identity | Release gate passed sanitized readback using a signed runtime identity |
+| Dashboard browser evidence | Landing page rendered; `/dashboard` redirected to `/login`; no console warning or error | Landing page rendered; `/dashboard` redirected to `/login`; no console warning or error |
+| Direct transfers disabled and both limits `0.00` | Verified by deployed readback | Verified by deployed readback |
+| CloudWatch Broker POST events in release window | `0` | `0` |
+| SES identity and ACM certificate | SES verified; stack certificate binding matched; live TLS valid | SES verified; stack certificate binding matched; live TLS valid |
 
 No real bank transfer is used for release verification.
