@@ -110,7 +110,8 @@ export function ProductStoryArticle() {
                 </p>
                 <p>
                   Poly Bot is a working answer. It scans prediction markets on Polymarket
-                  and a configured long-only stock and ETF universe through Alpaca. It can
+                  and a configured stock and ETF universe through Alpaca. Eligible short
+                  entries are available behind a separate disabled-by-default gate. It can
                   run in dry-run mode or submit live orders when the operator has enabled
                   that path. The same decision process applies in both modes.
                 </p>
@@ -210,8 +211,8 @@ export function ProductStoryArticle() {
                 </p>
                 <p>
                   The risk layer applies position limits, daily-loss limits, allocation
-                  limits, open-position limits, market-hours rules, and long-only
-                  constraints together. Position sizing uses a fractional Kelly calculation
+                  limits, open-position limits, market-hours rules, and Alpaca account and
+                  borrow eligibility together. Position sizing uses a fractional Kelly calculation
                   as an input, caps the fraction, and then applies the absolute limits. A
                   mathematically attractive size does not override a configured boundary.
                 </p>
@@ -239,8 +240,9 @@ export function ProductStoryArticle() {
                   risk.
                 </p>
                 <p>
-                  The current Alpaca scope is intentionally narrow: long-only stocks and
-                  ETFs. Options, short selling, margin, and unsupported asset classes are
+                  The current Alpaca scope is narrow: long stocks and ETFs plus explicitly
+                  enabled easy-to-borrow U.S. equity shorts. Options, crypto, hard-to-borrow
+                  locates, margin-funded long purchases, and unsupported asset classes are
                   refused. A venue does not become eligible because credentials exist. The
                   operator must enable it, select the permitted account mode, and set the
                   exposure limits.

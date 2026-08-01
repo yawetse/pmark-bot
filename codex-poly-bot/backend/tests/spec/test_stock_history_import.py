@@ -60,9 +60,10 @@ def test_req_alp_017_05_stock_history_importer_reconstructs_realized_unrealized_
         environment=Environment.DEVELOPMENT,
         account_mode="paper",
         account_id="acct-1",
-        payload={
-            "symbol": "SPY",
-            "qty": "6",
+            payload={
+                "symbol": "SPY",
+                "side": "long",
+                "qty": "6",
             "avg_entry_price": "100",
             "cost_basis": "600",
             "market_value": "630",
@@ -87,6 +88,68 @@ def test_req_alp_017_05_stock_history_importer_reconstructs_realized_unrealized_
     assert snapshot["unrealized_pnl_usd"] == Decimal("30")
     assert snapshot["total_pnl_usd"] == Decimal("70")
     assert len(snapshot["fill_ids"]) == 2
+
+
+def test_req_alp_023_stock_history_preserves_short_quantity_and_pnl() -> None:
+    registry = RepositoryRegistry()
+    importer = AlpacaStockHistoryImporter(registry)
+    opened = datetime(2026, 8, 3, 14, 0, tzinfo=UTC)
+    covered = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+
+    importer.record_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-short",
+        payload={
+            "id": "fill-short",
+            "symbol": "F",
+            "side": "sell",
+            "qty": "2",
+            "price": "100",
+            "transaction_time": opened.isoformat(),
+        },
+    )
+    importer.record_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-short",
+        payload={
+            "id": "fill-cover",
+            "symbol": "F",
+            "side": "buy",
+            "qty": "1",
+            "price": "90",
+            "transaction_time": covered.isoformat(),
+        },
+    )
+    position = importer.record_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-short",
+        payload={
+            "symbol": "F",
+            "side": "short",
+            "qty": "1",
+            "avg_entry_price": "100",
+            "cost_basis": "-100",
+            "market_value": "-95",
+            "current_price": "95",
+            "unrealized_pl": "5",
+        },
+        observed_at=covered,
+    )
+
+    snapshots = importer.rebuild_position_pnl(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="acct-short",
+        calculated_at=covered,
+    )
+
+    assert position["quantity"] == Decimal("-1")
+    assert snapshots[0]["open_quantity"] == Decimal("-1")
+    assert snapshots[0]["realized_pnl_usd"] == Decimal("10")
+    assert snapshots[0]["unrealized_pnl_usd"] == Decimal("5")
 
 
 def test_req_dat_008_06_alpaca_broker_history_backfill_persists_provider_rows() -> None:
@@ -152,9 +215,10 @@ def test_req_dat_008_06_alpaca_broker_history_backfill_persists_provider_rows() 
             return httpx.Response(
                 200,
                 json=[
-                    {
-                        "symbol": "SPY",
-                        "qty": "2",
+                        {
+                            "symbol": "SPY",
+                            "side": "long",
+                            "qty": "2",
                         "avg_entry_price": "500",
                         "cost_basis": "1000",
                         "market_value": "1010",

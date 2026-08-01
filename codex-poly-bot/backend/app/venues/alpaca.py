@@ -8,11 +8,13 @@ REQ-DAT-001, REQ-DAT-002, REQ-EXE-016, REQ-EXE-017
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from hashlib import sha256
 import os
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import quote
 
 import httpx
 
@@ -23,6 +25,7 @@ from app.venues.polymarket import VenueCallResult
 
 ALPACA_LIVE_TRADING_BASE_URL = "https://api.alpaca.markets"
 ALPACA_PAPER_TRADING_BASE_URL = "https://paper-api.alpaca.markets"
+ALPACA_DATA_BASE_URL = "https://data.alpaca.markets/v2"
 
 
 class AlpacaClientBoundary(str, Enum):
@@ -537,6 +540,7 @@ class AlpacaLiveOrderAdapter:
         account_mode: str,
         environ: dict[str, str] | None = None,
         trading_base_url: str | None = None,
+        data_base_url: str | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 8.0,
     ) -> None:
@@ -554,6 +558,10 @@ class AlpacaLiveOrderAdapter:
             if self.account_mode == "paper"
             else ALPACA_LIVE_TRADING_BASE_URL,
         )
+        self.data_base_url = _base_url(
+            data_base_url or self.environ.get("ALPACA_DATA_BASE_URL"),
+            ALPACA_DATA_BASE_URL,
+        )
         self.transport = transport
         self.timeout_seconds = max(0.5, float(timeout_seconds))
 
@@ -566,6 +574,11 @@ class AlpacaLiveOrderAdapter:
         quantity: Decimal | None = None,
         side: str = "buy",
         client_order_id: str | None = None,
+        position_intent: str | None = None,
+        estimated_unit_price: Decimal | None = None,
+        expected_account_id: str | None = None,
+        entry_cutoff_minutes: int | None = None,
+        max_quote_age_seconds: int | None = None,
     ) -> str:
         """Submit a market order and return the broker order id.
 
@@ -594,9 +607,30 @@ class AlpacaLiveOrderAdapter:
             quantity=quantity,
             client_order_id=client_order_id,
             extended_hours=_bool_env(self.environ.get("ALPACA_EXTENDED_HOURS")),
+            position_intent=position_intent,
         )
         try:
             with self._client() as client:
+                if payload["position_intent"] == "sell_to_open":
+                    self._validate_short_entry(
+                        client=client,
+                        headers=headers,
+                        symbol=str(payload["symbol"]),
+                        quantity=_decimal(payload["qty"], "quantity"),
+                        estimated_unit_price=estimated_unit_price,
+                        expected_account_id=expected_account_id,
+                        entry_cutoff_minutes=entry_cutoff_minutes,
+                        max_quote_age_seconds=max_quote_age_seconds,
+                    )
+                elif payload["position_intent"] in {"buy_to_close", "sell_to_close"} and expected_account_id:
+                    self._validate_exit_state(
+                        client=client,
+                        headers=headers,
+                        expected_account_id=expected_account_id,
+                        symbol=str(payload["symbol"]),
+                        quantity=_decimal(payload["qty"], "quantity"),
+                        position_intent=str(payload["position_intent"]),
+                    )
                 response = client.post(
                     f"{self.trading_base_url}/v2/orders",
                     headers={**headers, "Content-Type": "application/json"},
@@ -637,6 +671,206 @@ class AlpacaLiveOrderAdapter:
             )
         return order_id
 
+    def _validate_short_entry(
+        self,
+        *,
+        client: httpx.Client,
+        headers: dict[str, str],
+        symbol: str,
+        quantity: Decimal,
+        estimated_unit_price: Decimal | None,
+        expected_account_id: str | None,
+        entry_cutoff_minutes: int | None,
+        max_quote_age_seconds: int | None,
+    ) -> None:
+        """Fail closed on current account and easy-to-borrow asset state."""
+
+        if estimated_unit_price is None:
+            raise AlpacaOrderSubmitError("Alpaca short entry requires estimated unit price")
+        unit_price = _decimal(estimated_unit_price, "estimated_unit_price")
+        if unit_price <= 0:
+            raise AlpacaOrderSubmitError("Alpaca short entry requires estimated unit price")
+        if not expected_account_id:
+            raise AlpacaOrderSubmitError(
+                "Alpaca short entry account route unresolved",
+                payload={"error_code": "alpaca_short_account_unresolved"},
+            )
+        account = _alpaca_get_json(
+            client,
+            f"{self.trading_base_url}/v2/account",
+            headers=headers,
+            label="account",
+        )
+        if _alpaca_account_id(account) != expected_account_id:
+            raise AlpacaOrderSubmitError(
+                "Alpaca short entry account mismatch",
+                payload={"error_code": "alpaca_short_account_mismatch"},
+            )
+        clock = _alpaca_get_json(
+            client,
+            f"{self.trading_base_url}/v2/clock",
+            headers=headers,
+            label="clock",
+        )
+        clock_time = _validate_alpaca_market_clock(
+            clock,
+            cutoff_minutes=max(
+                0,
+                int(15 if entry_cutoff_minutes is None else entry_cutoff_minutes),
+            ),
+            error_prefix="Alpaca short entry",
+            max_age_seconds=max(1, int(max_quote_age_seconds or 300)),
+        )
+        quote_payload = _alpaca_get_json(
+            client,
+            f"{self.data_base_url}/stocks/{quote(symbol, safe='')}/quotes/latest",
+            headers=headers,
+            label="latest quote",
+        )
+        quote_payload = quote_payload.get("quote")
+        if not isinstance(quote_payload, Mapping):
+            raise AlpacaOrderSubmitError(
+                "Alpaca short latest ask unavailable",
+                payload={"error_code": "alpaca_short_latest_ask_unavailable"},
+            )
+        try:
+            current_ask = _decimal(str(quote_payload.get("ap")), "latest ask")
+        except ValueError as exc:
+            raise AlpacaOrderSubmitError(
+                "Alpaca short latest ask unavailable",
+                payload={"error_code": "alpaca_short_latest_ask_unavailable"},
+            ) from exc
+        if current_ask <= 0:
+            raise AlpacaOrderSubmitError(
+                "Alpaca short latest ask unavailable",
+                payload={"error_code": "alpaca_short_latest_ask_unavailable"},
+            )
+        quote_time = _parse_alpaca_timestamp(quote_payload.get("t"))
+        if quote_time is None:
+            raise AlpacaOrderSubmitError(
+                "Alpaca short latest quote timestamp unavailable",
+                payload={"error_code": "alpaca_short_quote_timestamp_unavailable"},
+            )
+        quote_age_seconds = abs(int((clock_time - quote_time).total_seconds()))
+        if quote_age_seconds > max(1, int(max_quote_age_seconds or 300)):
+            raise AlpacaOrderSubmitError(
+                "Alpaca short latest quote is stale",
+                payload={"error_code": "alpaca_short_quote_stale"},
+            )
+        account_reason = _alpaca_short_account_refusal(
+            account,
+            required_buying_power=quantity * current_ask * Decimal("1.03"),
+        )
+        if account_reason:
+            raise AlpacaOrderSubmitError(
+                f"Alpaca short entry refused: {account_reason}",
+                payload={"error_code": "alpaca_short_account_ineligible"},
+            )
+        asset = _alpaca_get_json(
+            client,
+            f"{self.trading_base_url}/v2/assets/{quote(symbol, safe='')}",
+            headers=headers,
+            label="asset",
+        )
+        if not _alpaca_short_asset_eligible(asset, expected_symbol=symbol):
+            raise AlpacaOrderSubmitError(
+                "Alpaca short entry refused: asset not eligible for short sale",
+                payload={"error_code": "alpaca_short_asset_ineligible"},
+            )
+        if _alpaca_current_position(
+            client,
+            trading_base_url=self.trading_base_url,
+            headers=headers,
+            symbol=symbol,
+        ) is not None:
+            raise AlpacaOrderSubmitError(
+                "Alpaca short entry refused: position already exists",
+                payload={"error_code": "alpaca_short_position_exists"},
+            )
+        if _alpaca_open_orders(
+            client,
+            trading_base_url=self.trading_base_url,
+            headers=headers,
+            symbol=symbol,
+        ):
+            raise AlpacaOrderSubmitError(
+                "Alpaca short entry refused: open order already exists",
+                payload={"error_code": "alpaca_short_open_order_exists"},
+            )
+
+    def _validate_exit_state(
+        self,
+        *,
+        client: httpx.Client,
+        headers: dict[str, str],
+        expected_account_id: str,
+        symbol: str,
+        quantity: Decimal,
+        position_intent: str,
+    ) -> None:
+        account = _alpaca_get_json(
+            client,
+            f"{self.trading_base_url}/v2/account",
+            headers=headers,
+            label="exit account",
+        )
+        if _alpaca_account_id(account) != expected_account_id:
+            raise AlpacaOrderSubmitError(
+                "Alpaca exit account mismatch",
+                payload={"error_code": "alpaca_exit_account_mismatch"},
+            )
+        clock = _alpaca_get_json(
+            client,
+            f"{self.trading_base_url}/v2/clock",
+            headers=headers,
+            label="exit clock",
+        )
+        _validate_alpaca_market_clock(
+            clock,
+            cutoff_minutes=0,
+            error_prefix="Alpaca exit",
+        )
+        position = _alpaca_current_position(
+            client,
+            trading_base_url=self.trading_base_url,
+            headers=headers,
+            symbol=symbol,
+        )
+        if position is None:
+            raise AlpacaOrderSubmitError(
+                "Alpaca exit position unavailable",
+                payload={"error_code": "alpaca_exit_position_unavailable"},
+            )
+        expected_side = "short" if position_intent == "buy_to_close" else "long"
+        actual_side = str(position.get("side") or "").strip().lower()
+        try:
+            current_quantity = abs(_decimal(str(position.get("qty")), "position quantity"))
+        except ValueError as exc:
+            raise AlpacaOrderSubmitError(
+                "Alpaca exit position quantity unavailable",
+                payload={"error_code": "alpaca_exit_quantity_unavailable"},
+            ) from exc
+        if actual_side != expected_side:
+            raise AlpacaOrderSubmitError(
+                "Alpaca exit position direction mismatch",
+                payload={"error_code": "alpaca_exit_direction_mismatch"},
+            )
+        if current_quantity != quantity:
+            raise AlpacaOrderSubmitError(
+                "Alpaca exit position quantity mismatch",
+                payload={"error_code": "alpaca_exit_quantity_mismatch"},
+            )
+        if _alpaca_open_orders(
+            client,
+            trading_base_url=self.trading_base_url,
+            headers=headers,
+            symbol=symbol,
+        ):
+            raise AlpacaOrderSubmitError(
+                "Alpaca exit open order already exists",
+                payload={"error_code": "alpaca_exit_open_order_exists"},
+            )
+
     def _headers(self) -> dict[str, str] | None:
         key_id = self.environ.get("ALPACA_KEY_ID", "").strip()
         secret_key = self.environ.get("ALPACA_SECRET_KEY", "").strip()
@@ -674,6 +908,7 @@ def _alpaca_market_order_payload(
     quantity: Decimal | None,
     client_order_id: str | None,
     extended_hours: bool,
+    position_intent: str | None = None,
 ) -> dict[str, Any]:
     normalized_symbol = symbol.strip().upper()
     normalized_side = side.strip().lower()
@@ -681,9 +916,11 @@ def _alpaca_market_order_payload(
         raise AlpacaOrderSubmitError("missing Alpaca symbol")
     if normalized_side not in {"buy", "sell"}:
         raise AlpacaOrderSubmitError("unsupported Alpaca order side")
+    normalized_intent = _alpaca_position_intent(position_intent, normalized_side)
     payload: dict[str, Any] = {
         "symbol": normalized_symbol,
         "side": normalized_side,
+        "position_intent": normalized_intent,
         "type": "market",
         "time_in_force": "day",
     }
@@ -691,19 +928,268 @@ def _alpaca_market_order_payload(
         payload["extended_hours"] = True
     if client_order_id:
         payload["client_order_id"] = _alpaca_client_order_id(client_order_id)
+    if normalized_intent in {"sell_to_open", "buy_to_close"} and notional is not None:
+        raise AlpacaOrderSubmitError("Alpaca short orders require quantity, not notional")
     if quantity is not None:
         parsed_quantity = _decimal(quantity, "quantity")
+        if normalized_intent == "sell_to_open" and (
+            parsed_quantity <= 0 or parsed_quantity != parsed_quantity.to_integral_value()
+        ):
+            raise AlpacaOrderSubmitError(
+                "Alpaca short entry requires positive whole-share quantity"
+            )
         if parsed_quantity <= 0:
             raise AlpacaOrderSubmitError("Alpaca order quantity must be positive")
         payload["qty"] = _decimal_text(parsed_quantity)
         return payload
     if notional is None:
         raise AlpacaOrderSubmitError("Alpaca order requires notional or quantity")
+    if normalized_intent in {"sell_to_open", "buy_to_close"}:
+        raise AlpacaOrderSubmitError("Alpaca short orders require quantity, not notional")
     parsed_notional = _decimal(notional, "notional")
     if parsed_notional <= 0:
         raise AlpacaOrderSubmitError("Alpaca order notional must be positive")
     payload["notional"] = _decimal_text(parsed_notional)
     return payload
+
+
+def _alpaca_position_intent(position_intent: str | None, side: str) -> str:
+    normalized = (position_intent or "").strip().lower()
+    if not normalized:
+        return "buy_to_open" if side == "buy" else "sell_to_close"
+    allowed = {
+        "buy": {"buy_to_open", "buy_to_close"},
+        "sell": {"sell_to_open", "sell_to_close"},
+    }
+    if normalized not in allowed[side]:
+        raise AlpacaOrderSubmitError("Alpaca position intent does not match order side")
+    return normalized
+
+
+def _alpaca_get_json(
+    client: httpx.Client,
+    url: str,
+    *,
+    headers: dict[str, str],
+    label: str,
+) -> dict[str, Any]:
+    label_code = label.strip().lower().replace(" ", "_")
+    try:
+        response = client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        raise AlpacaOrderSubmitError(
+            f"Alpaca short {label} eligibility unavailable",
+            payload={"error_code": f"alpaca_short_{label_code}_http_error"},
+        ) from exc
+    if response.status_code >= 400:
+        raise AlpacaOrderSubmitError(
+            f"Alpaca short {label} eligibility returned HTTP {response.status_code}",
+            status_code=response.status_code,
+            payload={"error_code": f"alpaca_short_{label_code}_http_{response.status_code}"},
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise AlpacaOrderSubmitError(
+            f"Alpaca short {label} eligibility returned invalid JSON",
+            payload={"error_code": f"alpaca_short_{label_code}_invalid_json"},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AlpacaOrderSubmitError(
+            f"Alpaca short {label} eligibility returned invalid payload",
+            payload={"error_code": f"alpaca_short_{label_code}_invalid_payload"},
+        )
+    return payload
+
+
+def _alpaca_account_id(account: Mapping[str, Any]) -> str | None:
+    return _first_text(
+        account.get("id"),
+        account.get("account_id"),
+        account.get("account_number"),
+    )
+
+
+def _parse_alpaca_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _validate_alpaca_market_clock(
+    clock: Mapping[str, Any],
+    *,
+    cutoff_minutes: int,
+    error_prefix: str,
+    max_age_seconds: int = 300,
+) -> datetime:
+    if clock.get("is_open") is not True:
+        raise AlpacaOrderSubmitError(
+            f"{error_prefix} refused: market is closed",
+            payload={"error_code": "alpaca_market_closed"},
+        )
+    clock_time = _parse_alpaca_timestamp(clock.get("timestamp"))
+    if clock_time is None:
+        raise AlpacaOrderSubmitError(
+            f"{error_prefix} market clock timestamp unavailable",
+            payload={"error_code": "alpaca_clock_timestamp_unavailable"},
+        )
+    if abs((datetime.now(UTC) - clock_time).total_seconds()) > max(1, max_age_seconds):
+        raise AlpacaOrderSubmitError(
+            f"{error_prefix} market clock is stale",
+            payload={"error_code": "alpaca_clock_stale"},
+        )
+    if cutoff_minutes > 0:
+        next_close = _parse_alpaca_timestamp(clock.get("next_close"))
+        if next_close is None:
+            raise AlpacaOrderSubmitError(
+                f"{error_prefix} next market close unavailable",
+                payload={"error_code": "alpaca_next_close_unavailable"},
+            )
+        if clock_time >= next_close - timedelta(minutes=cutoff_minutes):
+            raise AlpacaOrderSubmitError(
+                f"{error_prefix} refused: close-before-market cutoff reached",
+                payload={"error_code": "alpaca_entry_market_close_cutoff"},
+            )
+    return clock_time
+
+
+def _alpaca_current_position(
+    client: httpx.Client,
+    *,
+    trading_base_url: str,
+    headers: dict[str, str],
+    symbol: str,
+) -> dict[str, Any] | None:
+    try:
+        response = client.get(
+            f"{trading_base_url}/v2/positions/{quote(symbol, safe='')}",
+            headers=headers,
+        )
+    except httpx.HTTPError as exc:
+        raise AlpacaOrderSubmitError(
+            "Alpaca current position unavailable",
+            payload={"error_code": "alpaca_position_http_error"},
+        ) from exc
+    if response.status_code == 404:
+        return None
+    if response.status_code >= 400:
+        raise AlpacaOrderSubmitError(
+            f"Alpaca current position returned HTTP {response.status_code}",
+            status_code=response.status_code,
+            payload={"error_code": f"alpaca_position_http_{response.status_code}"},
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise AlpacaOrderSubmitError(
+            "Alpaca current position returned invalid JSON",
+            payload={"error_code": "alpaca_position_invalid_json"},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AlpacaOrderSubmitError(
+            "Alpaca current position returned invalid payload",
+            payload={"error_code": "alpaca_position_invalid_payload"},
+        )
+    return payload
+
+
+def _alpaca_open_orders(
+    client: httpx.Client,
+    *,
+    trading_base_url: str,
+    headers: dict[str, str],
+    symbol: str,
+) -> list[dict[str, Any]]:
+    try:
+        response = client.get(
+            f"{trading_base_url}/v2/orders",
+            headers=headers,
+            params={"status": "open", "symbols": symbol, "limit": "500"},
+        )
+    except httpx.HTTPError as exc:
+        raise AlpacaOrderSubmitError(
+            "Alpaca open orders unavailable",
+            payload={"error_code": "alpaca_open_orders_http_error"},
+        ) from exc
+    if response.status_code >= 400:
+        raise AlpacaOrderSubmitError(
+            f"Alpaca open orders returned HTTP {response.status_code}",
+            status_code=response.status_code,
+            payload={"error_code": f"alpaca_open_orders_http_{response.status_code}"},
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise AlpacaOrderSubmitError(
+            "Alpaca open orders returned invalid JSON",
+            payload={"error_code": "alpaca_open_orders_invalid_json"},
+        ) from exc
+    if not isinstance(payload, list) or any(not isinstance(item, dict) for item in payload):
+        raise AlpacaOrderSubmitError(
+            "Alpaca open orders returned invalid payload",
+            payload={"error_code": "alpaca_open_orders_invalid_payload"},
+        )
+    return [
+        item
+        for item in payload
+        if str(item.get("symbol") or symbol).strip().upper() == symbol.upper()
+    ]
+
+
+def _alpaca_short_account_refusal(
+    account: Mapping[str, Any],
+    *,
+    required_buying_power: Decimal,
+) -> str | None:
+    if str(account.get("status") or "").strip().lower() != "active":
+        return "account not active"
+    if account.get("account_blocked") is not False:
+        return "account blocked"
+    if account.get("trading_blocked") is not False:
+        return "trading blocked"
+    if account.get("trade_suspended_by_user") is not False:
+        return "trading suspended by user"
+    if account.get("shorting_enabled") is not True:
+        return "shorting not enabled"
+    try:
+        equity = _decimal(str(account.get("equity")), "equity")
+    except ValueError:
+        return "account equity unavailable"
+    if equity < Decimal("2000"):
+        return "equity below 2000"
+    try:
+        buying_power = _decimal(str(account.get("buying_power")), "buying_power")
+    except ValueError:
+        return "buying power unavailable"
+    if buying_power < required_buying_power:
+        return "insufficient short buying power"
+    return None
+
+
+def _alpaca_short_asset_eligible(
+    asset: Mapping[str, Any],
+    *,
+    expected_symbol: str,
+) -> bool:
+    return (
+        str(asset.get("symbol") or "").strip().upper() == expected_symbol
+        and str(asset.get("class") or "").strip().lower() == "us_equity"
+        and str(asset.get("status") or "").strip().lower() == "active"
+        and asset.get("tradable") is True
+        and asset.get("shortable") is True
+        and str(asset.get("borrow_status") or "").strip().lower() == "easy_to_borrow"
+    )
 
 
 def _safe_alpaca_error_payload(response: httpx.Response) -> dict[str, Any]:

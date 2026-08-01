@@ -354,6 +354,12 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         stage: "Broker account",
       },
       {
+        path: "alpaca.allow_shorting",
+        kind: "switch",
+        fallback: false,
+        stage: "Short entry gate",
+      },
+      {
         path: "trading_loop_interval_seconds",
         kind: "range",
         fallback: 900,
@@ -1066,7 +1072,7 @@ export function ConfigControls({
           <p className="section-label">Stock trading profile</p>
           <h3 id="active-stock-profile-title">Active day trader</h3>
           <p>
-            Applies the coordinated one-minute scan, stock signal, model, position risk, and same-day exit settings. It preserves the current live-trading gate and Alpaca account mode.
+            Applies the coordinated one-minute scan, stock signal, model, position risk, and same-day exit settings. It preserves the current live-trading gate, Alpaca account mode, and short-selling gate.
           </p>
         </div>
         <div className="trading-profile-actions">

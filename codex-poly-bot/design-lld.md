@@ -78,7 +78,7 @@
 
 - **Purpose:** Captures a persisted intent before any live order submission.
 - **Traces:** REQ-DB-004, REQ-EXE-016, REQ-OBS-003
-- **Fields:** `idempotency_key`, `environment`, `venue`, `model_provider`, `instrument`, `side`, `order_type`, `global_execution_mode`, `alpaca_account_mode`, `loop_run_id`, `reservation_id`, `risk_decision_id`, `requested_notional`, `requested_quantity`, `limit_price`, `slippage_limit`, `price_guardrails`, `config_version`, `strategy_signal_ids`, `status`.
+- **Fields:** `idempotency_key`, `environment`, `venue`, `model_provider`, `instrument`, `side`, `position_intent`, `order_type`, `global_execution_mode`, `alpaca_account_mode`, `alpaca_account_ref`, `loop_run_id`, `reservation_id`, `risk_decision_id`, `requested_notional`, `requested_quantity`, `limit_price`, `slippage_limit`, `price_guardrails`, `config_version`, `strategy_signal_ids`, `status`.
 - **Returns:** Validated order intent.
 - **Raises/Errors:** Validation rejects missing idempotency key, non-positive size, unsupported order type, or incompatible stock/order fields.
 - **Side Effects:** None.
@@ -87,7 +87,7 @@
 
 - **Purpose:** Build deterministic idempotency keys matching HLD inputs.
 - **Traces:** REQ-EXE-016, REQ-OBS-003
-- **Parameters:** `input` contains environment, venue, model provider, instrument identifier, side, strategy set hash, config version, and loop run ID.
+- **Parameters:** `input` contains environment, venue, model provider, instrument identifier, side, position intent, account mode, sanitized account reference, strategy set hash, config version, and loop run ID.
 - **Returns:** Stable string key.
 - **Raises/Errors:** Raises `DomainValidationError` if any required key part is missing.
 - **Side Effects:** None.
@@ -96,7 +96,7 @@
 
 - **Purpose:** Defines the complete input used to generate an order idempotency key.
 - **Traces:** REQ-EXE-016, REQ-OBS-003
-- **Fields:** `environment`, `venue`, `model_provider`, `instrument_identifier`, `side`, `strategy_set_hash`, `config_version`, `loop_run_id`.
+- **Fields:** `environment`, `venue`, `model_provider`, `instrument_identifier`, `side`, `position_intent`, `account_mode`, `account_ref`, `strategy_set_hash`, `config_version`, `loop_run_id`.
 - **Returns:** Validated key input.
 - **Raises/Errors:** Validation rejects empty key parts.
 - **Side Effects:** None.
@@ -123,9 +123,9 @@
 
 - **Purpose:** Represents a position state change.
 - **Traces:** REQ-DB-005, REQ-ALP-017, REQ-ALP-018
-- **Fields:** `position_id`, `prior_state`, `new_state`, `prior_quantity`, `new_quantity`, `realized_pnl`, `unrealized_pnl`, `reason`, `source`, `created_at`.
+- **Fields:** `position_id`, `prior_state`, `new_state`, `position_side`, `prior_quantity`, `new_quantity`, `realized_pnl`, `unrealized_pnl`, `reason`, `source`, `created_at`.
 - **Returns:** Validated position transition.
-- **Raises/Errors:** Validation rejects negative Alpaca quantity.
+- **Raises/Errors:** Validation rejects a signed quantity that conflicts with `position_side`.
 - **Side Effects:** None.
 
 #### `class ScoringOutput(BaseModel)`
@@ -220,7 +220,7 @@
 | `OrderIntent` | Pydantic model | Pre-submit order record | Has stable idempotency key and positive size |
 | `ConfigSnapshot` | Pydantic model | Immutable loop config | Version never changes after creation |
 | `ServiceResult` | Generic Pydantic model | Expected success/refusal wrapper | `ok` determines whether `value` or `error_code` is populated |
-| `PositionTransition` | Pydantic model | Position state change | Alpaca quantity cannot become negative |
+| `PositionTransition` | Pydantic model | Position state change | Signed Alpaca quantity and position side agree |
 | `ScoringOutput` | Pydantic model | LLM response | Probability and confidence are bounded |
 | `StrategySignal` | Pydantic model | Strategy vote | Direction is one of buy/sell/hold/neutral |
 | `ExitTrigger` | Pydantic model | Exit condition | Trigger type is supported |
@@ -238,8 +238,8 @@
 | 3 | Approved risk decision has zero size | Validation fails | REQ-EXE-008 |
 | 4 | Unsupported instrument type appears in comparison metrics | Validation fails | REQ-CMP-001 |
 | 5 | Money field receives float `NaN` | Validation fails | REQ-DB-004 |
-| 6 | Idempotency key input misses loop run ID | Validation fails | REQ-EXE-016 |
-| 7 | Alpaca position transition creates negative quantity | Validation fails | REQ-ALP-008 |
+| 6 | Idempotency key input misses loop run ID, position intent, account mode, or account reference | Validation fails | REQ-EXE-016, REQ-ALP-026 |
+| 7 | Alpaca position transition has a signed quantity inconsistent with its side | Validation fails | REQ-ALP-023 |
 | 8 | Comparison metric cannot be calculated | Return unavailable marker, not zero | REQ-CMP-003 |
 
 ### 1.5 Error Handling
@@ -277,7 +277,7 @@
 
 **File:** `backend/app/db/`  
 **Responsibility:** Manage SQLAlchemy sessions, transactions, model-provider schemas, migrations, repositories, and unit-of-work boundaries.  
-**Requirements Covered:** REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-009, REQ-DB-010, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-EXE-016, REQ-OBS-003, REQ-OBS-004
+**Requirements Covered:** REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-009, REQ-DB-010, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-ALP-022, REQ-ALP-023, REQ-ALP-026, REQ-EXE-016, REQ-OBS-003, REQ-OBS-004
 **Dependencies:** SQLAlchemy, Alembic, Postgres  
 **Depended On By:** Services, adapters that persist state, workers, API routers
 
@@ -364,12 +364,13 @@
 | `config_versions` | Shared table | Immutable config snapshots | Exactly one active version per environment |
 | `audit_events` | Shared table | Append-only audit log | No application update/delete path |
 | `job_runs` | Shared table | Worker lock and heartbeat records | Active job has current heartbeat or is marked abandoned |
-| `order_intents` | Provider schema table | Pre-submit order records | Unique idempotency key |
+| `order_intents` | Provider schema table | Pre-submit order records with side, position intent, mode, and sanitized account routing | Unique idempotency key |
 | `trade_decisions` | Provider schema table | Model/strategy decision before risk/execution | Has environment, model provider, venue, instrument identifier/type, signal input references, decision, order type, size, timestamp |
 | `strategy_signals` | Provider schema table | Individual strategy outputs | Has strategy name, direction, and source inputs hash |
-| `positions` | Provider schema table | Live and dry-run positions | Quantity cannot be negative for Alpaca |
+| `positions` | Provider schema table | Live and dry-run positions | Signed quantity and explicit long/short direction agree |
 | `position_events` | Provider schema table | Position transition history | Prior and new state are both recorded |
 | `alpaca_account_snapshots` | Provider schema table | Broker account state | Account ID must match configured provider/environment |
+| `alpaca_account_quarantines` | Shared table | Duplicate account identities detected across model providers | A quarantined environment, account mode, and account ID blocks every provider route until corrected |
 | `comparison_metric_snapshots` | Shared table | Materialized dashboard metrics | Missing metrics store unavailable reason |
 | `venue_portfolio_snapshots` | Shared table | Sanitized venue account balances and P&L by environment, provider, and account | Credential material is never stored |
 | `venue_position_snapshots` | Shared table | Open positions tied to a confirmed portfolio snapshot | Snapshot and account references are required |
@@ -381,7 +382,7 @@
 |---|----------|-------------------|-----------|
 | 1 | Postgres unavailable before live order | Block live order and surface degraded status | REQ-DB-007 |
 | 2 | Duplicate order idempotency key | Return existing intent or duplicate-refusal result | REQ-EXE-016 |
-| 3 | Claude and OpenAI Alpaca credentials resolve to same account ID | Block duplicated account live trading | REQ-ALP-016 |
+| 3 | Claude and OpenAI Alpaca credentials resolve to same account ID | Quarantine the account and block both provider routes from live entry or automated exit | REQ-ALP-016 |
 | 4 | Broker position and Postgres position mismatch | Persist mismatch and block affected Alpaca live orders | REQ-ALP-018 |
 | 5 | Audit event correction needed | Write new corrective audit event, do not mutate original | REQ-OBS-004 |
 | 6 | One candidate insert fails during scanner persistence | Roll back the scanner run and every candidate in the batch | REQ-DB-009 |
@@ -518,7 +519,7 @@
 | `risk.alpaca.market_order_slippage_threshold` | `0.005` | REQ-ALP-013 |
 | `alpaca.account_mode` | `paper` | REQ-ALP-007 |
 | `alpaca.allowed_asset_classes` | `stocks`, `etfs` | REQ-ALP-002 |
-| `alpaca.allow_shorting` | `false` | REQ-ALP-008 |
+| `alpaca.allow_shorting` | `false` | REQ-ALP-019 |
 | `alpaca.allow_margin` | `false` | REQ-ALP-008 |
 | `alpaca.extended_hours_enabled` | `false` | REQ-ALP-015 |
 | `trading_loop_interval_seconds` | `900` | REQ-STR-001 |
@@ -1029,8 +1030,8 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 ## 8. Alpaca Adapter
 
 **File:** `backend/app/adapters/alpaca/`  
-**Responsibility:** Integrate with Alpaca for long-only stocks and ETFs, account health, market data, market calendar, orders, cancellations, positions, and reconciliation.  
-**Requirements Covered:** REQ-ALP-001, REQ-ALP-002, REQ-ALP-003, REQ-ALP-004, REQ-ALP-008, REQ-ALP-015, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018, REQ-DAT-001, REQ-DAT-002, REQ-EXE-010, REQ-EXE-011, REQ-EXE-016  
+**Responsibility:** Integrate with Alpaca for long stocks and ETFs plus explicitly enabled easy-to-borrow U.S. equity shorts, account health, market data, market calendar, orders, cancellations, positions, and reconciliation.
+**Requirements Covered:** REQ-ALP-001 through REQ-ALP-026, REQ-DAT-001, REQ-DAT-002, REQ-EXE-010, REQ-EXE-011, REQ-EXE-016
 **Dependencies:** Venue ports, secrets adapter, Alpaca official Python SDK or documented HTTP APIs, config service  
 **Depended On By:** Ingestion service, strategy engine, risk engine, execution service, comparison service
 
@@ -1047,8 +1048,8 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 
 #### `get_account_snapshot(credentials: VenueCredentials) -> VenueCallResult[AlpacaAccountSnapshot]`
 
-- **Purpose:** Fetch account ID, buying power, equity, status, and account mode.
-- **Traces:** REQ-ALP-004, REQ-ALP-016, REQ-ALP-017
+- **Purpose:** Fetch account ID, buying power, equity, multiplier, shorting eligibility, block flags, status, and account mode.
+- **Traces:** REQ-ALP-004, REQ-ALP-016, REQ-ALP-017, REQ-ALP-020
 - **Returns:** Account snapshot.
 - **Raises/Errors:** Returns auth-failure result on rejected credentials.
 - **Side Effects:** External read call.
@@ -1063,8 +1064,8 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 
 #### `validate_asset_tradable(symbol: str) -> VenueCallResult[AssetTradability]`
 
-- **Purpose:** Check whether a symbol is stock/ETF, tradable, not halted/suspended, and eligible for v1.
-- **Traces:** REQ-ALP-002, REQ-ALP-008, REQ-ALP-015
+- **Purpose:** Check whether a symbol is an active U.S. equity, tradable, not halted/suspended, and, for short entries, shortable with `borrow_status=easy_to_borrow`.
+- **Traces:** REQ-ALP-002, REQ-ALP-008, REQ-ALP-015, REQ-ALP-021
 - **Returns:** Tradability result.
 - **Raises/Errors:** Returns refusal state for unsupported or untradable assets.
 - **Side Effects:** External read call or cache read.
@@ -1082,17 +1083,18 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
   3. Compare account IDs for duplicates.
   4. Persist duplicate-account refusal state if duplicates exist.
 
-#### Long-Only Order Mapping
+#### Direction-Aware Order Mapping
 
-- **What it does:** Converts approved order intents into Alpaca buy-to-open or sell-to-close requests.
-- **Why this approach:** v1 excludes short selling and margin.
+- **What it does:** Converts approved order intents into Alpaca buy-to-open, sell-to-close, sell-to-open, or buy-to-close requests.
+- **Why this approach:** Explicit position intent prevents a close from opening a position and keeps short entry behind broker eligibility gates.
 - **Complexity:** O(1) per order.
 - **Key steps:**
   1. Validate asset class and tradability.
   2. Validate regular market hours and stale-data threshold.
-  3. Use notional order where supported.
-  4. Round down to whole shares if fractional unsupported.
-  5. Set time in force `day` and extended-hours `false`.
+  3. For sell-to-open, verify the current account matches the registered provider account, read the broker clock, latest ask, asset, current position, and open orders, then require an open regular session, account shorting eligibility, at least 2,000 USD equity, sufficient short buying power using the current ask plus 3 percent, no current position or open order, and `borrow_status=easy_to_borrow`.
+  4. Use notional orders only for long entries; require positive whole-share quantity for sell-to-open and use the exact reconciled absolute quantity for buy-to-close.
+  5. Set the explicit Alpaca `position_intent`, time in force `day`, and extended-hours `false`.
+  6. Refuse a new entry when either the persisted reconciliation state or the immediate broker read shows a position or unresolved order for the symbol.
 
 #### Alpaca Snapshot Ingestion
 
@@ -1109,11 +1111,11 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 
 | Structure | Type | Description | Invariants |
 |-----------|------|-------------|------------|
-| `AlpacaAccountSnapshot` | Pydantic model | Account ID, equity, buying power, status | Account ID present |
+| `AlpacaAccountSnapshot` | Pydantic model | Account ID, equity, buying power, multiplier, shorting and block state, status | Account ID present |
 | `MarketCalendarDay` | Pydantic model | Regular session open/close | Extended hours excluded |
-| `AssetTradability` | Pydantic model | Asset class and trading status | Only stock/ETF allowed |
+| `AssetTradability` | Pydantic model | Asset class, trading, shortable, and borrow status | Only supported U.S. equity classes allowed |
 | `AlpacaMarketSnapshot` | Pydantic model | Quote/bar timestamp and price data | Timestamp required |
-| `AlpacaOrderRequest` | Adapter model | SDK/API order request | No short/margin fields enabled |
+| `AlpacaOrderRequest` | Adapter model | SDK/API order request | Explicit position intent; shorts use whole-share quantity |
 | `AlpacaRawSnapshot` | Adapter model | Full or incremental Alpaca snapshot | Has account/symbol window metadata |
 
 ### 8.4 Edge Cases & Boundary Conditions
@@ -1124,8 +1126,8 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 | 2 | Quote is stale for one symbol | Refuse live orders for that symbol only | REQ-ALP-015 |
 | 3 | Market is closed, holiday, or early close passed | Refuse live orders | REQ-ALP-015 |
 | 4 | Asset is option, crypto, suspended, halted, or non-tradable | Refuse live orders | REQ-ALP-002 |
-| 5 | Sell order exceeds broker/Postgres reconciled quantity | Refuse order | REQ-ALP-008 |
-| 6 | Fractional unsupported and rounded quantity is zero | Refuse order | REQ-EXE-010 |
+| 5 | Close order exceeds broker/Postgres reconciled absolute quantity | Refuse order | REQ-ALP-023 |
+| 6 | New short-entry quantity is fractional or below one share | Refuse order | REQ-ALP-022 |
 | 7 | Broker/Postgres mismatch unresolved | Block affected model provider live orders | REQ-ALP-018 |
 | 8 | Alpaca market data rate-limited | Mark `DEFERRED_RATE_LIMITED` and expose dashboard status | REQ-ALP-015 |
 | 9 | Manual broker activity changes position outside bot | Record mismatch and block affected model live orders | REQ-ALP-018 |
@@ -1135,6 +1137,11 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 | 13 | Broker buying power differs from Postgres snapshot | Refresh account snapshot; block live orders if mismatch remains | REQ-ALP-017 |
 | 14 | Broker account status is restricted, inactive, or mismatched to configured mode | Block Alpaca live orders for that model provider | REQ-ALP-017 |
 | 15 | Broker account ID differs from configured account identifier | Block Alpaca live orders and record account mismatch | REQ-ALP-016 |
+| 16 | Shorting is disabled or account equity is below 2,000 USD | Refuse sell-to-open before submit | REQ-ALP-019, REQ-ALP-020 |
+| 17 | Asset borrow status is missing, unknown, or hard-to-borrow | Refuse sell-to-open before submit | REQ-ALP-021 |
+| 18 | Reconciled position or unresolved order exists for entry symbol | Refuse new entry and use reconciliation or exit path | REQ-ALP-024 |
+| 19 | Entry eligibility fails after a short is open | Continue to allow exact risk-reducing buy-to-close through the originating provider/account | REQ-ALP-025, REQ-ALP-026 |
+| 20 | Split or corporate action leaves a fractional short that cannot be closed through the supported broker path | Do not round; block automation and surface operator action | REQ-ALP-025 |
 
 ### 8.5 Error Handling
 
@@ -1150,7 +1157,7 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 
 | NFR | Requirement | How Addressed |
 |-----|-------------|---------------|
-| Safety | No short/margin in v1 | Long-only validation and sell-to-close cap |
+| Safety | Short entry fails closed | Disabled default, broker account and asset reads, ETB-only whole-share orders, explicit position intent |
 | Data Integrity | Broker is source of holdings | Reconciliation before live orders |
 | Security | Separate accounts per model | Account ID duplicate check |
 | Observability | Alpaca-specific status | Rate-limit, stale data, account health metrics |
@@ -1598,7 +1605,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | 2 | Dashboard asks for private key | API never exposes private key | REQ-WAL-005 |
 | 3 | Credential missing during live order | Execution refuses before venue call | REQ-WAL-006 |
 | 4 | Secret rotated | Cache invalidates and new secret used on refresh | REQ-WAL-007 |
-| 5 | Alpaca duplicate account ID across model providers | Status is blocked for duplicated account | REQ-ALP-016 |
+| 5 | Alpaca duplicate account ID across model providers | Quarantine the account and block both provider routes | REQ-ALP-016 |
 
 ### 12.5 Error Handling
 
@@ -1825,7 +1832,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 
 **File:** `backend/app/services/risk_engine.py`  
 **Responsibility:** Apply global and venue-specific risk checks, Kelly sizing, slippage checks, stale-data checks, and expected refusal results before execution.  
-**Requirements Covered:** REQ-VEN-003, REQ-VEN-005, REQ-WAL-006, REQ-LLM-005, REQ-DAT-005, REQ-EXE-001, REQ-EXE-002, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-007, REQ-EXE-008, REQ-EXE-009, REQ-EXE-011, REQ-EXE-012, REQ-EXE-013, REQ-EXE-014, REQ-EXE-017, REQ-ALP-002, REQ-ALP-008, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-015, REQ-ALP-017, REQ-ALP-018  
+**Requirements Covered:** REQ-VEN-003, REQ-VEN-005, REQ-WAL-006, REQ-LLM-005, REQ-DAT-005, REQ-EXE-001 through REQ-EXE-017, REQ-ALP-002, REQ-ALP-008 through REQ-ALP-026
 **Dependencies:** Config service, scoring service, ingestion service, database repositories, venue snapshots, wallet service, reconciliation port, live-control repository  
 **Depended On By:** Execution service, exit monitor, dashboard
 
@@ -1858,8 +1865,9 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
   3. Check venue enabled, venue support, jurisdiction support, account mode, and credential status.
   4. Check current score/config version and model-specific scoring failure state.
   5. Check stale data, trading hours, halts, tradability, and Alpaca reconciliation.
-  6. Check daily loss/open positions/position size.
-  7. Check Alpaca long-only, account buying power, and allocation rules.
+  6. For entries and exposure-increasing orders, check daily loss/open positions/position size.
+  7. For Alpaca short entries, check direction, shorting configuration, account and borrow eligibility, whole-share quantity, buying power, existing position/order, and allocation rules.
+  8. For exact risk-reducing exits, bypass entry size, allocation, position-count, daily-loss, short-enable, and borrow gates while retaining persistence, credential, account-routing, market-hours, and venue-availability checks.
   8. Calculate Kelly size.
   9. Check slippage for market orders.
 
@@ -1887,7 +1895,13 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | `OPEN_POSITION_LIMIT` | Model provider has reached open-position cap | Refuse live order | REQ-EXE-006, REQ-EXE-013, REQ-ALP-011 |
 | `MAX_POSITION_LIMIT` | Proposed order exceeds configured position cap | Refuse or cap size before approval | REQ-EXE-004, REQ-EXE-008, REQ-ALP-009 |
 | `ALPACA_ALLOCATION_LIMIT` | Proposed Alpaca order exceeds per-symbol allocation | Refuse live order | REQ-ALP-012 |
-| `ALPACA_SHORT_OR_MARGIN` | Proposed Alpaca order would short or require margin | Refuse live order | REQ-ALP-008 |
+| `ALPACA_SHORTING_DISABLED` | Proposed sell-to-open while shorting is disabled | Refuse live order | REQ-ALP-008, REQ-ALP-019 |
+| `ALPACA_SHORT_ACCOUNT_INELIGIBLE` | Account is blocked, not short-enabled, below equity minimum, or lacks short buying power | Refuse sell-to-open | REQ-ALP-020 |
+| `ALPACA_SHORT_ASSET_INELIGIBLE` | Asset is not active/tradable/shortable U.S. equity or borrow status is not easy-to-borrow | Refuse sell-to-open | REQ-ALP-021 |
+| `ALPACA_SHORT_WHOLE_SHARES_REQUIRED` | Short entry has notional, fractional, zero, or negative quantity | Refuse order | REQ-ALP-022 |
+| `ALPACA_ENTRY_POSITION_EXISTS` | A position or unresolved order already exists for the symbol | Refuse new entry | REQ-ALP-024 |
+| `ALPACA_EXACT_COVER_UNAVAILABLE` | Broker path cannot close exact reconciled short quantity | Block automated cover, retain exposure, and surface operator action | REQ-ALP-025 |
+| `ALPACA_EXIT_ACCOUNT_MISMATCH` | Exit routing does not match originating provider/account | Refuse close before venue call | REQ-ALP-026 |
 | `SLIPPAGE_DATA_UNAVAILABLE` | Market-order slippage cannot be estimated from current data | Refuse market order | REQ-EXE-011, REQ-ALP-013 |
 | `SLIPPAGE_LIMIT` | Estimated slippage exceeds configured threshold | Refuse market order | REQ-EXE-011, REQ-EXE-012, REQ-ALP-013 |
 | `KELLY_NON_POSITIVE` | Kelly calculation produces zero or negative size | Refuse trade | REQ-EXE-009 |
@@ -1902,7 +1916,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | `AlpacaReconciliationSnapshot` | Domain model | Broker account ID, account mode, account status, buying power, positions, open orders, freshness, mismatch list | Fresh and mismatch-free before Alpaca live order approval |
 | `KillSwitchState` | DB/domain model | Current live-control override | Read fresh from Postgres for live checks |
 
-`AlpacaReconciliationSnapshot` fields are `environment`, `model_provider`, `account_mode`, `configured_account_id`, `broker_account_id`, `account_status`, `buying_power`, `broker_positions`, `postgres_positions`, `broker_open_orders`, `postgres_open_orders`, `observed_at`, `freshness_seconds`, `mismatches`, and `is_live_safe`. `is_live_safe` is true only when account ID, account mode, account status, buying power, open orders, and positions reconcile within configured tolerances.
+`AlpacaReconciliationSnapshot` fields are `environment`, `model_provider`, `account_mode`, `configured_account_id`, `broker_account_id`, `account_status`, `equity`, `buying_power`, `multiplier`, `shorting_enabled`, `account_blocked`, `trading_blocked`, `trade_suspended_by_user`, `transfers_blocked`, `broker_positions`, `postgres_positions`, `broker_open_orders`, `postgres_open_orders`, `asset_class`, `asset_status`, `tradable`, `shortable`, `borrow_status`, `account_observed_at`, `asset_observed_at`, `freshness_seconds`, `mismatches`, and `is_live_safe`. `is_live_safe` is true only when account ID, account mode, account status, buying power, open orders, and positions reconcile within configured tolerances. Short-entry eligibility additionally requires current account and asset fields to pass REQ-ALP-020 and REQ-ALP-021.
 
 ### 15.4 Edge Cases & Boundary Conditions
 
@@ -1911,7 +1925,8 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | 1 | Kelly size non-positive | Refuse trade | REQ-EXE-009 |
 | 2 | Global dry-run enabled | Approve only simulated execution path | REQ-EXE-002 |
 | 3 | Missing current score | Refuse model-specific live order | REQ-EXE-013 |
-| 4 | Alpaca order would short | Refuse order | REQ-ALP-008 |
+| 4 | Alpaca sell-to-open is enabled and all account, asset, borrow, size, and reconciliation gates pass | Approve remaining risk checks | REQ-ALP-019 through REQ-ALP-024 |
+| 10 | Alpaca short exit is risk-reducing and provider/account routing matches | Allow exact buy-to-close without reapplying entry gates | REQ-ALP-025, REQ-ALP-026 |
 | 5 | Alpaca per-symbol allocation exceeded | Refuse order | REQ-ALP-012 |
 | 6 | Slippage exceeds threshold | Refuse market order | REQ-EXE-011 |
 | 7 | Alpaca data rate-limited | Refuse live order for affected symbol | REQ-ALP-015 |
@@ -1960,7 +1975,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 
 **File:** `backend/app/services/execution_service.py`  
 **Responsibility:** Convert risk-approved decisions into dry-run or live orders, persist order intents before submit, enforce idempotency/reservations, reconcile ambiguous states, and handle kill-switch cancellation.  
-**Requirements Covered:** REQ-EXE-002, REQ-EXE-003, REQ-EXE-010, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-EXE-017, REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-017, REQ-ALP-018, REQ-OBS-003  
+**Requirements Covered:** REQ-EXE-002, REQ-EXE-003, REQ-EXE-010, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-EXE-017, REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-017 through REQ-ALP-026, REQ-OBS-003
 **Dependencies:** Risk engine, venue ports, database layer, config service, audit service, wallet service, live-control repository, reconciliation port  
 **Depended On By:** Worker scheduler, exit monitor, dashboard kill switch
 
@@ -1991,7 +2006,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
   3. Build idempotency key.
   4. Persist order intent and audit event in one transaction.
   5. Resolve the live submitter from the venue and model provider, for example `polymarket_us:openai` or `alpaca:claude`.
-  6. For Alpaca live orders, refresh pre-submit reconciliation and refuse if account ID, account status, buying power, open orders, or positions are stale or mismatched.
+  6. For Alpaca live orders, refresh pre-submit reconciliation and refuse if account ID, account status, buying power, open orders, or positions are stale or mismatched; sell-to-open also refreshes account shorting eligibility and asset borrow state immediately before submit.
   7. Read current `KillSwitchState` again immediately before the venue call; if active, persist `KILL_SWITCH_BLOCKED`, release the reservation, and do not call the venue.
   8. Submit via venue adapter.
   9. Persist venue acknowledgement or ambiguous state.
@@ -2036,6 +2051,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | 5 | Alpaca global dry-run enabled | Record simulated order only | REQ-ALP-005 |
 | 6 | Alpaca live enabled with paper account mode | Submit to configured paper endpoint | REQ-ALP-007 |
 | 7 | Kill switch activates after intent persistence but before venue submit | Persist blocked event, release reservation, and do not call venue | REQ-EXE-014, REQ-EXE-016 |
+| 8 | New-short eligibility fails while an existing short needs to close | Allow exact buy-to-close through the originating provider/account | REQ-ALP-025, REQ-ALP-026 |
 | 8 | Alpaca reconciliation changes after risk approval | Refuse before venue submit and persist mismatch/refusal event | REQ-ALP-017, REQ-ALP-018 |
 | 9 | Kill switch cancel requested while venue flag is disabled | Cancel known open orders despite disabled-new-work flag | REQ-EXE-015 |
 
@@ -2080,7 +2096,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 
 **File:** `backend/app/services/exit_monitor.py`  
 **Responsibility:** Monitor open positions for profit target, volume spike, stale thesis, and venue-specific exit triggers, then route approved exits through risk and execution.  
-**Requirements Covered:** REQ-EXT-001, REQ-EXT-002, REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006, REQ-EXE-016, REQ-ALP-008  
+**Requirements Covered:** REQ-EXT-001, REQ-EXT-002, REQ-EXT-003, REQ-EXT-004, REQ-EXT-005, REQ-EXT-006, REQ-EXE-016, REQ-ALP-008, REQ-ALP-022, REQ-ALP-023, REQ-ALP-025, REQ-ALP-026
 **Dependencies:** Database repositories, risk engine, execution service, venue market data, config service  
 **Depended On By:** Worker scheduler, dashboard
 
@@ -2107,7 +2123,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
   1. Load open positions by provider/venue.
   2. Fetch current market data.
   3. Check profit target, volume spike, stale thesis.
-  4. For Alpaca, enforce sell-to-close only.
+  4. For Alpaca, calculate P&L and trailing thresholds by position direction, then use sell-to-close for longs and buy-to-close for shorts.
   5. Route approved exit through risk and execution.
 
 ### 17.3 Data Structures
@@ -2122,7 +2138,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | # | Scenario | Expected Behavior | REQ Trace |
 |---|----------|-------------------|-----------|
 | 1 | Dry-run mode enabled | Record simulated exit only | REQ-EXT-005 |
-| 2 | Alpaca sell-to-close exceeds reconciled quantity | Refuse exit order | REQ-ALP-008 |
+| 2 | Alpaca close exceeds reconciled absolute quantity or uses the wrong close side | Refuse exit order | REQ-ALP-022, REQ-ALP-023 |
 | 3 | Position already has active reservation | Skip and retry next loop | REQ-EXE-016 |
 | 4 | Market data stale | Do not execute exit except kill-switch cancel flow | REQ-EXT-006 |
 

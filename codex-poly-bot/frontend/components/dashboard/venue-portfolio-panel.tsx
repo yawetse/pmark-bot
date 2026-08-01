@@ -51,6 +51,7 @@ type PortfolioPositionView = {
   title: string;
   outcome: string | null;
   quantity: string;
+  positionSide: "long" | "short";
   averageEntryPrice: string | null;
   currentPrice: string | null;
   costBasisUsd: string | null;
@@ -227,7 +228,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
             <td>{venueLabel(position.venue)}</td>
             <td>{providerLabel(position.providers)}</td>
             <td><strong>{position.title}</strong>{position.outcome ? <span>{position.outcome}</span> : null}</td>
-            <td>{position.quantity}</td>
+            <td>{position.quantity} <span className="status neutral">{position.positionSide}</span></td>
             <td>{formatOptionalUsd(position.costBasisUsd)}</td>
             <td>{formatOptionalUsd(position.marketValueUsd)}</td>
             <td className={pnlTone(position.unrealizedPnlUsd)}>{formatOptionalUsd(position.unrealizedPnlUsd)}</td>

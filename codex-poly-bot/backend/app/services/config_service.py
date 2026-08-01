@@ -564,6 +564,8 @@ class ConfigService:
             if value not in {"paper", "live"}:
                 raise ConfigValidationError("alpaca account mode must be paper or live")
             return value
+        if patch.path == "alpaca.allow_shorting":
+            return self._bool(value, patch.path)
         if patch.path == "alpaca.symbol_universe":
             if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
                 raise ConfigValidationError("alpaca symbol universe must be a non-empty list")
@@ -899,6 +901,7 @@ def default_config_payload() -> dict[str, Any]:
         "exit": DEFAULT_EXIT_CONFIG,
         "alpaca": {
             "account_mode": "paper",
+            "allow_shorting": False,
             "symbol_presets": list(DEFAULT_ALPACA_SYMBOL_PRESETS),
             "custom_symbols": [],
             "custom_presets": {},

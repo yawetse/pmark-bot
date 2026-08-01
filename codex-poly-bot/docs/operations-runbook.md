@@ -1,6 +1,6 @@
 # Operations Runbook
 
-REQ: REQ-DEP-004, REQ-EXE-014, REQ-OBS-005, REQ-WAL-006, REQ-FND-019
+REQ: REQ-DEP-004, REQ-EXE-014, REQ-OBS-005, REQ-WAL-006, REQ-FND-019, REQ-ALP-019, REQ-ALP-025, REQ-ALP-026
 
 Use this runbook for live incidents, degraded health, bad deploys, and credential failures.
 
@@ -19,6 +19,18 @@ An alert in `sending` means delivery was claimed but the final SES result was no
 For rollback, first enable the funding emergency stop and set direct funding and both limits to the disabled zero defaults. Roll back ECS only after these values are read back. Funding tables are retained so expected, missing, matched, and cash-flow history remains available after application rollback.
 
 Release smoke tests must not create a real transfer. Verify authenticated funding config readback and query the backend CloudWatch log group for the structured marker `funding_broker_post_attempt`. The release window must contain zero matching events.
+
+## Alpaca Short Selling
+
+Short entry is an audited application setting and defaults to `alpaca.allow_shorting=false`. Keep it disabled until the selected Alpaca account reports active status, shorting enabled, at least 2,000 USD equity, enough current buying power, and no trading or account block. Each entry also requires the current asset to be active, tradable, shortable, and `easy_to_borrow`.
+
+Each model provider must resolve to a distinct Alpaca account in the same environment and mode. If two providers resolve to one account, the service quarantines that account and blocks both provider routes. Correct both credentials and complete one successful refresh with distinct routes before live routing can resume. Portfolio refresh also reconciles submitted local intents from exact broker fill and terminal order evidence before it compares open orders.
+
+When approved, enable the setting under **Settings > Trading Access**. The service uses whole-share sell-to-open orders only. It refuses notional and fractional short entries, hard-to-borrow or unknown borrow states, and any new entry where a position or unresolved order exists in the symbol.
+
+Disabling the setting stops new shorts. It does not block an exact risk-reducing buy-to-close for an existing reconciled short. The close is routed by environment, model provider, account mode, and account registration. If the broker cannot accept the exact quantity or the current account does not match the originating account, the service refuses automation and records an operator-action state. Never round down a fractional short cover.
+
+For rollback, save `alpaca.allow_shorting=false` first and read it back. Leave exit monitoring running so existing short exposure can close through the exact cover path. Then roll back ECS if the application build must be reverted. Deployment verification uses read-only Alpaca account and asset calls and never places a live short order.
 
 ## SigNoz Observability
 
@@ -60,8 +72,9 @@ Treat RPC URLs with embedded provider tokens as secrets even though the base set
 
 Live-gated runs can submit real orders only when the runtime has attached venue submitters. The backend attaches them when `LIVE_ENABLED=true`, the venue flag is enabled, required credentials are present, and the Alpaca account status is `active`.
 
-- Alpaca entries use market buy orders at `/v2/orders` with notional sizing.
-- Alpaca exits use market sell orders at `/v2/orders` with tracked quantity.
+- Alpaca long entries use market buy-to-open orders at `/v2/orders` with notional sizing.
+- Enabled Alpaca short entries use eligible whole-share sell-to-open orders at `/v2/orders` after current account and asset checks.
+- Alpaca exits use sell-to-close for longs and exact-quantity buy-to-close for shorts.
 - Polymarket entries use the official Polymarket US SDK `orders.create`.
 - Polymarket exits use the official Polymarket US SDK `orders.close_position`.
 
