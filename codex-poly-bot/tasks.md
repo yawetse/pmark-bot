@@ -1803,3 +1803,38 @@
 - [ ] Every REQ-FND requirement maps to passing test and implementation evidence
 - [ ] Development and production deployment evidence is attached to the named tracking issue
 - [ ] Direct transfers remain disabled with zero limits and no real transfer is sent
+
+---
+
+### TASK-050: Implement and Release Production-Safe Alpaca Short Selling
+
+**Story:** As an operator, I want the Alpaca strategy to open and close eligible short positions, so that bearish stock signals can be executed under the same risk, reconciliation, and exit controls as long positions.
+
+**Priority:** P0
+**Estimate:** XL
+**Phase:** Phase 10 - Alpaca direction-aware execution
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `alpaca`, `risk`, `release`
+**Dependencies:** TASK-009, TASK-026, TASK-028, TASK-029, TASK-035, TASK-040
+
+**Requirements Covered:** REQ-ALP-002, REQ-ALP-008, REQ-ALP-019 through REQ-ALP-026
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-050-01 | When configuration is seeded or the active stock profile is applied, Alpaca shorting shall remain disabled until an authorized audited boolean change enables it. |
+| AC-050-02 | Before sell-to-open, the adapter shall verify the registered account identity and read the current account, market clock, latest ask, asset, position, and open orders; it shall refuse before order POST unless every account, session, buying-power, U.S.-equity, borrow, and empty-symbol-state gate passes. |
+| AC-050-03 | When a short entry is submitted, the request shall use positive whole-share quantity and explicit sell-to-open intent, never a fractional or notional short entry. |
+| AC-050-04 | When Alpaca reports a short position, persistence, portfolio normalization, lifecycle loading, P&L, trailing stop, position age, exit audit, notifications, and dashboard output shall preserve short direction. |
+| AC-050-05 | When a short exits, the system shall submit buy-to-close for the exact reconciled absolute quantity; a long exit shall remain sell-to-close. |
+| AC-050-06 | If any position or unresolved order exists for the symbol, a new entry shall be refused and shall not add to, reduce, or cross the position. |
+| AC-050-07 | Before merge, requirements, HLD, LLD, test specification, implementation, and traceability shall map REQ-ALP-019 through REQ-ALP-026 to passing tests. |
+| AC-050-08 | When the feature merges to `develop` and then `main`, development and production deployment checks, HTTPS health, dashboard visibility, and read-only Alpaca eligibility evidence shall pass without placing a live short order. |
+| AC-050-09 | When release evidence is complete, GitHub issue 245 shall contain test, pull request, deployment, configuration, and eligibility evidence and shall be closed. |
+| AC-050-10 | When short-entry eligibility later fails or shorting is disabled, an existing short shall remain eligible for exact buy-to-close through the originating model-provider account. |
+| AC-050-11 | If a corporate action creates fractional short quantity that the supported broker path cannot close exactly, automation shall not round down and shall surface an operator action. |
+
+**Definition of Done:**
+- [ ] Short adapter, execution, reconciliation, lifecycle, config, dashboard, and regression tests pass
+- [ ] Paper-account order verification uses a reversible non-marketable order or documented test-only alternative; no live short order is placed
+- [ ] Development and production deployments are verified and evidence is attached to issue 245

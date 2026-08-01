@@ -78,7 +78,9 @@ Record the operator, environment, venue, model provider, account mode, risk conf
 
 ## Venue Submitter Contract
 
-- Alpaca entries submit market buy orders to `/v2/orders` using notional sizing and deterministic client order IDs.
-- Alpaca exits submit market sell orders to `/v2/orders` using the tracked open quantity.
+- Alpaca long entries submit market buy-to-open orders to `/v2/orders` using notional sizing and deterministic client order IDs.
+- Alpaca short entries are disabled by default. When explicitly enabled, they require a current eligible account, an active easy-to-borrow U.S. equity, enough buying power, no existing position or unresolved order in the symbol, positive whole-share quantity, and explicit sell-to-open intent.
+- Alpaca long exits submit sell-to-close. Alpaca short exits submit buy-to-close for the exact reconciled absolute quantity, including a fractional quantity created by a corporate action when the broker accepts it.
+- Never enable short entry as a deployment smoke test. Use read-only account and asset checks, keep `alpaca.allow_shorting=false`, and verify the saved setting after each deployment.
 - Polymarket entries submit through the official Polymarket US SDK `orders.create` method.
 - Polymarket exits submit through the official Polymarket US SDK `orders.close_position` method with configured market-order slippage tolerance.

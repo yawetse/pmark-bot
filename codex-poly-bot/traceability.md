@@ -116,3 +116,43 @@ The verification browser did not have an authenticated GitHub session. Authentic
 | SES identity and ACM certificate | SES verified; stack certificate binding matched; live TLS valid | SES verified; stack certificate binding matched; live TLS valid |
 
 No real bank transfer is used for release verification.
+
+---
+
+# Alpaca Short Selling Traceability
+
+## Scope
+
+- GitHub issue: `#245`
+- Requirements: `REQ-ALP-019` through `REQ-ALP-026`
+- HLD decisions: `DD-034`, `DD-047`, `DD-057`
+- LLD authority: sections 1, 2, 3, 8, 15, 16, 17, 20, 23, and 24
+- Plan: Phase 10, steps 10.1 through 10.6
+- Task: `TASK-050`
+- Date: 2026-08-01
+
+## Requirement Matrix
+
+| Requirement | Design | Task | Test IDs | Implementation Evidence | Status |
+|-------------|--------|------|----------|------------------------|--------|
+| REQ-ALP-019 | DD-034, DD-047; LLD 3, 15 | TASK-050 | TST-REQ-ALP-019-01, TST-REQ-ALP-019-02 | `config_service.py`; `config-controls.tsx`; `test_alpaca_short_selling.py` | Implemented; locally verified |
+| REQ-ALP-020 | DD-047; LLD 8, 15 | TASK-050 | TST-REQ-ALP-020-01, TST-REQ-ALP-020-02 | `venues/alpaca.py`; `test_alpaca_short_selling.py` | Implemented; locally verified |
+| REQ-ALP-021 | DD-047; LLD 8, 15 | TASK-050 | TST-REQ-ALP-021-01, TST-REQ-ALP-021-02 | `venues/alpaca.py`; `test_alpaca_short_selling.py` | Implemented; locally verified |
+| REQ-ALP-022 | DD-047; LLD 8, 15, 17 | TASK-050 | TST-REQ-ALP-022-01, TST-REQ-ALP-022-02 | `execution_service.py`; `lifecycle_service.py`; `venues/alpaca.py`; short-selling tests | Implemented; locally verified |
+| REQ-ALP-023 | DD-034, DD-047; LLD 1, 2, 8, 15, 17, 20, 23, 24 | TASK-050 | TST-REQ-ALP-023-01, TST-REQ-ALP-023-02 | lifecycle, stock-history, portfolio, and dashboard position changes; lifecycle and history tests | Implemented; locally verified |
+| REQ-ALP-024 | DD-047; LLD 8, 15 | TASK-050 | TST-REQ-ALP-024-01, TST-REQ-ALP-024-02 | `lifecycle_service.py`; lifecycle short-entry tests | Implemented; locally verified |
+| REQ-ALP-025 | DD-057; LLD 8, 15, 17 | TASK-050 | TST-REQ-ALP-025-01, TST-REQ-ALP-025-02, TST-REQ-ALP-025-03 | exact quantity cover in adapter and lifecycle; short-selling and lifecycle tests | Implemented; locally verified |
+| REQ-ALP-026 | DD-057; LLD 1, 2, 8, 16, 17, 20, 23, 24 | TASK-050 | TST-REQ-ALP-026-01, TST-REQ-ALP-026-02 | account registration lookup, provider-routed exits, account-match gate, sanitized audit payload; lifecycle tests | Implemented; locally verified |
+
+## Release Evidence Checklist
+
+Production release evidence is tracked on [GitHub issue #245](https://github.com/yawetse/pmark-bot/issues/245). No live short order is part of the deployment smoke test.
+
+| Evidence | Development | Production |
+|----------|-------------|------------|
+| Pull request and GitHub Actions | Pending promotion | Pending promotion |
+| CloudFormation and ECS | Pending promotion | Pending promotion |
+| HTTPS health and OAuth boundary | Pending promotion | Pending promotion |
+| Authenticated short-setting readback | Must remain `false` after deploy | Must remain `false` after deploy |
+| Read-only Alpaca account and asset eligibility | Pending current credential read | Pending current credential read |
+| Order safety | No live short order | No live short order |

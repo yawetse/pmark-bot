@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from hashlib import sha256
 from threading import Lock, RLock
 from typing import Any
 from uuid import uuid4
@@ -2643,13 +2644,63 @@ class SharedRepositories:
         model_provider: ModelProvider,
         account_id: str,
     ) -> AlpacaAccountRegistrationResult:
-        existing = self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_registry")
+        quarantine_reason = self.alpaca_account_quarantine_reason(
+            environment=environment,
+            account_mode=account_mode,
+            account_id=account_id,
+        )
+        if quarantine_reason:
+            return AlpacaAccountRegistrationResult(
+                live_trading_allowed=False,
+                refusal_reason=quarantine_reason,
+            )
+        existing = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_registry")
+            if row["environment"] == environment.value and row["account_mode"] == account_mode
+        ]
+        latest_by_provider: dict[str, dict[str, Any]] = {}
         for row in existing:
-            same_environment = row["environment"] == environment.value
-            same_mode = row["account_mode"] == account_mode
+            provider = str(row["model_provider"])
+            current = latest_by_provider.get(provider)
+            row_created_at = row.get("created_at")
+            current_created_at = current.get("created_at") if current else None
+            if current is None or (
+                isinstance(row_created_at, datetime)
+                and (
+                    not isinstance(current_created_at, datetime)
+                    or row_created_at > current_created_at
+                )
+            ):
+                latest_by_provider[provider] = row
+        for row in latest_by_provider.values():
             same_account = row["account_id"] == account_id
+            same_provider = row["model_provider"] == model_provider.value
+            if same_account and same_provider:
+                return AlpacaAccountRegistrationResult(live_trading_allowed=True)
             different_provider = row["model_provider"] != model_provider.value
-            if same_environment and same_mode and same_account and different_provider:
+            if same_account and different_provider:
+                reason = "duplicate Alpaca account identifier"
+                quarantine_id = sha256(
+                    f"{environment.value}:{account_mode}:{account_id}".encode("utf-8")
+                ).hexdigest()
+                self.state.upsert_by_id(
+                    f"{SHARED_SCHEMA}.alpaca_account_quarantines",
+                    quarantine_id,
+                    {
+                        "environment": environment.value,
+                        "account_mode": account_mode,
+                        "account_id": account_id,
+                        "model_providers": sorted(
+                            {row["model_provider"], model_provider.value}
+                        ),
+                        "reason": reason,
+                        "active": True,
+                        "created_at": datetime.now(UTC),
+                        "updated_at": datetime.now(UTC),
+                        "resolved_at": None,
+                    },
+                )
                 self.record_audit_event(
                     event_type="alpaca_account_duplicate",
                     actor="system",
@@ -2661,13 +2712,24 @@ class SharedRepositories:
                         "account_mode": account_mode,
                         "existing_model_provider": row["model_provider"],
                         "duplicate_model_provider": model_provider.value,
-                        "refusal_reason": "duplicate Alpaca account identifier",
+                        "refusal_reason": reason,
                     },
                 )
                 return AlpacaAccountRegistrationResult(
                     live_trading_allowed=False,
-                    refusal_reason="duplicate Alpaca account identifier",
+                    refusal_reason=reason,
                 )
+        current_provider_route = latest_by_provider.get(model_provider.value)
+        if current_provider_route is not None:
+            self.state.update_by_id(
+                f"{SHARED_SCHEMA}.alpaca_account_registry",
+                str(current_provider_route["id"]),
+                {
+                    "account_id": account_id,
+                    "created_at": datetime.now(UTC),
+                },
+            )
+            return AlpacaAccountRegistrationResult(live_trading_allowed=True)
         self.state.insert(
             f"{SHARED_SCHEMA}.alpaca_account_registry",
             {
@@ -2680,6 +2742,129 @@ class SharedRepositories:
             },
         )
         return AlpacaAccountRegistrationResult(live_trading_allowed=True)
+
+    def alpaca_account_quarantine_reason(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        account_id: str,
+    ) -> str | None:
+        rows = self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_quarantines")
+        match = next(
+            (
+                row
+                for row in rows
+                if row["environment"] == environment.value
+                and row["account_mode"] == account_mode
+                and row["account_id"] == account_id
+                and row.get("active") is True
+            ),
+            None,
+        )
+        return str(match.get("reason") or "") if match else None
+
+    def reconcile_alpaca_account_quarantines(
+        self,
+        *,
+        environment: Environment,
+        routes: dict[ModelProvider, tuple[str, str]],
+    ) -> None:
+        """Resolve a quarantine only after all implicated providers report distinct routes."""
+
+        for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_quarantines"):
+            if row.get("environment") != environment.value or row.get("active") is not True:
+                continue
+            providers = {
+                ModelProvider(str(value))
+                for value in row.get("model_providers") or []
+            }
+            if not providers or any(provider not in routes for provider in providers):
+                continue
+            provider_routes = [routes[provider] for provider in providers]
+            if len(set(provider_routes)) != len(provider_routes):
+                continue
+            now = datetime.now(UTC)
+            self.state.update_by_id(
+                f"{SHARED_SCHEMA}.alpaca_account_quarantines",
+                str(row["id"]),
+                {"active": False, "resolved_at": now, "updated_at": now},
+            )
+            self.record_audit_event(
+                event_type="alpaca_account_quarantine_resolved",
+                actor="system",
+                action="alpaca_account.quarantine_resolved",
+                environment=environment,
+                entity_id=str(row.get("account_id") or ""),
+                metadata={
+                    "account_mode": str(row.get("account_mode") or ""),
+                    "model_providers": sorted(provider.value for provider in providers),
+                },
+            )
+
+    def alpaca_provider_has_quarantined_account(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str,
+        model_provider: ModelProvider,
+    ) -> bool:
+        return any(
+            row.get("environment") == environment.value
+            and row.get("account_mode") == account_mode
+            and row.get("active") is True
+            and model_provider.value in (row.get("model_providers") or [])
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_quarantines")
+        )
+
+    def alpaca_account_registrations(
+        self,
+        *,
+        environment: Environment,
+        account_mode: str | None = None,
+        model_provider: ModelProvider | None = None,
+    ) -> list[dict]:
+        """Return internal Alpaca account routing records."""
+
+        self.ensure_schema(SHARED_SCHEMA)
+        rows = [
+            row
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_registry")
+            if row["environment"] == environment.value
+        ]
+        if account_mode is not None:
+            rows = [row for row in rows if row["account_mode"] == account_mode]
+        if model_provider is not None:
+            rows = [row for row in rows if row["model_provider"] == model_provider.value]
+        latest_by_provider: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            provider = str(row["model_provider"])
+            current = latest_by_provider.get(provider)
+            row_created_at = row.get("created_at")
+            current_created_at = current.get("created_at") if current else None
+            if current is None or (
+                isinstance(row_created_at, datetime)
+                and (
+                    not isinstance(current_created_at, datetime)
+                    or row_created_at > current_created_at
+                )
+            ):
+                latest_by_provider[provider] = row
+        rows = list(latest_by_provider.values())
+        quarantined_accounts = {
+            (row["account_mode"], row["account_id"])
+            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_account_quarantines")
+            if row["environment"] == environment.value and row.get("active") is True
+        }
+        return [
+            {
+                **row,
+                "live_trading_allowed": (
+                    (row["account_mode"], row["account_id"]) not in quarantined_accounts
+                ),
+            }
+            for row in rows
+        ]
 
 
 class ModelRepositories:

@@ -140,12 +140,20 @@ class AlpacaStockHistoryImporter:
     ) -> dict:
         """Persist a current Alpaca open position snapshot."""
 
+        quantity = _decimal(payload.get("qty"), "position quantity")
+        position_side = str(payload.get("side") or "").strip().lower()
+        if position_side == "short":
+            quantity = -abs(quantity)
+        elif position_side == "long":
+            quantity = abs(quantity)
+        else:
+            raise ValueError("position side must be long or short")
         return self.registry.shared().record_alpaca_historical_position(
             environment=environment,
             account_mode=account_mode,
             account_id=account_id,
             symbol=_required_text(payload.get("symbol"), "position symbol"),
-            quantity=_decimal(payload.get("qty"), "position quantity"),
+            quantity=quantity,
             average_entry_price=_decimal_or_none(payload.get("avg_entry_price")),
             cost_basis=_decimal_or_none(payload.get("cost_basis")),
             market_value=_decimal_or_none(payload.get("market_value")),
@@ -272,23 +280,29 @@ class AlpacaStockHistoryImporter:
         observed_at = calculated_at or datetime.now(UTC)
         snapshots = []
         for symbol in symbols:
-            state = _reconstruct_long_only_cost_basis(grouped.get(symbol, []))
+            state = _reconstruct_position_cost_basis(grouped.get(symbol, []))
             position = latest_positions.get(symbol)
             if position is not None:
                 open_quantity = Decimal(str(position["quantity"]))
-                cost_basis = _decimal_or_none(position.get("cost_basis")) or state["cost_basis"]
+                cost_basis = abs(
+                    _decimal_or_none(position.get("cost_basis")) or state["cost_basis"]
+                )
                 average_entry_price = (
                     _decimal_or_none(position.get("average_entry_price"))
-                    or _safe_average(cost_basis, open_quantity)
+                    or _safe_average(cost_basis, abs(open_quantity))
                 )
                 market_value = _decimal_or_none(position.get("market_value"))
                 unrealized = _decimal_or_none(position.get("unrealized_pnl_usd"))
                 if unrealized is None and market_value is not None:
-                    unrealized = market_value - cost_basis
+                    unrealized = (
+                        cost_basis + market_value
+                        if open_quantity < 0
+                        else market_value - cost_basis
+                    )
             else:
                 open_quantity = state["open_quantity"]
                 cost_basis = state["cost_basis"]
-                average_entry_price = _safe_average(cost_basis, open_quantity)
+                average_entry_price = _safe_average(cost_basis, abs(open_quantity))
                 market_value = None
                 unrealized = Decimal("0")
 
@@ -689,30 +703,39 @@ class AlpacaBrokerHistoryBackfiller:
         return httpx.Client(timeout=self.timeout_seconds, transport=self.transport)
 
 
-def _reconstruct_long_only_cost_basis(fills: list[dict]) -> dict[str, Decimal]:
+def _reconstruct_position_cost_basis(fills: list[dict]) -> dict[str, Decimal]:
     open_quantity = Decimal("0")
-    cost_basis = Decimal("0")
+    average_entry = Decimal("0")
     realized = Decimal("0")
     for fill in sorted(fills, key=lambda row: row["filled_at"]):
         quantity = Decimal(str(fill["quantity"]))
         price = Decimal(str(fill["price"]))
         side = str(fill["side"]).lower()
-        if side == "buy":
-            open_quantity += quantity
-            cost_basis += quantity * price
+        if quantity <= 0 or price <= 0 or side not in {"buy", "sell"}:
             continue
-        if side != "sell" or quantity <= 0:
+        delta = quantity if side == "buy" else -quantity
+        if open_quantity == 0 or open_quantity * delta > 0:
+            combined = abs(open_quantity) + abs(delta)
+            average_entry = (
+                (average_entry * abs(open_quantity)) + (price * abs(delta))
+            ) / combined
+            open_quantity += delta
             continue
-        average_cost = _safe_average(cost_basis, open_quantity) or Decimal("0")
-        closed_quantity = min(quantity, open_quantity)
-        if closed_quantity <= 0:
-            continue
-        realized += (price - average_cost) * closed_quantity
-        cost_basis -= average_cost * closed_quantity
-        open_quantity -= closed_quantity
+        closed_quantity = min(abs(delta), abs(open_quantity))
+        realized += (
+            (price - average_entry) * closed_quantity
+            if open_quantity > 0
+            else (average_entry - price) * closed_quantity
+        )
+        prior_quantity = open_quantity
+        open_quantity += delta
+        if open_quantity == 0:
+            average_entry = Decimal("0")
+        elif prior_quantity * open_quantity < 0:
+            average_entry = price
     return {
         "open_quantity": open_quantity,
-        "cost_basis": cost_basis,
+        "cost_basis": abs(open_quantity) * average_entry,
         "realized_pnl_usd": realized,
     }
 

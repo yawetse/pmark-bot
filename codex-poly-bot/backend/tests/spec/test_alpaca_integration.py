@@ -889,7 +889,7 @@ def test_req_alp_016_02_two_model_providers_resolve_same_alpaca_account_identifi
     """
     registry = RepositoryRegistry()
     shared = registry.shared()
-    shared.register_alpaca_account(
+    original = shared.register_alpaca_account(
         environment=Environment.PRODUCTION,
         account_mode="live",
         model_provider=ModelProvider.OPENAI,
@@ -906,6 +906,51 @@ def test_req_alp_016_02_two_model_providers_resolve_same_alpaca_account_identifi
     assert not result.live_trading_allowed
     assert result.refusal_reason == "duplicate Alpaca account identifier"
     assert len(registry.state.rows("shared.alpaca_account_registry")) == 1
+    retry_original = shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.OPENAI,
+        account_id="alpaca-shared-account",
+    )
+    registrations = shared.alpaca_account_registrations(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+    )
+    quarantine = registry.state.rows("shared.alpaca_account_quarantines")
+    assert original.live_trading_allowed
+    assert not retry_original.live_trading_allowed
+    assert registrations[0]["live_trading_allowed"] is False
+    assert quarantine[0]["model_providers"] == ["claude", "openai"]
+    shared.reconcile_alpaca_account_quarantines(
+        environment=Environment.PRODUCTION,
+        routes={
+            ModelProvider.OPENAI: ("live", "alpaca-openai-replacement"),
+            ModelProvider.CLAUDE: ("live", "alpaca-shared-account"),
+        },
+    )
+    assert registry.state.rows("shared.alpaca_account_quarantines")[0]["active"] is False
+    assert shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.OPENAI,
+        account_id="alpaca-openai-replacement",
+    ).live_trading_allowed
+    assert shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="alpaca-shared-account",
+    ).live_trading_allowed
+    assert {
+        (row["model_provider"], row["account_id"])
+        for row in shared.alpaca_account_registrations(
+            environment=Environment.PRODUCTION,
+            account_mode="live",
+        )
+    } == {
+        ("openai", "alpaca-openai-replacement"),
+        ("claude", "alpaca-shared-account"),
+    }
     audit_row = registry.state.rows("shared.audit_events")[0]
     assert audit_row["event_type"] == "alpaca_account_duplicate"
     assert audit_row["success"] is False
