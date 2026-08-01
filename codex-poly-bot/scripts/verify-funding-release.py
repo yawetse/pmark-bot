@@ -212,8 +212,12 @@ def main() -> int:
         raise RuntimeError("config readback returned the wrong environment")
     settings = config.get("settings") or {}
     alpaca = settings.get("alpaca") or {}
-    if alpaca.get("allow_shorting") is not False:
-        raise RuntimeError("unsafe Alpaca short-selling readback: allow_shorting must be false")
+    allow_shorting = alpaca.get("allow_shorting", "missing")
+    if allow_shorting is not False:
+        raise RuntimeError(
+            "unsafe Alpaca short-selling readback: "
+            f"allow_shorting must be false, got {allow_shorting!r}"
+        )
 
     release_assets = _release_asset_status(
         environment,
