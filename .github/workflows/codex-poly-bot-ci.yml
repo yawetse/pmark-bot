@@ -246,6 +246,7 @@ jobs:
         env:
           APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
           BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
           DEPLOY_ENVIRONMENT: development
           RELEASE_START_MS: ${{ steps.release-window.outputs.start_ms }}
           RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
@@ -291,6 +292,7 @@ jobs:
         env:
           APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
           BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
           DEPLOY_ENVIRONMENT: production
           RELEASE_START_MS: ${{ steps.release-window.outputs.start_ms }}
           RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}

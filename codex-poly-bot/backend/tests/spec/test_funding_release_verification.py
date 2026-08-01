@@ -44,6 +44,16 @@ def test_release_verifier_mints_a_backend_compatible_token() -> None:
     assert access.username == "yaw"
 
 
+def test_release_verifier_uses_the_single_allowed_user_when_runtime_owner_is_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("RUNTIME_CONFIG_USERNAME", raising=False)
+    monkeypatch.setenv("DASHBOARD_ALLOWED_USERS", "yawetse")
+    module = _script_module()
+
+    assert module._runtime_username() == "yawetse"
+
+
 def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
