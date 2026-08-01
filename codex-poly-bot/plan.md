@@ -23,6 +23,7 @@
 | 7 | Production readiness and runbooks | Documentation, source references, live-trading checklist, operations runbook, rollback runbook, final traceability checks | Phases 1-6 | Merge to `main` deploys production automatically in dry-run mode; live enablement is controlled by checklist and dashboard config |
 | 8 | Dashboard information architecture redesign | Five-route shell, data-derived Overview, Activity, Performance, simplified Settings, Help, responsive and accessibility validation | Phases 4 and 7; issue #194; dashboard design handoff | Development and production show the redesigned dashboard with real data, no prototype controls, and all release health checks passing |
 | 9 | Recurring funding and direct-transfer controls | Funding domain and config, cash-flow and occurrence persistence, bounded venue activity reads, schedule materialization, reconciliation, alerts, adjusted returns, disabled Alpaca Broker transfer adapter, funding API, Performance history, Settings controls, infrastructure secret references | Phases 4 through 8; REQ-FND-001 through REQ-FND-020; DD-048 through DD-056 | Development and production reconcile venue funding and show adjusted performance; direct transfers remain disabled with zero limits and no real transfer is sent during release verification |
+| 10 | Alpaca direction-aware execution | Disabled-by-default short configuration, account and asset eligibility, position-intent orders, signed reconciliation, exact provider-routed covers, short-aware P&L and exits, dashboard visibility, release evidence | Phases 3 through 7; REQ-ALP-019 through REQ-ALP-026; DD-047, DD-057 | Development and production can execute easy-to-borrow shorts only when explicitly enabled and broker eligibility passes; existing shorts remain coverable; no live short order is used as a deployment test |
 
 ## Dependency Graph
 
@@ -147,6 +148,7 @@ Core services + API + Frontend
 | Funding integrations | Funding foundation tests pass | Polymarket and Alpaca activity normalization, Broker port and adapter, secret boundary | Normalized activity and one-POST contract |
 | Funding product surface | Funding service and API contract pass | Reconciliation, alerts, API, Performance, Settings | Sanitized response types and versioned config |
 | Funding release | All Phase 9 tests pass | CloudFormation refs, dev deploy, prod promotion, evidence | Direct path disabled and no real transfer smoke test |
+| Alpaca short execution | Direction-aware adapter and lifecycle tests pass | Account/asset gates, execution, reconciliation, exits, Settings, dev/prod evidence | Shorting remains disabled unless explicitly enabled; no live short smoke test |
 
 ## Risk Register
 
@@ -172,6 +174,7 @@ Core services + API + Frontend
 | Late activity creates a false missing alert | High | Persist activity coverage watermark and require coverage past deadline before missing transition | Phase 9 venue sync and reconciliation |
 | Deposit inflates strategy return | High | Completed cash-flow ledger, fixed-precision adjusted P&L, boundary-fresh Modified Dietz tests | Phase 9 performance work |
 | Bank or relationship data leaks | High | Exact IDs remain secret-source-only, normalized persistence and API allowlists, log-boundary tests | Phase 9 adapter, API, and deployment work |
+| Short order opens an unsupported or unintended position | High | Disabled default, current account and asset reads, ETB-only whole shares, explicit position intent, existing-position/order refusal, signed reconciliation | Phase 10 |
 
 ## Module Coverage
 
@@ -223,6 +226,7 @@ Core services + API + Frontend
 | Alpaca Broker funding adapter | Phase 9 |
 | Funding persistence and migration | Phase 9 |
 | Funding dashboard views | Phase 9 |
+| Alpaca short eligibility and direction-aware lifecycle | Phase 10 |
 
 ## Phase Gates
 
@@ -237,6 +241,7 @@ Core services + API + Frontend
 | Phase 7 complete | Runbooks, live checklist, source references, and traceability checks are complete |
 | Phase 8 complete | Frontend typecheck and tests pass; design review, code review, accessibility audit, 390-pixel and desktop browser checks pass; issue #194 is updated; development and production deploy and health evidence pass |
 | Phase 9 complete | Funding requirement tests, database constraints, adapter contracts, full direct-transfer refusal matrix, scheduler integration, config audit, API and log privacy, explicit no-Polymarket-write/no-Plaid checks, frontend typecheck and behavior tests, CloudFormation validation, shell syntax, and full regression pass; development and production migration/readback show sanitized funding state with direct transfers disabled, both limits `0.00`, health green, and zero Broker POST log events |
+| Phase 10 complete | REQ-ALP-019 through REQ-ALP-026 tests, full backend regression, frontend typecheck and Settings tests, adapter no-POST refusal checks, exact-cover and account-routing checks, paper verification, development and production deploys, HTTPS health, dashboard visibility, and read-only production account/asset eligibility evidence pass; no live short order is placed |
 
 ## Phase 9 Execution Detail
 
@@ -253,3 +258,14 @@ Core services + API + Frontend
 | 9.9 | Add optional environment-scoped Broker secret references, runbooks, and deployment contract checks | 9.6 through 9.8 | CloudFormation validation, shell syntax, missing-secret safe default tests, and no Polymarket write resource |
 | 9.10 | Rebase on current `develop`, run full local gates, open the feature PR, deploy development, and verify | 9.1 through 9.9 | CI run, migration success, dev stack/ECS/health, sanitized authenticated funding API/browser evidence, direct disabled and both limits `0.00`, and zero Broker POST log events for the release window |
 | 9.11 | Promote `develop` to `main`, verify production, and attach release evidence | Successful 9.10 | Production CI and migration success; stack/ECS/health/TLS/browser/SES/ACM evidence; authenticated sanitized `GET /api/funding` shows `direct_transfers_enabled=false` and both limits `0.00`; CloudWatch funding adapter metrics/log query shows zero Broker POST events for the release window |
+
+## Phase 10 Execution Detail
+
+| Step | Work | Depends On | Verification |
+|------|------|------------|--------------|
+| 10.1 | Add disabled shorting config and dashboard control without changing the active stock profile | Approved requirements and design | Config validation, audit, default, profile, and frontend control tests |
+| 10.2 | Add account and asset short eligibility plus explicit position-intent order payloads | 10.1 | Mocked Trading API tests prove every failed gate makes zero order POSTs and approved shorts use whole-share `sell_to_open` |
+| 10.3 | Make execution and entry sizing direction-aware and refuse entry when a position or unresolved order exists | 10.2 | Dry-run and live execution tests cover buy-to-open and sell-to-open with absolute exposure limits |
+| 10.4 | Add any required migration, preserve signed positions and position intent, and implement direction-aware P&L, opened-at state, trailing thresholds, exact provider-routed exits, audits, notifications, API, and portfolio output | 10.3 | Migration safety plus long regression, short snapshot, fill-ledger, trigger, daily-loss bypass, idempotency isolation, routing, and buy-to-close tests |
+| 10.5 | Complete traceability, full local validation, independent review, and paper verification | 10.1 through 10.4 | REQ matrix complete; backend, frontend, infrastructure, and paper evidence pass |
+| 10.6 | Merge to `develop`, verify development, promote to `main`, verify production fail-closed, and attach evidence to issue 245 | Successful 10.5 | CI, stack, ECS, HTTPS, dashboard, disabled short config, and read-only Alpaca account/asset evidence pass with no live short order; execution eligibility remains blocked until the live account has at least 2,000 USD equity and reports `shorting_enabled=true` |

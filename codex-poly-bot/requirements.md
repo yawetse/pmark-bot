@@ -1,8 +1,8 @@
 # codex-poly-bot Requirements
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.2
-**Date:** 2026-07-31
+**Version:** 1.3
+**Date:** 2026-08-01
 **Status:** APPROVED
 
 ## Product Intent
@@ -52,13 +52,13 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | ID | Priority | EARS Requirement |
 |----|----------|------------------|
 | REQ-ALP-001 | P0 | The system shall support Alpaca as a configurable brokerage venue for stocks and ETFs. |
-| REQ-ALP-002 | P0 | The system shall exclude Alpaca options, crypto, short selling, and margin trading from v1. |
+| REQ-ALP-002 | P0 | The system shall exclude Alpaca options, crypto, hard-to-borrow locates, and margin-funded long purchases from this release. |
 | REQ-ALP-003 | P0 | When the system uses Alpaca, the system shall use Alpaca's official Python SDK or documented HTTP APIs for account, market data, position, and order operations. |
 | REQ-ALP-004 | P0 | The system shall require separate Alpaca account identifiers per environment and model provider. |
 | REQ-ALP-005 | P0 | While global dry-run mode is enabled, the system shall record simulated Alpaca stock and ETF orders without submitting orders to Alpaca paper or live endpoints. |
 | REQ-ALP-006 | P0 | While global dry-run mode is disabled and Alpaca is enabled, the system shall submit approved Alpaca orders to the configured Alpaca account mode subject to risk checks. |
 | REQ-ALP-007 | P0 | The system shall support Alpaca paper and live account modes as environment and dashboard configuration values. |
-| REQ-ALP-008 | P0 | If an Alpaca order would create a short position or require margin, then the system shall refuse the order. |
+| REQ-ALP-008 | P0 | If an Alpaca order would require margin for a long purchase or create a short position while shorting is disabled, then the system shall refuse the order. |
 | REQ-ALP-009 | P0 | The system shall enforce a default Alpaca max stock or ETF position size of 100 USD per symbol and model provider. |
 | REQ-ALP-010 | P0 | The system shall enforce a default Alpaca max daily loss of 100 USD per model provider. |
 | REQ-ALP-011 | P0 | The system shall enforce a default Alpaca max open stock or ETF position count of 5 per model provider. |
@@ -69,6 +69,14 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-ALP-016 | P0 | If an Alpaca credential resolves to the same account identifier as another model provider in the same environment and account mode, then the system shall block Alpaca live trading for the duplicated account and record the refusal reason. |
 | REQ-ALP-017 | P0 | The system shall reconcile Alpaca account positions, open orders, and buying power with Postgres before permitting Alpaca live orders. |
 | REQ-ALP-018 | P0 | If Alpaca reconciliation detects an unresolved mismatch between broker state and Postgres state, then the system shall block Alpaca live orders for the affected model provider and record the mismatch. |
+| REQ-ALP-019 | P0 | The system shall default Alpaca short selling to disabled and shall permit only an authorized user to change the audited shorting configuration. |
+| REQ-ALP-020 | P0 | Immediately before submitting a sell-to-open order, the system shall read current account state and require an active Alpaca account with shorting enabled, at least 2,000 USD equity, sufficient buying power for Alpaca's short-sale buying-power calculation, and no account-blocked, trading-blocked, or user-suspended trading flag. |
+| REQ-ALP-021 | P0 | Immediately before submitting a sell-to-open order, the system shall read current asset state and require an active, tradable, shortable U.S. equity whose Alpaca `borrow_status` is `easy_to_borrow`; missing, unknown, stale, or hard-to-borrow status shall be refused. |
+| REQ-ALP-022 | P0 | When submitting an Alpaca short entry, the system shall use a positive whole-share quantity and explicit `sell_to_open` position intent; notional, fractional, zero, or negative short-entry quantities shall be refused. |
+| REQ-ALP-023 | P0 | When Alpaca reports a short position, the system shall preserve its signed direction through reconciliation, risk, P&L, age, exit triggers, audit records, and dashboard output, and shall close it with buy-to-close only. |
+| REQ-ALP-024 | P0 | If a new Alpaca entry would add to, reduce, or cross an existing position in the same symbol, or if an unresolved order exists for the symbol, then the system shall refuse the entry and require reconciliation or the explicit exit path. |
+| REQ-ALP-025 | P0 | When a reconciled Alpaca short position exists, the system shall allow a risk-reducing buy-to-close for its exact absolute quantity even if new shorting is disabled, account or borrow entry eligibility later fails, or a corporate action produced a fractional quantity; if an exact supported close cannot be submitted, the system shall block automation and surface an operator action instead of rounding down. |
+| REQ-ALP-026 | P0 | When the system exits an Alpaca position, the system shall preserve the originating environment, model provider, account mode, and sanitized account reference so that the close is routed to the same configured account and its audit and notification records retain the correct provider. |
 
 ### Data Ingestion and S3 Storage
 
@@ -177,7 +185,7 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-EXE-010 | P0 | The system shall support limit orders and market orders. |
 | REQ-EXE-011 | P0 | When creating a market order, the system shall block the order if estimated slippage exceeds the configured threshold. |
 | REQ-EXE-012 | P0 | The default estimated slippage threshold for market orders shall be 2 percent. |
-| REQ-EXE-013 | P0 | If `LIVE_ENABLED=false`, venue disabled, wallet secret missing, API credentials missing, max daily loss reached, max open positions reached, max position exceeded, unsupported jurisdiction or venue config detected, stale market data detected, or LLM scoring failed, then the system shall refuse live order placement. |
+| REQ-EXE-013 | P0 | If `LIVE_ENABLED=false`, venue disabled, wallet secret missing, API credentials missing, max daily loss reached, max open positions reached, max position exceeded, unsupported jurisdiction or venue config detected, stale market data detected, or LLM scoring failed, then the system shall refuse new or exposure-increasing live order placement; exact reconciled risk-reducing exits remain subject to credential, persistence, account-routing, market-hours, and venue availability checks but shall not be blocked by entry size, allocation, position-count, or daily-loss limits. |
 | REQ-EXE-014 | P0 | When the kill switch is activated, the system shall disable live trading for all models and venues. |
 | REQ-EXE-015 | P0 | When the kill switch is activated, the system shall attempt to cancel open orders for all enabled live venues. |
 | REQ-EXE-016 | P0 | When the system refuses, submits, fills, cancels, or fails an order, the system shall persist the event and expose it in dashboard status. |

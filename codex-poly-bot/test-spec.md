@@ -49,7 +49,7 @@
 | TST-REQ-ALP-001-01 | Happy | REQ-ALP-001 | Given Alpaca is configured and enabled, When venue adapters are registered, Then Alpaca is available for stocks and ETFs. |
 | TST-REQ-ALP-001-02 | Edge | REQ-ALP-001 | Given Alpaca is not enabled, When the trading loop evaluates stock or ETF candidates, Then Alpaca scan and execution are skipped. |
 | TST-REQ-ALP-002-01 | Happy | REQ-ALP-002 | Given stock and ETF candidates, When Alpaca filtering runs, Then only stocks and ETFs remain eligible. |
-| TST-REQ-ALP-002-02 | Edge | REQ-ALP-002 | Given options, crypto, short, or margin candidates, When Alpaca filtering runs, Then each unsupported product is rejected with a reason. |
+| TST-REQ-ALP-002-02 | Edge | REQ-ALP-002 | Given options, crypto, hard-to-borrow locate, or margin-funded long candidates, When Alpaca filtering runs, Then each unsupported product is rejected with a reason. |
 | TST-REQ-ALP-003-01 | Happy | REQ-ALP-003 | Given Alpaca account, market data, position, and order operations, When adapters execute them, Then the official SDK or documented HTTP APIs are used. |
 | TST-REQ-ALP-003-02 | Edge | REQ-ALP-003 | Given an adapter without an approved Alpaca client binding, When live operations are requested, Then the operation is blocked. |
 | TST-REQ-ALP-003-03 | Focus | REQ-ALP-003 | Given dry-run mode is enabled and Alpaca is configured, When account and market data reads execute through the adapter boundary, Then approved read APIs are used without submitting to Alpaca paper or live order endpoints. |
@@ -61,8 +61,8 @@
 | TST-REQ-ALP-006-02 | Edge | REQ-ALP-006 | Given dry-run mode is disabled but a risk check fails, When Alpaca execution is requested, Then no order is submitted. |
 | TST-REQ-ALP-007-01 | Happy | REQ-ALP-007 | Given environment and dashboard config values, When Alpaca account mode is resolved, Then paper and live modes are supported values. |
 | TST-REQ-ALP-007-02 | Edge | REQ-ALP-007 | Given an invalid Alpaca account mode, When config validation runs, Then the mode is rejected and live trading is blocked. |
-| TST-REQ-ALP-008-01 | Happy | REQ-ALP-008 | Given a buy order that maintains a long-only position without margin, When Alpaca risk checks run, Then the order remains eligible. |
-| TST-REQ-ALP-008-02 | Edge | REQ-ALP-008 | Given an order that would short a symbol or require margin, When Alpaca risk checks run, Then the order is refused. |
+| TST-REQ-ALP-008-01 | Happy | REQ-ALP-008 | Given a buy order that does not require margin, When Alpaca risk checks run, Then the order remains eligible. |
+| TST-REQ-ALP-008-02 | Edge | REQ-ALP-008 | Given shorting is disabled or a long purchase requires margin, When Alpaca risk checks run, Then the order is refused. |
 | TST-REQ-ALP-009-01 | Happy | REQ-ALP-009 | Given default Alpaca risk config, When a stock or ETF order is sized at 100 USD per symbol and provider, Then the order passes the max-position boundary check. |
 | TST-REQ-ALP-009-02 | Edge | REQ-ALP-009 | Given default Alpaca risk config, When a stock or ETF order exceeds 100 USD for a symbol and provider, Then the order is refused. |
 | TST-REQ-ALP-010-01 | Happy | REQ-ALP-010 | Given default Alpaca risk config, When daily loss equals 100 USD for a model provider and a new order is evaluated, Then the order is refused because max daily loss is reached. |
@@ -84,6 +84,23 @@
 | TST-REQ-ALP-017-03 | Focus | REQ-ALP-017 | Given Alpaca account mode is configured with account and portfolio state, When live eligibility checks run, Then account ID, status, positions, open orders, and buying power are validated first. |
 | TST-REQ-ALP-018-01 | Happy | REQ-ALP-018 | Given reconciliation detects no unresolved mismatch, When Alpaca live checks run, Then the mismatch gate passes. |
 | TST-REQ-ALP-018-02 | Edge | REQ-ALP-018 | Given an unresolved broker and Postgres mismatch, When Alpaca live checks run, Then live orders are blocked for the affected provider and mismatch details are recorded. |
+| TST-REQ-ALP-019-01 | Happy | REQ-ALP-019 | Given default config, When Alpaca settings load, Then `allow_shorting` is false and the active stock profile does not enable it. |
+| TST-REQ-ALP-019-02 | UI | REQ-ALP-019 | Given an authorized user, When the shorting setting is changed, Then the boolean value is validated, persisted, audited, and shown with its risk impact. |
+| TST-REQ-ALP-020-01 | Happy | REQ-ALP-020 | Given an active unblocked short-enabled account with at least 2,000 USD equity and sufficient buying power including the 3 percent ask buffer, When sell-to-open is submitted, Then the account gate passes. |
+| TST-REQ-ALP-020-02 | Edge | REQ-ALP-020 | Given any account eligibility field is missing, blocked, user-suspended, false, below minimum, or has insufficient buying power, When sell-to-open is requested, Then no order POST occurs and a safe refusal is returned. |
+| TST-REQ-ALP-021-01 | Happy | REQ-ALP-021 | Given an active tradable shortable U.S. equity with `borrow_status=easy_to_borrow`, When sell-to-open is submitted, Then the asset gate passes. |
+| TST-REQ-ALP-021-02 | Edge | REQ-ALP-021 | Given asset status, class, tradability, shortability, or borrow status is missing or ineligible, When sell-to-open is requested, Then no order POST occurs and a safe refusal is returned. |
+| TST-REQ-ALP-022-01 | Happy | REQ-ALP-022 | Given an approved whole-share short entry, When its payload is built, Then it contains positive `qty` and `sell_to_open` position intent without notional. |
+| TST-REQ-ALP-022-02 | Edge | REQ-ALP-022 | Given a notional, fractional, zero, or negative short-entry quantity, When payload validation runs, Then the order is refused before submission. |
+| TST-REQ-ALP-023-01 | Happy | REQ-ALP-023 | Given Alpaca reports a short position, When snapshots and lifecycle state are normalized, Then quantity is signed negative, side is short, P&L and trailing thresholds are short-aware, and exit uses buy-to-close for absolute quantity. |
+| TST-REQ-ALP-023-02 | Edge | REQ-ALP-023 | Given a short position exit attempts sell-to-close, exceeds reconciled absolute quantity, or loses direction metadata, When validation runs, Then the exit is refused. |
+| TST-REQ-ALP-024-01 | Happy | REQ-ALP-024 | Given no position and no unresolved order for a symbol, When a new entry is evaluated, Then it may continue through remaining gates. |
+| TST-REQ-ALP-024-02 | Edge | REQ-ALP-024 | Given a nonzero position or unresolved order already exists for the symbol, When a new entry is evaluated, Then it is refused without crossing or adding to the position. |
+| TST-REQ-ALP-025-01 | Happy | REQ-ALP-025 | Given a reconciled short whose entry eligibility later fails, When an exit triggers, Then the system submits buy-to-close for the exact absolute quantity without applying new-short entry gates. |
+| TST-REQ-ALP-025-02 | Edge | REQ-ALP-025 | Given a fractional short from a corporate action and no supported exact close path, When an exit triggers, Then the system does not round or submit and returns an operator-action state. |
+| TST-REQ-ALP-025-03 | Edge | REQ-ALP-025 | Given a reconciled short after the daily-loss, allocation, position-size, or open-position entry limit is reached, When an exact cover is evaluated, Then buy-to-close remains eligible through exit safety gates. |
+| TST-REQ-ALP-026-01 | Happy | REQ-ALP-026 | Given a short belongs to one environment, provider, mode, and account reference, When it exits, Then submitter routing, audit, order event, and notification preserve that ownership. |
+| TST-REQ-ALP-026-02 | Edge | REQ-ALP-026 | Given the configured exit submitter resolves to a different provider or account, When close validation runs, Then no venue call occurs and an account-routing refusal is recorded. |
 
 ### Data Ingestion and S3 Storage
 
@@ -539,6 +556,14 @@
 | REQ-ALP-016 | TST-REQ-ALP-016-01, TST-REQ-ALP-016-02 |
 | REQ-ALP-017 | TST-REQ-ALP-017-01, TST-REQ-ALP-017-02, TST-REQ-ALP-017-03 |
 | REQ-ALP-018 | TST-REQ-ALP-018-01, TST-REQ-ALP-018-02 |
+| REQ-ALP-019 | TST-REQ-ALP-019-01, TST-REQ-ALP-019-02 |
+| REQ-ALP-020 | TST-REQ-ALP-020-01, TST-REQ-ALP-020-02 |
+| REQ-ALP-021 | TST-REQ-ALP-021-01, TST-REQ-ALP-021-02 |
+| REQ-ALP-022 | TST-REQ-ALP-022-01, TST-REQ-ALP-022-02 |
+| REQ-ALP-023 | TST-REQ-ALP-023-01, TST-REQ-ALP-023-02 |
+| REQ-ALP-024 | TST-REQ-ALP-024-01, TST-REQ-ALP-024-02 |
+| REQ-ALP-025 | TST-REQ-ALP-025-01, TST-REQ-ALP-025-02 |
+| REQ-ALP-026 | TST-REQ-ALP-026-01, TST-REQ-ALP-026-02 |
 | REQ-DAT-001 | TST-REQ-DAT-001-01, TST-REQ-DAT-001-02 |
 | REQ-DAT-002 | TST-REQ-DAT-002-01, TST-REQ-DAT-002-02 |
 | REQ-DAT-003 | TST-REQ-DAT-003-01, TST-REQ-DAT-003-02 |

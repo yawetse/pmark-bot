@@ -116,3 +116,30 @@ The verification browser did not have an authenticated GitHub session. Authentic
 | SES identity and ACM certificate | SES verified; stack certificate binding matched; live TLS valid | SES verified; stack certificate binding matched; live TLS valid |
 
 No real bank transfer is used for release verification.
+
+---
+
+# Alpaca Short Selling Traceability
+
+## Scope
+
+- GitHub issue: `#245`
+- Requirements: `REQ-ALP-019` through `REQ-ALP-026`
+- HLD decisions: `DD-034`, `DD-047`, `DD-057`
+- LLD authority: sections 1, 2, 3, 8, 15, 16, 17, 20, 23, and 24
+- Plan: Phase 10, steps 10.1 through 10.6
+- Task: `TASK-050`
+- Date: 2026-08-01
+
+## Requirement Matrix
+
+| Requirement | Design | Task | Test IDs | Implementation Evidence | Status |
+|-------------|--------|------|----------|------------------------|--------|
+| REQ-ALP-019 | DD-034, DD-047; LLD 3, 15 | TASK-050 | TST-REQ-ALP-019-01, TST-REQ-ALP-019-02 | Pending implementation | Planned |
+| REQ-ALP-020 | DD-047; LLD 8, 15 | TASK-050 | TST-REQ-ALP-020-01, TST-REQ-ALP-020-02 | Pending implementation | Planned |
+| REQ-ALP-021 | DD-047; LLD 8, 15 | TASK-050 | TST-REQ-ALP-021-01, TST-REQ-ALP-021-02 | Pending implementation | Planned |
+| REQ-ALP-022 | DD-047; LLD 8, 15, 17 | TASK-050 | TST-REQ-ALP-022-01, TST-REQ-ALP-022-02 | Pending implementation | Planned |
+| REQ-ALP-023 | DD-034, DD-047; LLD 1, 2, 8, 15, 17, 20, 23, 24 | TASK-050 | TST-REQ-ALP-023-01, TST-REQ-ALP-023-02 | Pending implementation | Planned |
+| REQ-ALP-024 | DD-047; LLD 8, 15 | TASK-050 | TST-REQ-ALP-024-01, TST-REQ-ALP-024-02 | Pending implementation | Planned |
+| REQ-ALP-025 | DD-057; LLD 8, 15, 17 | TASK-050 | TST-REQ-ALP-025-01, TST-REQ-ALP-025-02 | Pending implementation | Planned |
+| REQ-ALP-026 | DD-057; LLD 1, 2, 8, 16, 17, 20, 23, 24 | TASK-050 | TST-REQ-ALP-026-01, TST-REQ-ALP-026-02 | Pending implementation | Planned |

@@ -31,7 +31,7 @@
 | Dashboard private key display | The dashboard can show wallet status and public identifiers, but never private keys. |
 | Runtime dependency on referenced open-source repos | The referenced repos inform design, but v1 is standalone unless a later requirement changes that. |
 | Manual production approval gate | Merges to `main` deploy production automatically per approved requirements. |
-| Alpaca options, crypto, short selling, or margin trading | v1 stock-market trading is limited to long-only stocks and ETFs. |
+| Alpaca options, crypto, hard-to-borrow locates, or margin-funded long purchases | This release limits shorting to explicitly enabled easy-to-borrow U.S. equities. |
 | Bank credential collection or application-database storage | Bank accounts and ACH relationships remain managed by the venue. Exact Broker account and ACH relationship identifiers are secret bootstrap values; persistence uses only sanitized account references. |
 | Plaid integration | Alpaca accepts an existing ACH relationship identifier, so this release does not add a bank-linking vendor. |
 | Polymarket direct funding | Polymarket US remains observe-only until a documented, entitled funding-write API is available. |
@@ -96,7 +96,7 @@ Backend process owns v1 background loops:
 | Component | Responsibility | Owns Data? | Key Interfaces |
 |-----------|----------------|------------|----------------|
 | Venue integration | Fetch market data and submit orders through official SDK/API clients | No | `VenueClient`, `MarketDataPort`, `OrderExecutionPort` |
-| Alpaca brokerage integration | Trade long-only stocks and ETFs through separate Alpaca accounts per model provider | No | `BrokerageClient`, `AccountMode`, `StockMarketDataPort` |
+| Alpaca brokerage integration | Trade long stocks and ETFs plus explicitly enabled easy-to-borrow U.S. equity shorts through separate Alpaca accounts per model provider | No | `BrokerageClient`, `AccountMode`, `StockMarketDataPort` |
 | Data ingestion | Full and incremental downloads, normalization, S3 writes, checkpoints | Yes, ingestion checkpoints and S3 object metadata | `IngestionService`, `S3StoragePort` |
 | Postgres persistence | Config, positions, orders, audits, budgets, model-specific schemas | Yes | SQLAlchemy repositories, Alembic migrations |
 | Wallet and secrets | Wallet generation CLI, brokerage credential lookup, secret lookup, wallet and account status | Yes, wallet/account metadata only | `WalletService`, `SecretStorePort` |
@@ -122,7 +122,7 @@ Primary trading loop:
 4. The LLM scoring service sends eligible candidates to Claude and OpenAI, subject to each model budget.
 5. Each model provider writes scoring output to its own schema.
 6. Strategy modules generate arbitrage, convergence, whale-copy, and stock/ETF candidate signals where applicable.
-7. The risk engine calculates size, checks dry-run/live mode, venue flags, account mode, wallet or brokerage credential state, stale data, position limits, daily loss, open positions, long-only constraints, and slippage.
+7. The risk engine calculates size, checks dry-run/live mode, venue flags, account mode, wallet or brokerage credential state, stale data, position limits, daily loss, open positions, short account and borrow eligibility, and slippage.
 8. In dry-run mode, execution records simulated orders only.
 9. In live mode, execution uses official SDK/API clients for each enabled venue and persists submitted, filled, canceled, failed, and refused order events.
 10. The dashboard reads status, positions, orders, config, and audit events from the API.
@@ -190,7 +190,9 @@ Funding flow:
 | DD-031 | LLM scoring concurrency | Provider-specific bounded queues with budget reservation before submit | Fire all requests at once | Controls cost and rate limits, may defer candidates | Keeps 60-second loop stable without spending past budget. |
 | DD-032 | Cross-loop order coordination | Market/model reservations prevent simultaneous entry and exit decisions | Independent entry and exit loops | Safer order lifecycle, more DB coordination | Avoids conflicting orders for the same model and market. |
 | DD-033 | AWS environment separation | Development and production use separate CloudFormation stacks, names, secrets, buckets, databases, and wallets | Shared resources with prefixes only | More infrastructure, clearer isolation | Required for branch-based deploys and safer production. |
-| DD-034 | Alpaca scope | Stocks and ETFs only, long-only cash trading | Options, crypto, shorting, margin | Smaller opportunity set, lower complexity and risk | Matches v1 scope and avoids margin/short-specific controls. |
+| DD-034 | Alpaca scope | Long stocks and ETFs plus disabled-by-default easy-to-borrow U.S. equity shorts | Options, crypto, hard-to-borrow locates, margin-funded long purchases | Adds bearish execution while retaining broker-backed fail-closed controls | Matches Alpaca Trading API position-intent, account, and asset eligibility contracts. |
+| DD-047 | Alpaca short safety | Require account shorting eligibility, 2,000 USD equity, sufficient buying power, active/tradable/shortable U.S. equity, `easy_to_borrow`, whole shares, and explicit position intent | Infer eligibility from signal or use fractional/notional sells | More broker reads before sell-to-open | Prevents unsupported short orders and fails closed when eligibility is unknown. |
+| DD-057 | Short exit safety | Treat buy-to-close as risk-reducing, preserve provider/account routing, and close the exact reconciled quantity even when entry eligibility later fails | Apply entry gates to covers or round fractional residuals down | Requires direction-aware routing and an operator-action state when the broker cannot accept an exact close | Avoids trapping or misrouting an existing short and prevents residual exposure. |
 | DD-035 | Global dry run | One global dry-run/live control gates Polymarket and Alpaca live submission | Separate dry-run toggle per venue | Simpler operation, less venue-specific flexibility | User requested one global dry-run mode. |
 | DD-036 | Alpaca account isolation | Separate Alpaca account identifiers per environment and model provider | Shared account with tags only, separate API keys to the same account | Better attribution and risk separation, more account setup | Required to compare Claude and OpenAI cleanly. |
 | DD-037 | Cross-market comparison | Normalize performance by model provider, venue, environment, and instrument type | Separate dashboards only | More analytics work, better experiment readout | Core product goal is comparing model behavior across venues. |
@@ -238,13 +240,13 @@ Invariants:
 - Every dashboard config change has an audit record.
 - Money, size, price, probability, P&L, and slippage use fixed precision decimals.
 - Private keys are never stored in Postgres or returned by dashboard APIs.
-- Every order intent has a unique idempotency key built from environment, venue, model provider, market, side, strategy set, config version, and loop run ID.
+- Every order intent has a unique idempotency key built from environment, venue, model provider, market, side, position intent, account mode, sanitized account reference, strategy set, config version, and loop run ID.
 - Every worker loop runs against one immutable config version.
 - Every background job has a durable `job_runs` record with status, lock owner, started timestamp, finished timestamp, heartbeat timestamp, and error summary.
 - Order, position, config, and audit writes use database transactions.
 - Unique constraints prevent duplicate open positions for the same environment, venue, model provider, market, and outcome unless a later requirement allows pyramiding.
 - A market/model reservation prevents the trading loop and exit loop from creating conflicting live orders for the same environment, venue, model provider, market, and outcome.
-- Alpaca positions cannot become negative in v1. Sell orders for Alpaca are sell-to-close only and cannot exceed the lower of broker-reconciled quantity and Postgres-recorded quantity for that symbol.
+- New Alpaca short positions may be created only when shorting is explicitly enabled and broker eligibility passes. Existing short positions remain signed and exactly coverable when entry eligibility later fails. Long exits are sell-to-close and short exits are buy-to-close for the exact reconciled absolute quantity.
 
 ### 5.2.1 Scheduler Concurrency and Config Snapshots
 
@@ -256,7 +258,7 @@ If the ECS service later scales beyond one backend task, the Postgres lock remai
 
 ### 5.2.2 Order Lifecycle, Idempotency, and Reconciliation
 
-The execution service persists an order intent before any live submission. The intent includes idempotency key, config version, dry-run/live mode, venue, model provider, market, side, order type, requested size, price guardrails, strategy signals, and risk decision.
+The execution service persists an order intent before any live submission. The intent includes idempotency key, config version, dry-run/live mode, venue, model provider, market, side, position intent, Alpaca account mode, sanitized account reference, order type, requested size, price guardrails, strategy signals, and risk decision.
 
 Before an entry or exit decision can create an order intent, the execution service creates a reservation for environment, venue, model provider, instrument identifier, and outcome or side. Entry reservations and exit reservations use the same table and cannot overlap. A reservation is released when the order reaches a terminal state, the decision is refused, or a stale reservation timeout is reached and reconciliation confirms no active order exists.
 
@@ -330,7 +332,7 @@ The first migration seeds shared configuration with these defaults:
 - `alpaca_max_portfolio_allocation_per_symbol`: `0.10`.
 - `alpaca_market_order_slippage_threshold`: `0.005`.
 - `alpaca_allowed_asset_classes`: `stocks`, `etfs`.
-- `alpaca_allow_shorting`: `false`.
+- `alpaca.allow_shorting`: `false`.
 - `alpaca_allow_margin`: `false`.
 - `trading_loop_interval_seconds`: `900`.
 - `max_kelly_fraction`: `0.25`.
@@ -415,7 +417,7 @@ Audit events are append-only at the application layer. Updates that correct data
 
 ### 5.6 Compliance and Venue Boundaries
 
-The system supports Polymarket US, Polymarket International, and Alpaca through explicit venue flags. The default selected venue is Polymarket US, but all venues are disabled until an authorized user enables a venue in configuration. The design does not include VPN, proxy, or other bypass behavior. Alpaca v1 is limited to long-only stocks and ETFs during regular market hours only. Extended-hours trading is disabled in v1. Live trading is blocked if venue, brokerage, account mode, jurisdiction, trading-hours, market calendar, halt status, tradability, or market-data configuration is unsupported or incomplete.
+The system supports Polymarket US, Polymarket International, and Alpaca through explicit venue flags. The default selected venue is Polymarket US, but all venues are disabled until an authorized user enables a venue in configuration. The design does not include VPN, proxy, or other bypass behavior. Alpaca supports long stocks and ETFs and, when explicitly enabled, easy-to-borrow U.S. equity shorts during regular market hours only. Extended-hours trading is disabled. Live trading is blocked if venue, brokerage, account mode, jurisdiction, trading-hours, market calendar, halt status, tradability, account shorting eligibility, or market-data configuration is unsupported or incomplete.
 
 ### 5.7 Retry and Timeout Policy
 
@@ -444,7 +446,7 @@ Default strategy boundaries:
 - Arbitrage groups related markets by configured relation metadata first, then by explicit admin-maintained relation groups. If no relation exists, the arbitrage strategy does not score the market.
 - Convergence compares the model estimated probability to current midpoint and requires the configured minimum gap before emitting a directional signal.
 - Whale-copy requires configured target wallets, a configured delay, and matching venue/market/outcome data before emitting a signal. The default delay is 60 seconds.
-- Alpaca stock/ETF candidate scoring uses configured symbol universes, latest market data, account buying power, current positions, and LLM thesis output. It emits long-entry, hold, sell-to-close, or neutral signals only.
+- Alpaca stock/ETF candidate scoring uses configured symbol universes, latest market data, account buying power, current positions, and LLM thesis output. It may emit long-entry, short-entry, hold, or neutral signals; reconciled position direction determines the exit side.
 - Alpaca market-hours checks use Alpaca's clock/calendar endpoints where available and broker-provided asset tradability state. Holidays, early closes, suspended symbols, halted symbols, non-tradable assets, and per-symbol stale quotes block live orders for the affected symbol.
 - Alpaca market-data rate limits are explicit refusal reasons. Rate-limited symbols are marked `DEFERRED_RATE_LIMITED`, shown in dashboard status, and reconsidered on the next loop.
 
@@ -466,19 +468,19 @@ Model budget accounting is checked before a scoring request is sent and recorded
 
 Global dry-run mode gates Alpaca and Polymarket together. When global dry-run is enabled, Alpaca decisions are persisted as simulated orders and are not submitted to Alpaca paper or live endpoints. When global dry-run is disabled, Alpaca can submit approved orders to the configured Alpaca account mode for that environment and model provider.
 
-Alpaca v1 supports buy-to-open and sell-to-close only. The risk engine refuses any order that would create a short position, require margin, trade an unsupported asset class, exceed the configured symbol allocation limit, exceed the stock position limit, exceed the daily loss limit, or exceed the open stock position count.
+Alpaca supports buy-to-open and sell-to-close for long positions. It supports sell-to-open only when `alpaca.allow_shorting` is true and current broker account, buying-power, asset, borrow, whole-share, reconciliation, and market-hours entry gates pass. An existing short uses buy-to-close for the exact reconciled absolute quantity even if shorting is later disabled or entry eligibility fails. Entry and exposure-increasing orders are refused for margin-funded long purchases, unsupported products, hard-to-borrow or unknown borrow status, an existing position or unresolved order, allocation breaches, position-limit breaches, daily-loss breaches, and open-position-count breaches. Exact risk-reducing exits bypass those entry limits but retain credential, persistence, routing, market-hours, and venue-availability gates.
 
 Alpaca order defaults:
 
 - Order sizing uses USD notional values.
 - Fractional shares are allowed where Alpaca and the asset support them.
-- If fractional shares are not supported for a symbol, the risk engine rounds down to the largest whole-share quantity that stays within all risk limits.
+- New short entries require whole shares. Long entries may use supported fractional notional orders. Exits use the exact reconciled quantity and never round a residual position down.
 - If rounding makes an order smaller than the broker minimum or configured minimum notional, the order is refused.
 - Default time in force is `day`.
 - Extended-hours flag is always `false` in v1.
 - Partial fills update filled notional, filled quantity, average fill price, remaining quantity, and realized or unrealized P&L where applicable.
 
-Risk limits apply cumulatively within their scope. Shared defaults apply to Polymarket unless a venue-specific limit is configured. Alpaca orders use Alpaca-specific position, daily loss, open-position, allocation, asset-class, long-only, and slippage checks, plus global live/venue/credential/stale-data checks. This means the default Alpaca position cap is `100.00 USD`, the default Alpaca daily loss cap is `100.00 USD`, and the default Alpaca open-position cap is `5`, unless the dashboard changes them. The 10 percent per-symbol allocation denominator is the configured Alpaca model capital for that model provider in that environment. If configured capital is missing or non-positive, Alpaca live orders are refused.
+Risk limits apply cumulatively within their scope. Shared defaults apply to Polymarket unless a venue-specific limit is configured. Alpaca orders use Alpaca-specific position, daily loss, open-position, allocation, asset-class, direction, short-eligibility, and slippage checks, plus global live/venue/credential/stale-data checks. The default Alpaca position cap is `100.00 USD`, the default Alpaca daily loss cap is `100.00 USD`, and the default Alpaca open-position cap is `5`, unless the dashboard changes them. The 10 percent per-symbol allocation denominator is the configured Alpaca model capital for that model provider in that environment. If configured capital is missing or non-positive, Alpaca live orders are refused.
 
 ### 5.8.2 Alpaca Ingestion Scope
 
@@ -639,6 +641,10 @@ Performance keeps both raw venue equity movement and adjusted trading results av
 | LLM cost overrun | Medium | Medium | Per-provider budgets, deterministic pre-filters, budget exhaustion behavior | Scoring service |
 | Market orders exceed acceptable slippage | High | Medium | Estimated slippage guardrails, default 2 percent for Polymarket and 0.5 percent for Alpaca, risk cap | Execution engine |
 | Alpaca live account misconfiguration | High | Medium | Separate credentials per model/environment, account mode config, dry-run default, account health checks | Alpaca adapter and risk engine |
+| Borrow or account eligibility changes between decision and submit | High | Medium | Refresh current account and asset state immediately before sell-to-open; fail closed on missing or stale values | Phase 10 adapter and execution tests |
+| Short loss grows as price rises | High | Medium | Existing position, allocation, daily-loss, stop-loss, trailing-stop, and close-before-market-close limits apply to absolute short exposure; no pyramiding | Phase 10 risk and lifecycle tests |
+| Broker recall or forced buy-in | High | Low | Reconcile broker state, preserve broker as holding source of truth, alert on unexpected fill/position changes, and block new entry on mismatch | Phase 10 reconciliation and operations evidence |
+| Short cover is rounded, wrong-sided, or sent to the wrong account | High | Low | Exact reconciled quantity, buy-to-close intent, provider/account routing, and no-submit mismatch tests | Phase 10 execution and exit tests |
 | Stock orders outside market hours | Medium | Medium | Trading-hours checks, stale data refusal, order status reconciliation | Alpaca adapter and execution engine |
 | Cross-market comparison uses incomplete data | Medium | Medium | Unavailable metric state, provider/venue grouping, audit trails | Comparison service |
 | S3 ingestion costs or data growth | Medium | Medium | Retention policy, partitioned paths, normalized outputs | Ingestion implementation |
@@ -656,7 +662,7 @@ Performance keeps both raw venue equity movement and adjusted trading results av
 | Requirement IDs | Covered By HLD Sections |
 |-----------------|-------------------------|
 | REQ-VEN-001, REQ-VEN-002, REQ-VEN-003, REQ-VEN-004, REQ-VEN-005, REQ-VEN-006 | Venue adapters, venue flags, risk refusals |
-| REQ-ALP-001, REQ-ALP-002, REQ-ALP-003, REQ-ALP-004, REQ-ALP-005, REQ-ALP-006, REQ-ALP-007, REQ-ALP-008, REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-ALP-013, REQ-ALP-014, REQ-ALP-015, REQ-ALP-016, REQ-ALP-017, REQ-ALP-018 | Alpaca adapter, stock/ETF scope, account isolation, global dry-run, Alpaca risk defaults, reconciliation |
+| REQ-ALP-001 through REQ-ALP-026 | Alpaca adapter, stock/ETF scope, account isolation, global dry-run, Alpaca risk defaults, short eligibility and position intent, signed reconciliation, exits |
 | REQ-DAT-001, REQ-DAT-002, REQ-DAT-003, REQ-DAT-004, REQ-DAT-005, REQ-DAT-006, REQ-DAT-007, REQ-DAT-008 | Ingestion service, S3 adapter, retention policy |
 | REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-008, REQ-DB-009, REQ-DB-010 | Postgres repositories, schemas, migrations, venue portfolio records, scanner transactions, commit notifications |
 | REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006, REQ-WAL-007 | Wallet service, wallet CLI, Secrets Manager |
