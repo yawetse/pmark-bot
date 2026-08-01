@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { PerformanceView } from "@/components/dashboard/performance-view";
+import { PerformanceView, type FundingHistoryView } from "@/components/dashboard/performance-view";
 import type { VenuePortfolioView } from "@/components/dashboard/venue-portfolio-panel";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
 import { getDashboardSession } from "@/lib/server/session";
@@ -11,12 +11,14 @@ export default async function PerformancePage() {
   const sessionCheck = await getDashboardSession();
   if (sessionCheck.status === "missing") redirect("/login");
   if (sessionCheck.status === "denied") redirect("/access-denied");
-  const portfolio = await serverDashboardApi<VenuePortfolioView>(
-    "portfolio",
-    sessionCheck.session.username,
-  );
+  const [portfolio, funding] = await Promise.all([
+    serverDashboardApi<VenuePortfolioView>("portfolio", sessionCheck.session.username),
+    serverDashboardApi<FundingHistoryView>("funding", sessionCheck.session.username),
+  ]);
   return (
     <PerformanceView
+      funding={funding.ok ? funding.data : undefined}
+      fundingError={funding.ok ? undefined : funding.message}
       loadError={portfolio.ok ? undefined : portfolio.message}
       portfolio={portfolio.ok ? portfolio.data : undefined}
     />

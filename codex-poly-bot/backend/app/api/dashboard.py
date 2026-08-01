@@ -29,7 +29,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 
 from app.db import PersistenceUnavailableError, normalize_config_username
-from app.domain import Environment, ModelProvider
+from app.domain import Environment, FundingConfig, ModelProvider
 from app.services import (
     ActorContext,
     ConfigAuthorizationError,
@@ -852,6 +852,64 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         """
 
         return services.runtime_status.venue_portfolio_summary(context.environment)
+
+    @router.get("/api/funding")
+    @router.get("/api/funding/history")
+    def funding_history(
+        limit: int = Query(default=100, ge=1, le=500),
+        start_at: datetime | None = Query(default=None),
+        end_at: datetime | None = Query(default=None),
+        cash_cursor: str | None = Query(default=None),
+        occurrence_cursor: str | None = Query(default=None),
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return sanitized venue cash flows and recurring expectations.
+
+        REQ: REQ-FND-004, REQ-FND-010, REQ-FND-011, REQ-FND-012
+        """
+
+        try:
+            payload = services.funding.history_payload(
+                context.environment,
+                limit=limit,
+                start_at=start_at,
+                end_at=end_at,
+                cash_cursor=cash_cursor,
+                occurrence_cursor=occurrence_cursor,
+            )
+        except PersistenceUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error_code": "funding_history_unavailable",
+                    "message": "Funding history is unavailable. Check database health and try again.",
+                },
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error_code": "funding_history_interval_invalid",
+                    "message": str(exc),
+                },
+            ) from exc
+        config_payload = _current_config(
+            context.environment,
+            context.actor.username,
+        )["settings"].get(
+            "funding", {}
+        )
+        funding_config = FundingConfig.model_validate(config_payload)
+        payload["directTransferReadiness"] = services.funding.direct_transfer_readiness(
+            environment=context.environment,
+            config=funding_config,
+            kill_switch_active=services.kill_switch.state(context.environment).active,
+        )
+        payload["directTransferReadiness"]["bankSetupMessage"] = (
+            "Bank setup is managed by Alpaca. Existing ACH relationships are provisioned "
+            "outside the dashboard, and Plaid is not required."
+        )
+        return payload
 
     @router.get("/api/economics/history")
     def economics_history(

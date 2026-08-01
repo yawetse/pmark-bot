@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+
 from app.bootstrap import (
     PROJECT_ROOT,
     REQUIRED_DIRECTORIES,
@@ -362,7 +364,7 @@ def test_req_dep_002_06_backend_task_has_worker_memory_headroom() -> None:
     assert 'Memory: "16384"' in backend_block
 
 def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injection() -> None:
-    """TST-REQ-DEP-002-05: Validates REQ-DEP-002 and REQ-WAL-003
+    """TST-REQ-DEP-002-05, TST-REQ-FND-013-04: validates optional Broker secrets.
 
     Given: production-safe remote deployment
     When: CloudFormation infrastructure is inspected
@@ -396,6 +398,17 @@ def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injectio
     assert "AlpacaOpenAiKeyIdSecretArn" in text
     assert "ALPACA_CLAUDE_SECRET_KEY" in text
     assert "AlpacaClaudeSecretKeySecretArn" in text
+    for variable in (
+        "ALPACA_OPENAI_BROKER_API_KEY",
+        "ALPACA_OPENAI_BROKER_API_SECRET",
+        "ALPACA_OPENAI_BROKER_ACCOUNT_ID",
+        "ALPACA_OPENAI_ACH_RELATIONSHIP_ID",
+        "ALPACA_CLAUDE_BROKER_API_KEY",
+        "ALPACA_CLAUDE_BROKER_API_SECRET",
+        "ALPACA_CLAUDE_BROKER_ACCOUNT_ID",
+        "ALPACA_CLAUDE_ACH_RELATIONSHIP_ID",
+    ):
+        assert variable in text
     assert "ALPACA_ACCOUNT_STATUS" in text
     assert "ALPACA_SYMBOL_PRESETS" in text
     assert "ALPACA_CUSTOM_SYMBOLS" in text
@@ -410,6 +423,57 @@ def test_req_dep_002_05_cloudformation_supports_https_domain_and_secret_injectio
     assert "NOTIFICATION_RECIPIENTS" in text
     assert "ENABLE_BACKGROUND_WORKER" in text
     assert "TaskExecutionSecretAccessPolicy" in text
+
+
+def test_req_fnd_014_08_funding_deployment_defaults_and_boundaries_are_safe() -> None:
+    """TST-REQ-FND-014-06, TST-REQ-FND-014-08, TST-REQ-FND-020-03: deploy stays optional."""
+
+    template = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+    deploy_script = PROJECT_ROOT / "scripts" / "deploy-stack.sh"
+    script_text = deploy_script.read_text()
+
+    for parameter in (
+        "AlpacaOpenAiBrokerApiKeySecretArn",
+        "AlpacaOpenAiBrokerApiSecretSecretArn",
+        "AlpacaOpenAiBrokerAccountIdSecretArn",
+        "AlpacaOpenAiAchRelationshipIdSecretArn",
+        "AlpacaClaudeBrokerApiKeySecretArn",
+        "AlpacaClaudeBrokerApiSecretSecretArn",
+        "AlpacaClaudeBrokerAccountIdSecretArn",
+        "AlpacaClaudeAchRelationshipIdSecretArn",
+    ):
+        start = template.index(f"  {parameter}:")
+        assert 'Default: ""' in template[start : start + 180]
+    assert "PLAID" not in template.upper()
+    assert "POLYMARKET_FUNDING" not in template.upper()
+    assert "funding_broker_post_attempt" in (
+        PROJECT_ROOT / "backend" / "app" / "venues" / "alpaca_funding.py"
+    ).read_text()
+    assert "funding_broker_post_attempt" in (
+        PROJECT_ROOT / "docs" / "operations-runbook.md"
+    ).read_text()
+    assert subprocess.run(
+        ["bash", "-n", str(deploy_script)],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).returncode == 0
+    assert "secret_arn_or_empty" in script_text
+
+
+def test_req_fnd_019_04_funding_runbook_covers_setup_recovery_and_no_real_smoke() -> None:
+    """TST-REQ-FND-019-04: the runbook documents safe funding operations and rollback."""
+
+    text = (PROJECT_ROOT / "docs" / "operations-runbook.md").read_text().lower()
+    for phrase in (
+        "venue-managed",
+        "direct_transfers_enabled=false",
+        "funding emergency stop",
+        "unknown",
+        "rollback",
+        "must not create a real transfer",
+    ):
+        assert phrase in text
 
 def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     """TST-REQ-DEP-002-06: Validates REQ-DEP-002 and REQ-WAL-003
@@ -427,6 +491,10 @@ def test_req_dep_002_06_deploy_script_discovers_runtime_secret_arns() -> None:
     assert "/codex-poly-bot/${environment}/polymarket/private-key" in text
     assert "/codex-poly-bot/${environment}/alpaca/key-id" in text
     assert "/codex-poly-bot/${environment}/alpaca/secret-key" in text
+    assert "/codex-poly-bot/${environment}/alpaca/openai/broker-api-key" in text
+    assert "/codex-poly-bot/${environment}/alpaca/openai/ach-relationship-id" in text
+    assert "/codex-poly-bot/${environment}/alpaca/claude/broker-api-key" in text
+    assert "/codex-poly-bot/${environment}/alpaca/claude/ach-relationship-id" in text
     assert "AlpacaAccountStatus=${alpaca_account_status}" in text
     assert "AlpacaSymbolPresets=${alpaca_symbol_presets}" in text
     assert "AlpacaCustomSymbols=${alpaca_custom_symbols}" in text

@@ -87,6 +87,7 @@ type TradingProfileConfirmationState = {
 type ConfigControlsProps = {
   initialSnapshot?: ConfigSnapshot;
   loadError?: string;
+  onSnapshotChange?: (snapshot: ConfigSnapshot) => void;
 };
 
 type SettingUnit = "count" | "hours" | "minutes" | "percent" | "seconds" | "usd";
@@ -705,7 +706,11 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
   },
 ];
 
-export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsProps) {
+export function ConfigControls({
+  initialSnapshot,
+  loadError,
+  onSnapshotChange,
+}: ConfigControlsProps) {
   const [settings, setSettings] = useState(initialSnapshot?.settings);
   const [path, setPath] = useState<AllowedConfigPath>(ALLOWED_CONFIG_PATHS[0]);
   const [value, setValue] = useState(() =>
@@ -858,6 +863,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
       );
       setValue(formatValueForInput(valueAtPath(refreshed.data.settings, path)));
       setSaveState({ status: "saved", version: refreshed.data.version });
+      onSnapshotChange?.(refreshed.data);
       return true;
     }
     setSettings((currentSettings) =>
@@ -868,6 +874,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     );
     setCurrentVersion(savedVersion);
     setSaveState({ status: "saved", version: savedVersion });
+    window.location.reload();
     return true;
   }
 
@@ -915,6 +922,7 @@ export function ConfigControls({ initialSnapshot, loadError }: ConfigControlsPro
     );
     setValue(formatValueForInput(valueAtPath(refreshed.data.settings, path)));
     setSaveState({ status: "saved", version: refreshed.data.version });
+    onSnapshotChange?.(refreshed.data);
     setProfileConfirmation({ open: false, confirmed: false });
   }
 

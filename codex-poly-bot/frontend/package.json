@@ -10,6 +10,7 @@
     "test:auth-boundary": "node scripts/check-auth-boundary.mjs",
     "test:dashboard-controls": "node scripts/check-dashboard-controls.mjs",
     "test:dashboard-operations": "node scripts/check-dashboard-operations.mjs",
+    "test:funding-controls": "node scripts/check-funding-controls.mjs",
     "test:dashboard-redesign": "node scripts/check-dashboard-redesign.mjs && node scripts/check-dashboard-overview-state.ts && node scripts/check-dashboard-redesign-behavior.ts"
   },
   "dependencies": {
@@ -37,7 +38,8 @@
     "server-only": "^0.0.1"
   },
   "overrides": {
-    "postcss": "^8.5.14"
+    "postcss": "^8.5.18",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@types/node": "^20.15.0",
