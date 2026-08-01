@@ -33,6 +33,22 @@ def _application_url() -> str:
     return f"https://{_required('APPLICATION_DOMAIN_NAME').rstrip('/')}"
 
 
+def _runtime_username() -> str:
+    explicit = os.environ.get("RUNTIME_CONFIG_USERNAME", "").strip()
+    if explicit:
+        return explicit
+    allowed = [
+        value.strip()
+        for value in os.environ.get("DASHBOARD_ALLOWED_USERS", "").split(",")
+        if value.strip()
+    ]
+    if len(allowed) == 1:
+        return allowed[0]
+    raise RuntimeError(
+        "RUNTIME_CONFIG_USERNAME is required when DASHBOARD_ALLOWED_USERS does not contain exactly one user"
+    )
+
+
 def _base64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
@@ -100,7 +116,7 @@ def main() -> int:
         raise RuntimeError("DEPLOY_ENVIRONMENT must be development or production")
 
     application_url = _application_url()
-    username = _required("RUNTIME_CONFIG_USERNAME")
+    username = _runtime_username()
     token = _backend_token(username, _required("BACKEND_TOKEN_SIGNING_SECRET"))
     release_start_ms = _required("RELEASE_START_MS")
     log_group = os.environ.get(
