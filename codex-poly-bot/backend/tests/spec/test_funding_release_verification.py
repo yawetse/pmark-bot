@@ -66,6 +66,11 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
     def get_json(url: str, **_: object) -> dict[str, object]:
         if url.endswith("/health"):
             return {"status": "ok"}
+        if url.endswith("/api/config/current"):
+            return {
+                "environment": "development",
+                "settings": {"alpaca": {"allow_shorting": False}},
+            }
         return {
             "environment": "development",
             "directTransferReadiness": {
@@ -91,6 +96,7 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
     assert module.main() == 0
     output = capsys.readouterr().out
     assert '"brokerPostEvents": 0' in output
+    assert '"alpacaShortingEnabled": false' in output
     assert '"sesIdentityVerified": true' in output
     assert '"acmCertificateBinding": "STACK_OUTPUT_MATCH"' in output
     assert '"tlsCertificateStatus": "VALID"' in output
@@ -129,6 +135,11 @@ def test_release_verifier_blocks_unsafe_readback_or_broker_post_events(
     def get_json(url: str, **_: object) -> dict[str, object]:
         if url.endswith("/health"):
             return {"status": "ok"}
+        if url.endswith("/api/config/current"):
+            return {
+                "environment": "development",
+                "settings": {"alpaca": {"allow_shorting": False}},
+            }
         return {
             "environment": "development",
             "directTransferReadiness": readiness,
@@ -148,6 +159,46 @@ def test_release_verifier_blocks_unsafe_readback_or_broker_post_events(
     monkeypatch.setattr(module, "_broker_post_count", lambda *_: broker_posts)
 
     with pytest.raises(RuntimeError):
+        module.main()
+
+
+def test_release_verifier_blocks_enabled_alpaca_shorting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _script_module()
+    _safe_environment(monkeypatch)
+
+    def get_json(url: str, **_: object) -> dict[str, object]:
+        if url.endswith("/health"):
+            return {"status": "ok"}
+        if url.endswith("/api/config/current"):
+            return {
+                "environment": "development",
+                "settings": {"alpaca": {"allow_shorting": True}},
+            }
+        return {
+            "environment": "development",
+            "directTransferReadiness": {
+                "enabled": False,
+                "maxTransferUsd": "0.00",
+                "maxMonthlyTransferUsd": "0.00",
+            },
+        }
+
+    monkeypatch.setattr(module, "_get_json", get_json)
+    monkeypatch.setattr(
+        module,
+        "_release_asset_status",
+        lambda *_: {
+            "sesIdentityVerified": True,
+            "cloudFormationStatus": "UPDATE_COMPLETE",
+            "acmCertificateBinding": "STACK_OUTPUT_MATCH",
+            "tlsCertificateStatus": "VALID",
+        },
+    )
+    monkeypatch.setattr(module, "_broker_post_count", lambda *_: 0)
+
+    with pytest.raises(RuntimeError, match="allow_shorting must be false"):
         module.main()
 
 

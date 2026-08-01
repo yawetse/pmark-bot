@@ -201,6 +201,20 @@ def main() -> int:
     if actual != expected:
         raise RuntimeError(f"unsafe direct-transfer readback: {actual!r}")
 
+    config = _get_json(
+        f"{application_url}/api/config/current",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Environment": environment,
+        },
+    )
+    if config.get("environment") != environment:
+        raise RuntimeError("config readback returned the wrong environment")
+    settings = config.get("settings") or {}
+    alpaca = settings.get("alpaca") or {}
+    if alpaca.get("allow_shorting") is not False:
+        raise RuntimeError("unsafe Alpaca short-selling readback: allow_shorting must be false")
+
     release_assets = _release_asset_status(
         environment,
         ses_identity_email,
@@ -218,6 +232,7 @@ def main() -> int:
                 "environment": environment,
                 "health": "ok",
                 "directTransfersEnabled": False,
+                "alpacaShortingEnabled": False,
                 "maxTransferUsd": "0.00",
                 "maxMonthlyTransferUsd": "0.00",
                 "brokerPostEvents": 0,
