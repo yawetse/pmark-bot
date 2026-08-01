@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from threading import Lock, RLock
 from typing import Any
 from uuid import uuid4
 
@@ -58,19 +59,25 @@ class DatabaseState:
     fail_on_tables: set[str] = field(default_factory=set)
     fail_on_read_tables: set[str] = field(default_factory=set)
     tables: dict[str, list[dict]] = field(default_factory=dict)
+    _transaction_lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _session_locks: dict[str, Lock] = field(default_factory=dict, init=False, repr=False)
+    _session_locks_guard: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def begin_transaction(self) -> dict[str, list[dict]]:
         """Capture in-memory state so tests receive transaction semantics."""
 
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        self._transaction_lock.acquire()
         return deepcopy(self.tables)
 
     def commit_transaction(self, transaction: dict[str, list[dict]]) -> None:
         del transaction
+        self._transaction_lock.release()
 
     def rollback_transaction(self, transaction: dict[str, list[dict]]) -> None:
         self.tables = transaction
+        self._transaction_lock.release()
 
     def insert(self, table_name: str, row: dict) -> dict:
         if not self.available:
@@ -101,9 +108,23 @@ class DatabaseState:
         return self.insert(table_name, {"id": row_id, **values})
 
     def lock_transaction_key(self, key: str) -> None:
-        """No-op lock for single-process in-memory repositories."""
+        """Use the enclosing in-memory transaction as the serialization lock."""
 
         del key
+
+    def try_session_lock(self, key: str) -> object | None:
+        """Acquire one nonblocking process lock for a long-running job."""
+
+        with self._session_locks_guard:
+            lock = self._session_locks.setdefault(key, Lock())
+        return lock if lock.acquire(blocking=False) else None
+
+    def release_session_lock(self, token: object) -> None:
+        """Release a process job lock returned by try_session_lock."""
+
+        if not hasattr(token, "release"):
+            raise PersistenceUnavailableError("invalid in-memory session lock token")
+        token.release()  # type: ignore[union-attr]
 
     def rows(
         self,
@@ -198,7 +219,14 @@ class DatabaseState:
 @dataclass(frozen=True)
 class _SqlAlchemyTransaction:
     session: Any
-    token: Any
+    token: Any | None
+    nested: Any | None = None
+
+
+@dataclass(frozen=True)
+class _PostgresSessionLock:
+    session: Any
+    key: str
 
 
 class PersistentDatabaseState(DatabaseState):
@@ -215,26 +243,46 @@ class PersistentDatabaseState(DatabaseState):
     def begin_transaction(self) -> _SqlAlchemyTransaction:
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
-        if self._active_session.get() is not None:
-            raise PersistenceUnavailableError("nested Postgres transactions are not supported")
+        active = self._active_session.get()
+        if active is not None:
+            try:
+                return _SqlAlchemyTransaction(
+                    session=active,
+                    token=None,
+                    nested=active.begin_nested(),
+                )
+            except SQLAlchemyError as exc:
+                raise PersistenceUnavailableError("nested Postgres transaction failed") from exc
         session = self.session_factory()
         token = self._active_session.set(session)
         return _SqlAlchemyTransaction(session=session, token=token)
 
     def commit_transaction(self, transaction: _SqlAlchemyTransaction) -> None:
+        if transaction.nested is not None:
+            try:
+                transaction.nested.commit()
+            except SQLAlchemyError as exc:
+                transaction.nested.rollback()
+                raise PersistenceUnavailableError("Postgres savepoint commit failed") from exc
+            return
         try:
             transaction.session.commit()
         except SQLAlchemyError as exc:
             transaction.session.rollback()
             raise PersistenceUnavailableError("Postgres persistence commit failed") from exc
         finally:
+            assert transaction.token is not None
             self._active_session.reset(transaction.token)
             transaction.session.close()
 
     def rollback_transaction(self, transaction: _SqlAlchemyTransaction) -> None:
+        if transaction.nested is not None:
+            transaction.nested.rollback()
+            return
         try:
             transaction.session.rollback()
         finally:
+            assert transaction.token is not None
             self._active_session.reset(transaction.token)
             transaction.session.close()
 
@@ -358,6 +406,42 @@ class PersistentDatabaseState(DatabaseState):
             )
         except SQLAlchemyError as exc:
             raise PersistenceUnavailableError("Postgres transaction lock failed") from exc
+
+    def try_session_lock(self, key: str) -> object | None:
+        """Acquire a nonblocking Postgres advisory lock on a dedicated session."""
+
+        if not self.available:
+            raise PersistenceUnavailableError("Postgres persistence is unavailable")
+        session = self.session_factory()
+        try:
+            acquired = bool(
+                session.execute(
+                    text("SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"),
+                    {"key": key},
+                ).scalar_one()
+            )
+        except SQLAlchemyError as exc:
+            session.close()
+            raise PersistenceUnavailableError("Postgres session lock failed") from exc
+        if not acquired:
+            session.close()
+            return None
+        return _PostgresSessionLock(session=session, key=key)
+
+    def release_session_lock(self, token: object) -> None:
+        """Release and close a dedicated Postgres advisory-lock session."""
+
+        if not isinstance(token, _PostgresSessionLock):
+            raise PersistenceUnavailableError("invalid Postgres session lock token")
+        try:
+            token.session.execute(
+                text("SELECT pg_advisory_unlock(hashtextextended(:key, 0))"),
+                {"key": token.key},
+            )
+        except SQLAlchemyError as exc:
+            raise PersistenceUnavailableError("Postgres session unlock failed") from exc
+        finally:
+            token.session.close()
 
     def rows(
         self,

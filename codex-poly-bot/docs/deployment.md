@@ -106,3 +106,20 @@ curl -sSI https://codex-poly-bot.repetere.net/api/auth/github/start | grep -i '^
 Trading credentials are not stored in GitHub Actions secrets. Live venue, wallet, broker, LLM, and notification secrets must be stored in AWS Secrets Manager under the active environment prefix. The ECS task definitions inject `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from `/codex-poly-bot/{environment}/openai/api-key` and `/codex-poly-bot/{environment}/anthropic/api-key`.
 
 CloudFormation creates placeholder OpenAI and Anthropic secret values so ECS can start before provider keys exist. Replace those AWS Secrets Manager values with provider-issued API keys before using model-backed workflows.
+
+## Optional Alpaca Broker Funding Secrets
+
+Direct incoming ACH support uses four optional secrets per model provider:
+
+- `/codex-poly-bot/{environment}/alpaca/openai/broker-api-key`
+- `/codex-poly-bot/{environment}/alpaca/openai/broker-api-secret`
+- `/codex-poly-bot/{environment}/alpaca/openai/broker-account-id`
+- `/codex-poly-bot/{environment}/alpaca/openai/ach-relationship-id`
+- `/codex-poly-bot/{environment}/alpaca/claude/broker-api-key`
+- `/codex-poly-bot/{environment}/alpaca/claude/broker-api-secret`
+- `/codex-poly-bot/{environment}/alpaca/claude/broker-account-id`
+- `/codex-poly-bot/{environment}/alpaca/claude/ach-relationship-id`
+
+The deploy script discovers these paths when they exist and omits them otherwise. Development and production paths remain separate. Do not place bank account details, raw routing data, or Plaid tokens in the stack, GitHub, application config, logs, or funding tables.
+
+Every release that includes funding code must read back the authenticated funding config and confirm direct funding is disabled with both limits set to `0.00`. Query the backend CloudWatch log group for `funding_broker_post_attempt` over the release window and require a zero count. Do not use a real transfer as a deployment smoke test.

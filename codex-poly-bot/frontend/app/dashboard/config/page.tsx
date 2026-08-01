@@ -2,8 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, ShieldAlert, Workflow } from "lucide-react";
 
-import { ConfigControls } from "@/components/dashboard/config-controls";
 import type { ConfigSnapshot } from "@/components/dashboard/config-controls";
+import { ConfigWorkspace } from "@/components/dashboard/config-workspace";
 import { PageHeader } from "@/components/dashboard/dashboard-primitives";
 import { LogoutControl } from "@/components/dashboard/logout-control";
 import { serverDashboardApi } from "@/lib/server/dashboard-api";
@@ -32,7 +32,7 @@ export default async function ConfigPage() {
         body="Change the rules used most. Advanced controls remain available when you need them, and every saved value is versioned and audited."
       />
       <div className="content-grid config-content-grid">
-        <ConfigControls
+        <ConfigWorkspace
           initialSnapshot={currentConfig.ok ? currentConfig.data : undefined}
           loadError={currentConfig.ok ? undefined : currentConfig.message}
         />

@@ -1,8 +1,8 @@
 # codex-poly-bot High-Level Design
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.1
-**Date:** 2026-07-21
+**Version:** 1.2
+**Date:** 2026-07-31
 **Status:** APPROVED
 **Requirements Source:** `requirements.md`
 
@@ -18,6 +18,7 @@
 | 6 | Simplicity | A modular monolith keeps deployment and local debugging practical while the behavior is still being proven. |
 | 7 | Performance | The first target is 500 markets per venue per 60-second loop, with deterministic filters before LLM scoring. |
 | 8 | Extensibility | The design should allow workers to move into separate ECS services later without rewriting domain logic. |
+| 9 | Funding accuracy | Deposits and withdrawals must be reconciled from venue records, separated from trading returns, and tied to deterministic expected occurrences. |
 
 ## 2. Non-Goals
 
@@ -31,6 +32,9 @@
 | Runtime dependency on referenced open-source repos | The referenced repos inform design, but v1 is standalone unless a later requirement changes that. |
 | Manual production approval gate | Merges to `main` deploy production automatically per approved requirements. |
 | Alpaca options, crypto, short selling, or margin trading | v1 stock-market trading is limited to long-only stocks and ETFs. |
+| Bank credential collection or application-database storage | Bank accounts and ACH relationships remain managed by the venue. Exact Broker account and ACH relationship identifiers are secret bootstrap values; persistence uses only sanitized account references. |
+| Plaid integration | Alpaca accepts an existing ACH relationship identifier, so this release does not add a bank-linking vendor. |
+| Polymarket direct funding | Polymarket US remains observe-only until a documented, entitled funding-write API is available. |
 
 ## 3. Architecture Overview
 
@@ -84,6 +88,7 @@ Backend process owns v1 background loops:
   - trading loop
   - exit loop
   - notification loop
+  - portfolio and funding reconciliation loop
 ```
 
 ### 3.3 Component Overview
@@ -102,6 +107,8 @@ Backend process owns v1 background loops:
 | Dashboard and auth | GitHub OAuth, config UI, status UI, kill switch UI | No, writes config through API | Next.js pages, API client |
 | Notifications | SES digest and threshold alerts | Yes, delivery attempts and cooldown state | `NotificationService`, `EmailPort` |
 | Comparison analytics | Compare model performance across Polymarket and Alpaca | Yes, derived metric snapshots | `ComparisonService`, dashboard API |
+| Funding reconciliation | Normalize venue cash flows, materialize expected occurrences, match deposits, calculate cash-flow-adjusted returns, and emit funding alerts | Yes, cash flows and funding occurrences | `FundingService`, `FundingRepository`, venue activity adapters |
+| Alpaca Broker transfer adapter | Submit entitled incoming ACH transfers after local safety checks | No | `FundingTransferPort`, Alpaca Broker API |
 | Deployment and Codex setup | CloudFormation, GitHub Actions, local Docker, Codex docs | No | workflow files, templates, setup scripts |
 | Observability | Structured logs, audit events, dashboard health | Yes, audit and health records | `AuditService`, logger adapters |
 
@@ -135,6 +142,16 @@ Configuration flow:
 3. The API validates authorization and writes the new config to Postgres.
 4. The audit service records user, old value, new value, timestamp, environment, and IP address.
 5. Background loops reload config on their next cycle and apply changes without restart.
+
+Funding flow:
+
+1. After a confirmed portfolio refresh, the funding service retrieves deposit and withdrawal activity from each configured venue account.
+2. The service normalizes and upserts venue cash flows using a venue transaction identifier and merges model-provider attribution when credentials resolve to the same account.
+3. The service materializes due weekly, monthly, and low-balance occurrences with deterministic idempotency keys before any external call.
+4. Observe-only occurrences wait for matching completed venue cash flows. Direct Alpaca occurrences pass all enablement, limit, credential, kill-switch, and pending-transfer checks before the Broker API adapter can submit them.
+5. The service matches completed cash flows to expected occurrences, marks overdue occurrences missing after four business days, and sends one failure or recovery alert per transition.
+6. Performance queries subtract deposits and add withdrawals when calculating trading P&L and use Modified Dietz for percentage returns across external cash flows.
+7. The dashboard reads funding history from sanitized API responses and changes funding settings through the existing versioned and audited configuration path.
 
 ## 4. Design Decisions
 
@@ -187,6 +204,15 @@ Configuration flow:
 | DD-045 | Dashboard component strategy | Compose small route-specific views over the existing typed API client and realtime store, using the installed Lucide, Recharts, and AG Grid packages only where the information requires them | Rewrite the API, add another state system, or install a new design library | Limits change risk and bundle growth while allowing the UI hierarchy to change | Existing data contracts and infrastructure already satisfy the handoff. |
 | DD-046 | Responsive primary navigation | Keep all five destinations visible in a single desktop row and a compact five-column mobile row with text labels | Hide destinations in an overflow menu or allow horizontal page scrolling | Uses more header height on small screens but keeps location and choices explicit | The handoff requires every primary destination to remain visible. |
 | DD-047 | Recommendation safety | Confirm exact before-and-after values and retain a one-change undo action through the audited config endpoint | Apply recommendations immediately or build a separate rollback service | Adds one confirmation step but prevents accidental risk changes and reuses existing versioned config writes | Recommendations can affect live-money eligibility and need an attributable reversal path. |
+| DD-048 | Funding source of truth | Treat documented venue account activity as the authoritative record for completed deposits and withdrawals | Bank-webhook ingestion, manual ledger entries, infer cash flow from balance changes | Venue activity can arrive late and needs reconciliation, but avoids storing bank data or misclassifying market P&L | Funding status should match the venue that holds the trading account. |
+| DD-049 | Funding schedule storage | Store validated owner-specific funding schedules inside the existing versioned configuration document; store materialized occurrences in dedicated shared tables | Add mutable schedule tables, use an external scheduler | Reuses audit and conflict handling, while occurrences remain durable execution records | Configuration defines intent and occurrence rows prove what became due. |
+| DD-050 | Funding idempotency | Derive one unique occurrence key from environment, venue, account reference, provider scope, schedule identifier, due time, direction, and execution mode before external work; permit at most one Broker API transfer POST for that occurrence | Broker-generated identifiers only, time-window deduplication | Deterministic keys require stable normalized inputs, but survive retries and process restarts; an ambiguous POST outcome requires read-only reconciliation | A persisted local intent and request fingerprint must precede any transfer request. |
+| DD-051 | Business-day calendar | Use `America/New_York`, weekends, and the United States federal-holiday calendar; move due occurrences forward to the next business day and catch up unmaterialized due occurrences after worker downtime | Calendar days, previous business day, exchange-only holidays | Federal holidays do not cover every broker closure, but provide a deterministic banking schedule | The default applies to ACH expectations and is configurable only through a later requirement. |
+| DD-052 | Missing-deposit matching | Match one completed cash flow one-to-one by sanitized account reference, direction, amount within `0.01 USD`, and completion time in the closed interval from due time through four business days after due time; mark it missing only after that interval closes | Exact timestamp match, FIFO amount-only match, operator-only matching | Same-amount overlapping deposits can remain ambiguous and must not be guessed | Conservative matching prevents double attribution and false success. |
+| DD-053 | External-cash-flow returns | Use only completed cash flows at their effective completion time; represent deposits as positive and withdrawals as negative; calculate adjusted P&L as `EMV - BMV - sum(CF)` and Modified Dietz return as `(EMV - BMV - sum(CF)) / (BMV + sum(w * CF))` | Raw venue P&L only, simple return, time-weighted subperiod chaining | Modified Dietz is an approximation when intraday valuations are sparse | It removes external funding from strategy results and prevents pending, failed, rejected, or returned transfers from changing results. |
+| DD-054 | Direct transfer boundary | Support only incoming Alpaca ACH through the Broker API with separate Broker credentials and an existing ACH relationship; do not integrate Plaid | Trading API transfer calls, raw bank fields, Plaid onboarding | Requires separate Alpaca entitlement and secret references | The application can submit a transfer without collecting bank-account data. |
+| DD-055 | Direct transfer safety defaults | Deploy direct transfers disabled with per-transfer and monthly caps set to zero, allow at most one pending transfer per account, and never auto-retry terminal failures | Enable with seeded caps, reuse trading live mode alone, retry failures automatically | Operators must explicitly configure several controls before use | Funding moves external cash and needs an independent control plane in addition to the global kill switch. |
+| DD-056 | Funding worker placement | Run funding reconciliation after confirmed portfolio refreshes in the existing backend task under a Postgres job lock | New ECS service, request-driven reconciliation only | Shares task capacity but avoids a second deployable service | The workload is small and already depends on current portfolio snapshots and scheduler locks. |
 
 ## 5. Cross-Cutting Concerns
 
@@ -524,6 +550,33 @@ Activity owns the latest funnel and recent check records. Performance owns venue
 
 The redesign uses the existing frontend dependencies. Charts are limited to trends that cannot be read faster from a value or table. Animation is limited to short feedback transitions, is transform or opacity based, and is disabled by `prefers-reduced-motion`.
 
+### 5.13 Funding Integrity and Safety
+
+The shared schema stores two funding record types. `venue_cash_flows` contains normalized, venue-confirmed deposits and withdrawals. `funding_occurrences` contains deterministic expectations and direct-transfer attempts. Both use fixed-precision USD values and persist only an allowlist of normalized fields. Raw funding payloads are not retained. The tables retain records indefinitely and never accept hard deletion through the dashboard.
+
+Cash-flow uniqueness uses environment, venue, sanitized account reference, and venue transaction identifier. Provider attribution is a set so two credential paths that resolve to one account do not double-count the transaction. Occurrence uniqueness uses the deterministic idempotency key. Database constraints enforce both keys. Ambiguous cash flows remain unmatched and visible for review.
+
+Schedule configuration supports `weekly`, `monthly`, and `low_balance` cadence. A weekly schedule stores an ISO weekday. A monthly schedule stores a day from 1 through 31 and uses the last calendar day when a month is shorter. Weekly and monthly schedules run at 09:00 in `America/New_York`, following local daylight-saving transitions; weekend and United States federal-holiday dates move forward. Each worker run materializes every due but unmaterialized occurrence through the current time so downtime does not skip an occurrence. Low-balance evaluation runs only after a successful confirmed portfolio refresh and uses confirmed available-to-trade balance. Its requested amount is `max(0, target balance - confirmed available-to-trade balance)` and is never greater than the configured schedule amount, per-transfer cap, or remaining calendar-month cap. The monthly cap includes pending and completed direct transfers.
+
+Execution modes are `observe` and `direct`. Observe mode never makes a funding write. Direct mode is valid only for Alpaca incoming ACH. Immediately before the external call, the funding service acquires an account-scoped Postgres lock, reads the current control state, and atomically reserves both the pending-transfer slot and monthly amount. The call is allowed only after the application confirms all of these controls:
+
+- funding direct transfers are enabled;
+- the global kill switch and funding emergency stop are inactive;
+- the amount is positive and within nonzero per-transfer and monthly limits;
+- the account has no pending direct transfer;
+- separate Alpaca Broker API credentials, a Broker account reference, and an approved ACH relationship reference are available;
+- Postgres is available, the occurrence and request fingerprint are committed, and the transfer reservation is current.
+
+Any failed control persists a refusal without calling Alpaca and releases an unused reservation. One occurrence can issue at most one transfer POST. The occurrence persists its request fingerprint before that POST and the provider transfer identifier as soon as it is available. A network timeout or ambiguous response after submission leaves the occurrence in `unknown` and reconciliation-only state; the application never repeats the POST. `unknown` consumes the account pending-transfer slot and reserved monthly amount until reconciliation proves a terminal state. Rejected, returned, and failed transfers are terminal and require a newly authorized occurrence. The global kill switch and funding emergency stop are read again while the account lock is held, block writes immediately, and do not stop read-only reconciliation, missing-deposit detection, or recovery alerts.
+
+Exact Alpaca Broker account and ACH relationship identifiers are resolved at call time from Secrets Manager or the equivalent gitignored local secret bootstrap. They never enter Postgres config versions, funding rows, audits, logs, or API responses. Config stores a non-secret secret-reference name and sanitized display label only.
+
+The dashboard does not receive raw account identifiers, ACH relationship identifiers, Broker credentials, routing numbers, account numbers, or unredacted venue payloads. It receives stable display labels, provider attribution, amounts, direction, schedule state, venue state, timestamps, and alert state. Funding schedule changes use the existing allowlist authorization, optimistic config version, validation, audit event, and realtime invalidation flow.
+
+Funding alerts use a stable key containing environment, account reference hash, occurrence id, and transition type. A unique transition outbox row is committed before delivery. A missing, rejected, returned, or failed transition creates at most one logical alert; a later match creates at most one recovery alert. Transport uncertainty can retry delivery through the existing capped retry policy without creating a second logical transition. Notification delivery failure does not change the occurrence state.
+
+Performance keeps both raw venue equity movement and adjusted trading results available to the service layer. Only completed cash flows, at their effective completion timestamps, enter return calculations. Deposits are positive cash flows and withdrawals are negative cash flows. The main dashboard uses adjusted trading P&L `EMV - BMV - sum(CF)` and Modified Dietz return `(EMV - BMV - sum(CF)) / (BMV + sum(w * CF))`, where `w` is the fraction of the period remaining after each completed cash flow. If the weighted capital denominator is zero or negative, percentage return is unavailable rather than zero. The API includes total completed deposits and withdrawals so the adjustment is explainable.
+
 ## 6. Module Map
 
 | Module | File or Directory | Responsibility | Dependencies |
@@ -558,6 +611,9 @@ The redesign uses the existing frontend dependencies. Charts are limited to tren
 | Exit monitor | `backend/app/services/exit_monitor.py` | Exit trigger evaluation and exit decisions | repositories, execution |
 | Notification service | `backend/app/services/notification_service.py` | Daily digest and large movement alerts | SES, repositories |
 | Comparison service | `backend/app/services/comparison_service.py` | Cross-model and cross-venue performance metrics | repositories |
+| Funding service | `backend/app/services/funding_service.py` | Schedule materialization, cash-flow reconciliation, safety checks, alerts, and adjusted return calculations | portfolio service, repositories, notification service, funding transfer port |
+| Funding transfer port | `backend/app/ports/funding.py` | Provider-neutral direct-transfer and transfer-status contract | domain funding types |
+| Alpaca Broker funding adapter | `backend/app/adapters/alpaca/funding.py` | Entitled incoming ACH submission and transfer status reads | HTTP client, secret references |
 | Worker scheduler | `backend/app/workers/scheduler.py` | Background loops and config reload | services |
 | Audit service | `backend/app/services/audit_service.py` | Audit event creation and retrieval | repositories |
 | Frontend app | `frontend/` | Next.js React dashboard | backend API |
@@ -589,6 +645,11 @@ The redesign uses the existing frontend dependencies. Charts are limited to tren
 | Automatic production deploy ships broken code | High | Medium | CI tests before build/deploy, migration checks, image build gates | CI/CD setup |
 | SES alerts create noise | Low | Medium | Alert thresholds and 30-minute cooldown per market/model | Notification service |
 | One ECS service becomes overloaded | Medium | Medium | Keep service boundaries clean and document split into worker services | HLD and future plan |
+| Duplicate or ambiguous deposit attribution | High | Medium | Venue transaction uniqueness, provider-set merging, conservative occurrence matching, visible unmatched state | Funding repository and reconciliation tests |
+| Unintended direct bank transfer | High | Low | Disabled and zero-limit defaults, separate Broker credentials, committed occurrence, one pending transfer, independent emergency stop, no live transfer in deployment tests | Funding service and deployment configuration |
+| Late, rejected, or returned ACH state | High | Medium | Venue reconciliation, terminal failure states, one transition alert, recovery alert, no automatic terminal retry | Funding worker and notification tests |
+| Deposit inflates reported trading return | High | Medium | Venue cash-flow ledger, adjusted P&L formula, Modified Dietz calculation, dashboard disclosure | Portfolio and performance tests |
+| Bank or credential data reaches logs or UI | High | Low | Store sanitized references only, normalized-field persistence allowlist, response allowlist, and log-boundary tests | Adapter, API, and security tests |
 
 ## 8. Requirements Coverage Summary
 
@@ -599,6 +660,7 @@ The redesign uses the existing frontend dependencies. Charts are limited to tren
 | REQ-DAT-001, REQ-DAT-002, REQ-DAT-003, REQ-DAT-004, REQ-DAT-005, REQ-DAT-006, REQ-DAT-007, REQ-DAT-008 | Ingestion service, S3 adapter, retention policy |
 | REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-008, REQ-DB-009, REQ-DB-010 | Postgres repositories, schemas, migrations, venue portfolio records, scanner transactions, commit notifications |
 | REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006, REQ-WAL-007 | Wallet service, wallet CLI, Secrets Manager |
+| REQ-FND-001, REQ-FND-002, REQ-FND-003, REQ-FND-004, REQ-FND-005, REQ-FND-006, REQ-FND-007, REQ-FND-008, REQ-FND-009, REQ-FND-010, REQ-FND-011, REQ-FND-012, REQ-FND-013, REQ-FND-014, REQ-FND-015, REQ-FND-016, REQ-FND-017, REQ-FND-018, REQ-FND-019, REQ-FND-020 | Funding source-of-truth decisions, occurrence idempotency, funding service and repository, Alpaca Broker funding adapter, audited settings, sanitized dashboard history, cash-flow-adjusted performance |
 | REQ-LLM-001, REQ-LLM-002, REQ-LLM-003, REQ-LLM-004, REQ-LLM-005, REQ-LLM-006, REQ-LLM-007 | LLM ports, provider adapters, scoring service |
 | REQ-STR-001, REQ-STR-002, REQ-STR-003, REQ-STR-004, REQ-STR-005, REQ-STR-006, REQ-STR-007, REQ-STR-008, REQ-STR-009 | Strategy engine and strategy modules |
 | REQ-EXE-001, REQ-EXE-002, REQ-EXE-003, REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-007, REQ-EXE-008, REQ-EXE-009, REQ-EXE-010, REQ-EXE-011, REQ-EXE-012, REQ-EXE-013, REQ-EXE-014, REQ-EXE-015, REQ-EXE-016, REQ-EXE-017 | Risk engine, execution service, global dry-run, kill switch |

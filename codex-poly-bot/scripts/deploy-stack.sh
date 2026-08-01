@@ -251,6 +251,30 @@ add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/alpaca/claude/secret-key" \
   "AlpacaClaudeSecretKeySecretArn"
 add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/openai/broker-api-key" \
+  "AlpacaOpenAiBrokerApiKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/openai/broker-api-secret" \
+  "AlpacaOpenAiBrokerApiSecretSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/openai/broker-account-id" \
+  "AlpacaOpenAiBrokerAccountIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/openai/ach-relationship-id" \
+  "AlpacaOpenAiAchRelationshipIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/claude/broker-api-key" \
+  "AlpacaClaudeBrokerApiKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/claude/broker-api-secret" \
+  "AlpacaClaudeBrokerApiSecretSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/claude/broker-account-id" \
+  "AlpacaClaudeBrokerAccountIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/alpaca/claude/ach-relationship-id" \
+  "AlpacaClaudeAchRelationshipIdSecretArn"
+add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/openai/admin-api-key" \
   "OpenAiAdminApiKeySecretArn"
 add_secret_parameter_if_present \

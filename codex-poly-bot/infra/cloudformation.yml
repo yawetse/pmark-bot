@@ -220,6 +220,30 @@ Parameters:
   AlpacaClaudeSecretKeySecretArn:
     Type: String
     Default: ""
+  AlpacaOpenAiBrokerApiKeySecretArn:
+    Type: String
+    Default: ""
+  AlpacaOpenAiBrokerApiSecretSecretArn:
+    Type: String
+    Default: ""
+  AlpacaOpenAiBrokerAccountIdSecretArn:
+    Type: String
+    Default: ""
+  AlpacaOpenAiAchRelationshipIdSecretArn:
+    Type: String
+    Default: ""
+  AlpacaClaudeBrokerApiKeySecretArn:
+    Type: String
+    Default: ""
+  AlpacaClaudeBrokerApiSecretSecretArn:
+    Type: String
+    Default: ""
+  AlpacaClaudeBrokerAccountIdSecretArn:
+    Type: String
+    Default: ""
+  AlpacaClaudeAchRelationshipIdSecretArn:
+    Type: String
+    Default: ""
   OpenAiAdminApiKeySecretArn:
     Type: String
     Default: ""
@@ -295,6 +319,14 @@ Conditions:
   UseAlpacaOpenAiSecretKeySecret: !Not [!Equals [!Ref AlpacaOpenAiSecretKeySecretArn, ""]]
   UseAlpacaClaudeKeyIdSecret: !Not [!Equals [!Ref AlpacaClaudeKeyIdSecretArn, ""]]
   UseAlpacaClaudeSecretKeySecret: !Not [!Equals [!Ref AlpacaClaudeSecretKeySecretArn, ""]]
+  UseAlpacaOpenAiBrokerApiKeySecret: !Not [!Equals [!Ref AlpacaOpenAiBrokerApiKeySecretArn, ""]]
+  UseAlpacaOpenAiBrokerApiSecretSecret: !Not [!Equals [!Ref AlpacaOpenAiBrokerApiSecretSecretArn, ""]]
+  UseAlpacaOpenAiBrokerAccountIdSecret: !Not [!Equals [!Ref AlpacaOpenAiBrokerAccountIdSecretArn, ""]]
+  UseAlpacaOpenAiAchRelationshipIdSecret: !Not [!Equals [!Ref AlpacaOpenAiAchRelationshipIdSecretArn, ""]]
+  UseAlpacaClaudeBrokerApiKeySecret: !Not [!Equals [!Ref AlpacaClaudeBrokerApiKeySecretArn, ""]]
+  UseAlpacaClaudeBrokerApiSecretSecret: !Not [!Equals [!Ref AlpacaClaudeBrokerApiSecretSecretArn, ""]]
+  UseAlpacaClaudeBrokerAccountIdSecret: !Not [!Equals [!Ref AlpacaClaudeBrokerAccountIdSecretArn, ""]]
+  UseAlpacaClaudeAchRelationshipIdSecret: !Not [!Equals [!Ref AlpacaClaudeAchRelationshipIdSecretArn, ""]]
   UseOpenAiAdminApiKeySecret: !Not [!Equals [!Ref OpenAiAdminApiKeySecretArn, ""]]
   UseAnthropicAdminApiKeySecret: !Not [!Equals [!Ref AnthropicAdminApiKeySecretArn, ""]]
 
@@ -875,6 +907,46 @@ Resources:
               - UseAlpacaClaudeSecretKeySecret
               - Name: ALPACA_CLAUDE_SECRET_KEY
                 ValueFrom: !Ref AlpacaClaudeSecretKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaOpenAiBrokerApiKeySecret
+              - Name: ALPACA_OPENAI_BROKER_API_KEY
+                ValueFrom: !Ref AlpacaOpenAiBrokerApiKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaOpenAiBrokerApiSecretSecret
+              - Name: ALPACA_OPENAI_BROKER_API_SECRET
+                ValueFrom: !Ref AlpacaOpenAiBrokerApiSecretSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaOpenAiBrokerAccountIdSecret
+              - Name: ALPACA_OPENAI_BROKER_ACCOUNT_ID
+                ValueFrom: !Ref AlpacaOpenAiBrokerAccountIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaOpenAiAchRelationshipIdSecret
+              - Name: ALPACA_OPENAI_ACH_RELATIONSHIP_ID
+                ValueFrom: !Ref AlpacaOpenAiAchRelationshipIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaClaudeBrokerApiKeySecret
+              - Name: ALPACA_CLAUDE_BROKER_API_KEY
+                ValueFrom: !Ref AlpacaClaudeBrokerApiKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaClaudeBrokerApiSecretSecret
+              - Name: ALPACA_CLAUDE_BROKER_API_SECRET
+                ValueFrom: !Ref AlpacaClaudeBrokerApiSecretSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaClaudeBrokerAccountIdSecret
+              - Name: ALPACA_CLAUDE_BROKER_ACCOUNT_ID
+                ValueFrom: !Ref AlpacaClaudeBrokerAccountIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseAlpacaClaudeAchRelationshipIdSecret
+              - Name: ALPACA_CLAUDE_ACH_RELATIONSHIP_ID
+                ValueFrom: !Ref AlpacaClaudeAchRelationshipIdSecretArn
               - !Ref AWS::NoValue
           LogConfiguration:
             LogDriver: awslogs

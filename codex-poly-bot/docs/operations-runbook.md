@@ -1,8 +1,24 @@
 # Operations Runbook
 
-REQ: REQ-DEP-004, REQ-EXE-014, REQ-OBS-005, REQ-WAL-006
+REQ: REQ-DEP-004, REQ-EXE-014, REQ-OBS-005, REQ-WAL-006, REQ-FND-019
 
 Use this runbook for live incidents, degraded health, bad deploys, and credential failures.
+
+## Recurring Funding
+
+Funding schedules are saved under Settings and run directly after the confirmed venue portfolio refresh. Weekly and monthly schedules create expected deposits at 09:00 America/New_York on the next business day when needed. Low-balance schedules require a fresh confirmed buying-power snapshot. Polymarket is observe-only.
+
+Bank and ACH setup remains venue-managed. The application has no Plaid integration. Optional direct Alpaca deposits require an existing ACH relationship plus provider-scoped Broker secrets for the API key, API secret, account ID, and relationship ID. Missing secrets do not block application startup.
+
+Keep `direct_transfers_enabled=false`, `max_transfer_usd=0.00`, and `max_monthly_transfer_usd=0.00` until a separate direct-funding change is approved. The global kill switch or funding emergency stop blocks new transfer claims while activity reads, matching, missing detection, and recovery alerts continue.
+
+Review `reserved`, `submitted`, and `unknown` direct occurrences before changing limits. A claim with `post_attempted_at` is never posted again. The worker reconciles it by exact provider transfer ID or one exact incoming amount, ACH relationship, and time-window candidate. Zero or multiple candidates remain `unknown`. Terminal rejection, return, or failure releases the reservation and creates one alert.
+
+An alert in `sending` means delivery was claimed but the final SES result was not persisted. Review SES and CloudWatch before changing that row. Do not reset it to pending without confirming that SES did not accept the message.
+
+For rollback, first enable the funding emergency stop and set direct funding and both limits to the disabled zero defaults. Roll back ECS only after these values are read back. Funding tables are retained so expected, missing, matched, and cash-flow history remains available after application rollback.
+
+Release smoke tests must not create a real transfer. Verify authenticated funding config readback and query the backend CloudWatch log group for the structured marker `funding_broker_post_attempt`. The release window must contain zero matching events.
 
 ## SigNoz Observability
 

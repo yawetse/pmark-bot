@@ -72,6 +72,7 @@ jobs:
           npm run test:auth-boundary
           npm run test:dashboard-controls
           npm run test:dashboard-operations
+          npm run test:funding-controls
 
   migration-safety:
     name: Migration safety
@@ -220,6 +221,10 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - uses: actions/checkout@v7
+      - name: Mark release verification window
+        id: release-window
+        run: echo "start_ms=$(( $(git show -s --format=%ct "$GITHUB_SHA") * 1000 ))" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -237,6 +242,17 @@ jobs:
           aws ecs wait services-stable \
             --cluster codex-poly-bot-development-cluster \
             --services codex-poly-bot-development-backend codex-poly-bot-development-frontend
+      - name: Verify funding release guardrails
+        env:
+          APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
+          BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
+          DEPLOY_ENVIRONMENT: development
+          RELEASE_START_MS: ${{ steps.release-window.outputs.start_ms }}
+          RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
+          SES_IDENTITY_EMAIL: ${{ vars.SES_IDENTITY_EMAIL }}
+        run: python codex-poly-bot/scripts/verify-funding-release.py
 
   deploy-production:
     name: Deploy production
@@ -253,6 +269,10 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - uses: actions/checkout@v7
+      - name: Mark release verification window
+        id: release-window
+        run: echo "start_ms=$(( $(git show -s --format=%ct "$GITHUB_SHA") * 1000 ))" >> "$GITHUB_OUTPUT"
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -270,3 +290,14 @@ jobs:
           aws ecs wait services-stable \
             --cluster codex-poly-bot-production-cluster \
             --services codex-poly-bot-production-backend codex-poly-bot-production-frontend
+      - name: Verify funding release guardrails
+        env:
+          APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
+          BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
+          DEPLOY_ENVIRONMENT: production
+          RELEASE_START_MS: ${{ steps.release-window.outputs.start_ms }}
+          RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
+          SES_IDENTITY_EMAIL: ${{ vars.SES_IDENTITY_EMAIL }}
+        run: python codex-poly-bot/scripts/verify-funding-release.py

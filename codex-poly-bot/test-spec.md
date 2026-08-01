@@ -1,8 +1,8 @@
 # codex-poly-bot Test Specification
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.0  
-**Date:** 2026-04-25  
+**Version:** 1.2
+**Date:** 2026-07-31
 **Status:** DRAFT  
 
 ## Test Strategy
@@ -18,9 +18,9 @@
 
 | Priority | Requirements | Planned Tests |
 |----------|--------------|---------------|
-| P0 | 109 | 270 |
-| P1 | 18 | 28 |
-| Total | 127 | 298 |
+| P0 | 143 | 373 |
+| P1 | 20 | 34 |
+| Total | 163 | 407 |
 
 ## Test Cases
 
@@ -313,6 +313,7 @@
 | TST-REQ-UI-013-05 | Edge | REQ-UI-013 | Given venue accounts refresh in adjacent minute buckets, When portfolio history is produced, Then each point carries forward the latest confirmed value for accounts that did not refresh in that minute. |
 | TST-REQ-UI-013-06 | Focus | REQ-UI-013 | Given venue-confirmed account snapshots include equity, cash, and optional buying power, When Performance renders account balances, Then each model-provider account shows equity, cash, and available-to-trade balance using buying power when present and cash otherwise, while missing values remain unavailable. |
 | TST-REQ-UI-013-07 | Edge | REQ-UI-013 | Given Polymarket US returns cash without a buying-power field, When the venue account snapshot is normalized, Then buying power remains unavailable so the dashboard can use the confirmed cash balance instead of showing a fabricated zero. |
+| TST-REQ-UI-013-08 | Focus | REQ-UI-013 | Given venue-confirmed portfolio state, When Overview renders, Then it shows only compact current status and a link to Performance rather than detailed account, holding, or fill data. |
 
 ### Cross-Market Comparison Analytics
 
@@ -374,6 +375,7 @@
 | TST-REQ-DEP-005-03 | Focus | REQ-DEP-005 | Given the spec suite is ready for release review, When traceability verification scans spec tests, Then no pending red-phase placeholders remain. |
 | TST-REQ-DEP-005-04 | Focus | REQ-DEP-005 | Given frontend code is present, When CI runs, Then npm install, typecheck, and auth-boundary checks run before build or deploy jobs. |
 | TST-REQ-DEP-005-05 | Focus | REQ-DEP-005 | Given a migration is destructive or contract-phase, When CI evaluates migration safety, Then automatic deploy is rejected and an expand/contract split is required. |
+| TST-REQ-DEP-005-06 | Release | REQ-DEP-005 | Given recurring-funding infrastructure is release-ready, When the deployment contract runs, Then CloudFormation validation, deploy-script shell syntax, environment-separated optional Broker secret references, and disabled zero funding defaults pass before deploy. |
 | TST-REQ-DEP-006-01 | Happy | REQ-DEP-006 | Given tests pass, When deployment workflow runs, Then backend and frontend images are built and published to ECR before ECS deployment. |
 | TST-REQ-DEP-006-02 | Edge | REQ-DEP-006 | Given ECR publish fails, When deployment workflow runs, Then ECS deployment is skipped and failure status is reported. |
 | TST-REQ-DEP-006-03 | Focus | REQ-DEP-006 | Given tests and migration safety pass, When the workflow is inspected, Then backend and frontend images are pushed to ECR before ECS deployment. |
@@ -404,6 +406,110 @@
 | TST-REQ-OBS-006-01 | Focus | REQ-OBS-006 | Given a background worker fails, When worker supervision records the failure, Then dashboard health shows degraded status. |
 | TST-REQ-OBS-006-02 | Edge | REQ-OBS-006 | Given one requirement has no matching test or implementation trace, When readiness verification receives the uncovered requirement, Then the result fails and identifies the missing coverage. |
 | TST-REQ-OBS-006-03 | Focus | REQ-OBS-006 | Given audit, health, deployment, and live-trading safety checks, When release readiness is reviewed, Then each area is passing or explicitly deferred with a reason. |
+| TST-REQ-OBS-006-04 | Release | REQ-OBS-006 | Given the recurring-funding change is ready, When release evidence is audited, Then its tracking issue links a branch rebased on current develop, the development and main promotion pull requests, both final GitHub Actions run URLs and statuses, and attached environment verification before issue closure. |
+
+### Dashboard Information Architecture
+
+| Test ID | Type | Validates | Test Description |
+|---------|------|-----------|------------------|
+| TST-REQ-UI-016-01 | Focus | REQ-UI-016 | Given the authenticated dashboard shell, When primary navigation renders, Then Overview, Activity, Performance, Settings, and Help remain visible, More is absent, `/dashboard/operations` remains directly reachable, and Activity and Settings both link to it. |
+| TST-REQ-UI-017-01 | Focus | REQ-UI-017 | Given live-trade, attention, and all-clear data fixtures, When Overview derives state, Then exactly one data-driven state renders with the documented precedence and no manual selector. |
+| TST-REQ-UI-018-01 | Focus | REQ-UI-018 | Given attention blockers and recommendations, When Overview renders, Then blockers are prioritized, no more than three recommendations appear, and other states show none. |
+| TST-REQ-UI-019-01 | Focus | REQ-UI-019 | Given Overview data, When the page renders, Then it owns only current facts, latest result, and contextual links without detailed records, tables, forms, or help duplication. |
+| TST-REQ-UI-020-01 | Focus | REQ-UI-020 | Given persisted or realtime operations data and degraded fixtures, When Activity renders, Then it shows the latest funnel, recent checks, update time, and explicit unavailable states without invented counts. |
+| TST-REQ-UI-021-01 | Focus | REQ-UI-021 | Given venue-confirmed portfolio data, When Performance renders, Then it shows required metrics and by-market columns, excludes simulated and unfilled orders, and preserves unavailable money states. |
+| TST-REQ-UI-022-01 | Focus | REQ-UI-022 | Given common and advanced settings, When Settings renders and saves, Then plain-language common controls, audited advanced persistence, emergency-stop link, and distinct live-money styling remain present. |
+| TST-REQ-UI-023-01 | Focus | REQ-UI-023 | Given backend data is unavailable, When Help renders, Then the five documented process steps, common questions, and Overview link remain available. |
+| TST-REQ-UI-024-01 | Focus | REQ-UI-024 | Given 390-pixel and desktop viewports plus keyboard and reduced-motion settings, When dashboard pages render, Then navigation is usable, focus is visible, status is not color-only, and page overflow and disallowed motion are absent. |
+| TST-REQ-UI-025-01 | Focus | REQ-UI-025 | Given one upstream section fails after a valid snapshot, When redesigned pages render, Then valid data remains visible and one consolidated stale or unavailable message is shown. |
+| TST-REQ-UI-026-01 | Focus | REQ-UI-026 | Given a recommendation and current config version, When apply and undo run, Then exact values require confirmation, both writes use the audited endpoint, a stale undo is rejected, and undo expires after the next mutation, navigation, or reload. |
+
+### Recurring Funding and Direct Transfers
+
+| Test ID | Type | Validates | Test Description |
+|---------|------|-----------|------------------|
+| TST-REQ-FND-001-01 | Happy | REQ-FND-001 | Given authenticated Alpaca and Polymarket US accounts, When portfolio reconciliation runs, Then documented deposit and withdrawal activity is retrieved with balances, positions, and fills. |
+| TST-REQ-FND-001-02 | Edge | REQ-FND-001 | Given one venue funding-activity read fails, When reconciliation runs, Then prior confirmed funding rows remain, the account funding section is degraded, and other accounts continue. |
+| TST-REQ-FND-001-03 | Contract | REQ-FND-001 | Given Alpaca CSD, CSW, supported TRANS, and ambiguous TRANS rows, When normalization runs, Then CSD and CSW are completed deposits and withdrawals, supported TRANS uses its documented direction, and ambiguous TRANS is skipped safely. |
+| TST-REQ-FND-001-04 | Contract | REQ-FND-001 | Given Polymarket ACCOUNT_DEPOSIT, ACCOUNT_ADVANCED_DEPOSIT, ACCOUNT_WITHDRAWAL, and ambiguous TRANSFER activity, When normalization runs, Then documented deposit and withdrawal records are kept and ambiguous direction is skipped. |
+| TST-REQ-FND-001-05 | Integration | REQ-FND-001 | Given one account activity source fails inside the runtime funding tick, When other accounts succeed, Then each successful account persists and reconciles independently and the failed account reports one safe error. |
+| TST-REQ-FND-002-01 | Happy | REQ-FND-002 | Given venue funding activity, When normalization and persistence run, Then only environment, venue, providers, sanitized account reference, transaction ID, direction, amount, status, and timestamps are retained. |
+| TST-REQ-FND-002-02 | Security | REQ-FND-002 | Given a venue payload contains credentials, account and routing numbers, relationship IDs, raw bank fields, or Plaid fields, When persistence, logging, and API serialization run, Then those fields are absent. |
+| TST-REQ-FND-002-03 | Edge | REQ-FND-002 | Given an Alpaca CSD or CSW has a date without a timestamp, When normalized, Then `effective_at` is 09:00 America/New_York on that date and precision is marked date-only. |
+| TST-REQ-FND-003-01 | Happy | REQ-FND-003 | Given OpenAI and Claude credentials resolve to one venue account and observe one transaction, When both upsert it, Then one cash-flow row contains both providers and one amount. |
+| TST-REQ-FND-003-02 | Edge | REQ-FND-003 | Given an older venue update arrives after a newer or terminal cash-flow state, When upsert runs, Then status and effective fields do not regress. |
+| TST-REQ-FND-003-03 | Edge | REQ-FND-003 | Given pagination repeats a venue transaction ID within or across pages, When sync runs, Then the duplicate-ID guard and database uniqueness retain one cash-flow row. |
+| TST-REQ-FND-004-01 | Focus | REQ-FND-004 | Given old cash-flow and occurrence rows and no archive policy, When routine cleanup or migrations run, Then funding history is retained and no dashboard hard-delete path exists. |
+| TST-REQ-FND-004-02 | Performance | REQ-FND-004 | Given more funding activity than one tick budget, When sync runs, Then current head and historical backfill each stop after 20 pages and persist a continuation cursor. |
+| TST-REQ-FND-004-03 | Recovery | REQ-FND-004 | Given a stored head transaction and backfill cursor, When later ticks run, Then current head sync reaches the prior head before advancing coverage and historical backfill resumes without blocking current activity. |
+| TST-REQ-FND-004-04 | History | REQ-FND-004 | Given funding rows older than the default API window, When an authenticated user pages or selects an older interval, Then retained history remains queryable without a hard-delete path. |
+| TST-REQ-FND-005-01 | Happy | REQ-FND-005 | Given enabled weekly and monthly schedules, When 09:00 America/New_York becomes due, Then one occurrence per provider schedule is materialized. |
+| TST-REQ-FND-005-02 | Edge | REQ-FND-005 | Given a weekend, federal holiday, daylight-saving boundary, or day 31 in a shorter month, When due time is calculated, Then the documented next-business-day and local-time rule is used. |
+| TST-REQ-FND-005-03 | Recovery | REQ-FND-005 | Given an established schedule has a last materialized occurrence and the worker misses later due times, When it restarts, Then every due time after that occurrence through now materializes once. |
+| TST-REQ-FND-005-04 | Edge | REQ-FND-005 | Given a newly enabled schedule has no occurrence history, When materialization first runs, Then only its most recent due occurrence is created without unlimited historical backfill. |
+| TST-REQ-FND-006-01 | Happy | REQ-FND-006 | Given a fresh confirmed buying power below target, When low-balance evaluation runs, Then the expected gap is `max(0, target - buying power)` and one episode is created. |
+| TST-REQ-FND-006-02 | Edge | REQ-FND-006 | Given the low-balance gap exceeds positive schedule, per-transfer, or remaining monthly caps, When a direct claim runs, Then the submitted amount is the minimum positive cap and both expected and submitted amounts remain visible. |
+| TST-REQ-FND-006-03 | Recovery | REQ-FND-006 | Given balance remains below target across refreshes, When evaluation repeats, Then no second episode is created until a fresh at-or-above-target snapshot rearms the schedule. |
+| TST-REQ-FND-006-04 | Safety | REQ-FND-006 | Given a failed, stale, or missing confirmed portfolio snapshot, When low-balance evaluation runs, Then no new low-balance episode or transfer claim is created. |
+| TST-REQ-FND-007-01 | Happy | REQ-FND-007 | Given the same schedule, account, provider, adjusted due time, direction, and mode, When occurrence materialization runs twice, Then one deterministic persisted occurrence is returned. |
+| TST-REQ-FND-007-02 | Concurrency | REQ-FND-007 | Given concurrent workers and one due occurrence, When both materialize under database constraints, Then one row exists and the funding run lock prevents overlapping work. |
+| TST-REQ-FND-007-03 | Integration | REQ-FND-007 | Given another task owns the session funding lock, When a runtime tick starts, Then it skips; when an acquired tick succeeds or fails, Then `finally` releases the lock without holding a transaction across venue calls. |
+| TST-REQ-FND-007-04 | Integration | REQ-FND-007 | Given the latest portfolio refresh fails, When fixed weekly or monthly schedules are due, Then they still materialize while low-balance schedules remain gated. |
+| TST-REQ-FND-007-05 | Migration | REQ-FND-007 | Given the funding migration plan, When schema contracts are inspected, Then cash-flow, occurrence, sync-state, and alert-outbox tables include required foreign keys, checks, indexes, unique keys, and the partial pending-slot constraint. |
+| TST-REQ-FND-008-01 | Happy | REQ-FND-008 | Given one completed cash flow with matching account, direction, effective window, and amount within `0.01`, When reconciliation runs, Then it matches one occurrence one-to-one. |
+| TST-REQ-FND-008-02 | Edge | REQ-FND-008 | Given zero or multiple same-amount candidates, a wrong direction, an out-of-window time, or amount outside tolerance, When reconciliation runs, Then it leaves the occurrence unmatched. |
+| TST-REQ-FND-008-03 | Safety | REQ-FND-008 | Given the four-business-day deadline passed but activity coverage has not advanced past it, When reconciliation runs, Then missing state is delayed until a successful covered sync. |
+| TST-REQ-FND-008-04 | Concurrency | REQ-FND-008 | Given two workers race to match or transition the same occurrence, When compare-and-set updates run, Then one cash flow wins, terminal state does not regress, and no matched cash flow is reused. |
+| TST-REQ-FND-009-01 | Happy | REQ-FND-009 | Given an occurrence first becomes missing, rejected, returned, or failed, When its state commits, Then one unique failure outbox event is created before SES delivery. |
+| TST-REQ-FND-009-02 | Edge | REQ-FND-009 | Given the same transition is evaluated again or SES delivery is uncertain, When outbox delivery retries, Then no second logical alert is created. |
+| TST-REQ-FND-009-03 | Recovery | REQ-FND-009 | Given a missing occurrence later matches a completed cash flow, When reconciliation runs, Then one recovery outbox event is created. |
+| TST-REQ-FND-009-04 | Delivery | REQ-FND-009 | Given SES delivery succeeds or fails, When the outbox worker records the result, Then sent or failed state, provider ID or safe error, capped attempt count, and bounded backoff are persisted and heartbeat metadata reports safe counts and coverage. |
+| TST-REQ-FND-010-01 | Happy | REQ-FND-010 | Given funding rows and occurrences, When authenticated Performance loads, Then it shows safe account label, provider, venue, venue status, matched or missing state, direction, amount, and timestamps. |
+| TST-REQ-FND-010-02 | Security | REQ-FND-010 | Given funding API and UI responses, When schemas and rendered text are inspected, Then raw account references, Broker account and relationship IDs, credentials, request fingerprints, and raw payloads are absent. |
+| TST-REQ-FND-010-03 | API | REQ-FND-010 | Given more cash flows and occurrences than one API page, When funding history is requested, Then independent stable opaque cursors return descending non-overlapping pages. |
+| TST-REQ-FND-010-04 | API | REQ-FND-010 | Given unauthenticated, unallowlisted, invalid interval or cursor, and persistence-unavailable requests, When the funding endpoint is called, Then it returns the existing 401, 403, 422, or 503 envelope. |
+| TST-REQ-FND-010-05 | API | REQ-FND-010 | Given eligible and ineligible account boundary snapshots, When funding performance is requested, Then per-account results show each status and aggregate results include only eligible accounts. |
+| TST-REQ-FND-010-06 | UI | REQ-FND-010 | Given capped and alerted occurrences, When Performance renders, Then expected and submitted amounts, alert state, safe account label, and venue cash-flow status are visible. |
+| TST-REQ-FND-010-08 | Accessibility | REQ-FND-010 | Given funding views at 390 pixels and desktop with keyboard and reduced-motion preferences, When they render, Then controls remain reachable, status is not color-only, page overflow is absent, and disallowed motion is absent. |
+| TST-REQ-FND-011-01 | Happy | REQ-FND-011 | Given beginning value 1000, ending value 1200, completed deposits 300, and withdrawals 50, When performance is calculated, Then adjusted trading P&L is `-50`. |
+| TST-REQ-FND-011-02 | Edge | REQ-FND-011 | Given pending, unknown, rejected, returned, failed, or canceled cash flows, When performance is calculated, Then they do not change adjusted trading P&L. |
+| TST-REQ-FND-012-01 | Happy | REQ-FND-012 | Given a four-day period, BMV 1000, EMV 1300, a 200 deposit after day one, and a 40 withdrawal after day three, When Modified Dietz is calculated, Then numerator is 140, denominator is 1140, and fixed-precision return is `0.12280702`. |
+| TST-REQ-FND-012-02 | Edge | REQ-FND-012 | Given a zero or negative weighted denominator or stale or missing boundary snapshot, When adjusted performance is requested, Then both percentage return and boundary-dependent adjusted performance are unavailable with a reason. |
+| TST-REQ-FND-012-03 | API | REQ-FND-012 | Given requested interval boundaries and snapshots outside two refresh intervals, When the funding API selects valuations, Then it reports stale boundary timestamps and does not mix them with requested-period cash-flow weights. |
+| TST-REQ-FND-013-01 | Happy | REQ-FND-013 | Given entitled Broker credentials, a matching Broker account, an approved ACH relationship, and a claimed occurrence, When direct submission runs, Then it calls `/v1/accounts/{account_id}/transfers` once with incoming ACH, exact claimed amount, and the secret-resolved relationship. |
+| TST-REQ-FND-013-02 | Security | REQ-FND-013 | Given a successful direct request, When persistence and logs are inspected, Then exact Broker account and relationship IDs and request bodies are absent. |
+| TST-REQ-FND-013-03 | Boundary | REQ-FND-013 | Given no Plaid integration or token, When an existing venue-managed ACH relationship is configured through secrets, Then direct readiness does not require Plaid. |
+| TST-REQ-FND-013-04 | Infrastructure | REQ-FND-013 | Given development and production CloudFormation, When optional Broker secret references are inspected, Then API, account, and relationship refs are environment-separated, values are not required, and no raw bank or Plaid resource exists. |
+| TST-REQ-FND-013-05 | UI | REQ-FND-013 | Given funding settings guidance, When it renders, Then it states that bank setup is venue-managed, existing ACH relationships are provisioned outside the dashboard, and Plaid is not required. |
+| TST-REQ-FND-014-01 | Safe default | REQ-FND-014 | Given bootstrap, development, and production defaults, When funding config loads, Then direct transfers are disabled and both limits are `0.00`. |
+| TST-REQ-FND-014-02 | Edge | REQ-FND-014 | Given direct disabled, either zero limit, a non-positive amount, or direct withdrawal, When submission is evaluated, Then a refusal is persisted and the adapter has zero calls. |
+| TST-REQ-FND-014-03 | Edge | REQ-FND-014 | Given missing Broker API key, secret, account ID, relationship ID, or mismatched provider/Broker account, When submission is evaluated, Then a safe refusal is persisted before the adapter call. |
+| TST-REQ-FND-014-04 | Edge | REQ-FND-014 | Given the originating schedule is missing, disabled, changed, owned by another config, or resolves to another account, When claim revalidation runs, Then it refuses before the adapter call. |
+| TST-REQ-FND-014-05 | Failure | REQ-FND-014 | Given persistence, lock, or compare-and-set claim is unavailable, When submission is evaluated, Then a safe refusal or degraded result is returned with zero adapter calls and no persisted-refusal assertion. |
+| TST-REQ-FND-014-06 | Infrastructure | REQ-FND-014 | Given Broker secret values are absent, When local or deployed startup and health run, Then the app remains available and direct readiness stays blocked with disabled zero defaults. |
+| TST-REQ-FND-014-07 | Release | REQ-FND-014 | Given development or production release verification, When authenticated funding config and CloudWatch adapter events are read, Then direct mode is disabled, both limits are `0.00`, and Broker POST count for the release window is zero. |
+| TST-REQ-FND-014-08 | Deployment | REQ-FND-014 | Given funding infrastructure changes, When release validation runs, Then CloudFormation template validation, deployment-script shell syntax, environment isolation, optional-secret behavior, and disabled zero defaults pass before build or deploy. |
+| TST-REQ-FND-015-01 | Happy | REQ-FND-015 | Given a positive direct amount within positive per-transfer and remaining monthly limits and no pending transfer, When claim runs, Then the amount is reserved and remains eligible. |
+| TST-REQ-FND-015-02 | Boundary | REQ-FND-015 | Given current-month reserved, submitted, unknown, and matched direct amounts, When capacity is checked by `reserved_at` in America/New_York, Then all count and released terminal reservations do not. |
+| TST-REQ-FND-015-03 | Edge | REQ-FND-015 | Given a fixed weekly or monthly amount exceeds a limit or another reserved, submitted, or unknown transfer exists, When claim runs, Then the full request is refused and no partial fixed transfer is sent. |
+| TST-REQ-FND-015-04 | Boundary | REQ-FND-015 | Given the America/New_York calendar month rolls over, When capacity is recalculated, Then prior-month reservations do not consume the new month's limit. |
+| TST-REQ-FND-016-01 | Safety | REQ-FND-016 | Given two claim attempts for one occurrence, When the conditional claim commits `post_attempted_at`, Then at most one process can call the Broker adapter. |
+| TST-REQ-FND-016-02 | Recovery | REQ-FND-016 | Given a crash after the durable claim and before response persistence, When startup runs, Then reserved moves to unknown and reconciliation occurs without another POST. |
+| TST-REQ-FND-016-03 | Edge | REQ-FND-016 | Given an unknown transfer without provider ID, When the account transfer list has exactly one direction, amount, relationship, and time-window candidate it matches; zero or multiple candidates remain unknown. |
+| TST-REQ-FND-016-04 | Recovery | REQ-FND-016 | Given the Broker POST times out or returns an ambiguous 5xx, When response handling and later ticks run, Then status becomes unknown, the pending slot and reservation remain, and no later POST occurs. |
+| TST-REQ-FND-017-01 | Edge | REQ-FND-017 | Given Alpaca rejects, returns, or fails a direct transfer, When response handling runs, Then terminal status is persisted, the failed reservation is released, and one alert is enqueued. |
+| TST-REQ-FND-017-02 | Safety | REQ-FND-017 | Given a terminal direct occurrence is seen on a later tick, When submission runs, Then it requires a new authorized occurrence and never auto-retries. |
+| TST-REQ-FND-018-01 | Safety | REQ-FND-018 | Given the global kill switch or funding emergency stop becomes active before claim, When submission is evaluated, Then it refuses before the adapter call. |
+| TST-REQ-FND-018-02 | Happy | REQ-FND-018 | Given either stop is active, When the funding runtime tick runs, Then read-only activity sync, occurrence matching, missing detection with coverage, and recovery alerts continue. |
+| TST-REQ-FND-019-01 | Happy | REQ-FND-019 | Given an authorized operator changes funding settings through one complete-object patch, When save succeeds, Then one owner-specific version and audit record contain username, complete old and new values, environment, timestamp, and IP address. |
+| TST-REQ-FND-019-02 | Edge | REQ-FND-019 | Given an invalid schedule, partial funding object, stale expected version, or unauthorized actor, When save is attempted, Then the entire update is rejected without partial funding state. |
+| TST-REQ-FND-019-03 | UI | REQ-FND-019 | Given Settings edits a funding schedule or control, When it saves, Then it sends one complete `replace funding` patch with reason and refreshes the new config version. |
+| TST-REQ-FND-019-04 | Runbook | REQ-FND-019 | Given funding operations and rollback docs, When validated, Then they cover venue-managed setup, optional Broker entitlement and secrets, schedules, direct enable/disable, emergency stop, unknown review, alert recovery, rollback, and no real-transfer smoke test. |
+| TST-REQ-FND-019-05 | UI | REQ-FND-019 | Given weekly, monthly, and low-balance schedules, When parameterized Settings actions add, edit, enable, disable, or remove each schedule, Then one complete audited funding-object save is sent and the new version is loaded. |
+| TST-REQ-FND-020-01 | Safety | REQ-FND-020 | Given Polymarket funding activity and an enabled observe schedule, When reconciliation runs, Then reads and matching work without any funding-write call. |
+| TST-REQ-FND-020-02 | Edge | REQ-FND-020 | Given direct Polymarket mode or a Polymarket funding-write resource or permission, When config and deployment validation run, Then validation fails. |
+| TST-REQ-FND-020-03 | Infrastructure | REQ-FND-020 | Given CloudFormation, IAM, adapters, and runbooks, When the release gate scans them, Then no Polymarket funding-write resource, permission, endpoint, or Plaid integration exists. |
+| TST-REQ-FND-020-04 | UI | REQ-FND-020 | Given a Polymarket funding schedule, When Settings renders, Then it labels the schedule observe-only and offers no direct-transfer control for that venue. |
 
 ## Traceability Matrix
 
@@ -448,6 +554,7 @@
 | REQ-DB-005 | TST-REQ-DB-005-01, TST-REQ-DB-005-02 |
 | REQ-DB-006 | TST-REQ-DB-006-01 |
 | REQ-DB-007 | TST-REQ-DB-007-01, TST-REQ-DB-007-02, TST-REQ-DB-007-03 |
+| REQ-DB-008 | TST-REQ-DB-008-01, TST-REQ-DB-008-02 |
 | REQ-DB-009 | TST-REQ-DB-009-01, TST-REQ-DB-009-02 |
 | REQ-DB-010 | TST-REQ-DB-010-01, TST-REQ-DB-010-02 |
 | REQ-WAL-001 | TST-REQ-WAL-001-01, TST-REQ-WAL-001-02, TST-REQ-EXE-016-07, TST-REQ-EXE-016-08 |
@@ -457,6 +564,26 @@
 | REQ-WAL-005 | TST-REQ-WAL-005-01, TST-REQ-WAL-005-02 |
 | REQ-WAL-006 | TST-REQ-WAL-006-01, TST-REQ-WAL-006-02 |
 | REQ-WAL-007 | TST-REQ-WAL-007-01 |
+| REQ-FND-001 | TST-REQ-FND-001-01, TST-REQ-FND-001-02, TST-REQ-FND-001-03, TST-REQ-FND-001-04, TST-REQ-FND-001-05 |
+| REQ-FND-002 | TST-REQ-FND-002-01, TST-REQ-FND-002-02, TST-REQ-FND-002-03 |
+| REQ-FND-003 | TST-REQ-FND-003-01, TST-REQ-FND-003-02, TST-REQ-FND-003-03 |
+| REQ-FND-004 | TST-REQ-FND-004-01, TST-REQ-FND-004-02, TST-REQ-FND-004-03, TST-REQ-FND-004-04 |
+| REQ-FND-005 | TST-REQ-FND-005-01, TST-REQ-FND-005-02, TST-REQ-FND-005-03, TST-REQ-FND-005-04 |
+| REQ-FND-006 | TST-REQ-FND-006-01, TST-REQ-FND-006-02, TST-REQ-FND-006-03, TST-REQ-FND-006-04 |
+| REQ-FND-007 | TST-REQ-FND-007-01, TST-REQ-FND-007-02, TST-REQ-FND-007-03, TST-REQ-FND-007-04, TST-REQ-FND-007-05 |
+| REQ-FND-008 | TST-REQ-FND-008-01, TST-REQ-FND-008-02, TST-REQ-FND-008-03, TST-REQ-FND-008-04 |
+| REQ-FND-009 | TST-REQ-FND-009-01, TST-REQ-FND-009-02, TST-REQ-FND-009-03, TST-REQ-FND-009-04 |
+| REQ-FND-010 | TST-REQ-FND-010-01, TST-REQ-FND-010-02, TST-REQ-FND-010-03, TST-REQ-FND-010-04, TST-REQ-FND-010-05, TST-REQ-FND-010-06, TST-REQ-FND-010-08 |
+| REQ-FND-011 | TST-REQ-FND-011-01, TST-REQ-FND-011-02 |
+| REQ-FND-012 | TST-REQ-FND-012-01, TST-REQ-FND-012-02, TST-REQ-FND-012-03 |
+| REQ-FND-013 | TST-REQ-FND-013-01, TST-REQ-FND-013-02, TST-REQ-FND-013-03, TST-REQ-FND-013-04, TST-REQ-FND-013-05 |
+| REQ-FND-014 | TST-REQ-FND-014-01, TST-REQ-FND-014-02, TST-REQ-FND-014-03, TST-REQ-FND-014-04, TST-REQ-FND-014-05, TST-REQ-FND-014-06, TST-REQ-FND-014-07, TST-REQ-FND-014-08 |
+| REQ-FND-015 | TST-REQ-FND-015-01, TST-REQ-FND-015-02, TST-REQ-FND-015-03, TST-REQ-FND-015-04 |
+| REQ-FND-016 | TST-REQ-FND-016-01, TST-REQ-FND-016-02, TST-REQ-FND-016-03, TST-REQ-FND-016-04 |
+| REQ-FND-017 | TST-REQ-FND-017-01, TST-REQ-FND-017-02 |
+| REQ-FND-018 | TST-REQ-FND-018-01, TST-REQ-FND-018-02 |
+| REQ-FND-019 | TST-REQ-FND-019-01, TST-REQ-FND-019-02, TST-REQ-FND-019-03, TST-REQ-FND-019-04, TST-REQ-FND-019-05 |
+| REQ-FND-020 | TST-REQ-FND-020-01, TST-REQ-FND-020-02, TST-REQ-FND-020-03, TST-REQ-FND-020-04 |
 | REQ-LLM-001 | TST-REQ-LLM-001-01, TST-REQ-LLM-001-02, TST-REQ-LLM-001-03 |
 | REQ-LLM-002 | TST-REQ-LLM-002-01, TST-REQ-LLM-002-02, TST-REQ-LLM-002-03 |
 | REQ-LLM-003 | TST-REQ-LLM-003-01, TST-REQ-LLM-003-02 |
@@ -508,12 +635,25 @@
 | REQ-UI-010 | TST-REQ-UI-010-01, TST-REQ-UI-010-02 |
 | REQ-UI-011 | TST-REQ-UI-011-01, TST-REQ-UI-011-02, TST-REQ-UI-011-03 |
 | REQ-UI-012 | TST-REQ-UI-012-01, TST-REQ-UI-012-02 |
+| REQ-UI-013 | TST-REQ-UI-013-01, TST-REQ-UI-013-02, TST-REQ-UI-013-03, TST-REQ-UI-013-04, TST-REQ-UI-013-05, TST-REQ-UI-013-06, TST-REQ-UI-013-07, TST-REQ-UI-013-08 |
 | REQ-UI-014 | TST-REQ-UI-014-01, TST-REQ-UI-014-02 |
 | REQ-UI-015 | TST-REQ-UI-015-01, TST-REQ-UI-015-02 |
+| REQ-UI-016 | TST-REQ-UI-016-01 |
+| REQ-UI-017 | TST-REQ-UI-017-01 |
+| REQ-UI-018 | TST-REQ-UI-018-01 |
+| REQ-UI-019 | TST-REQ-UI-019-01 |
+| REQ-UI-020 | TST-REQ-UI-020-01 |
+| REQ-UI-021 | TST-REQ-UI-021-01 |
+| REQ-UI-022 | TST-REQ-UI-022-01 |
+| REQ-UI-023 | TST-REQ-UI-023-01 |
+| REQ-UI-024 | TST-REQ-UI-024-01 |
+| REQ-UI-025 | TST-REQ-UI-025-01 |
+| REQ-UI-026 | TST-REQ-UI-026-01 |
 | REQ-CMP-001 | TST-REQ-CMP-001-01, TST-REQ-CMP-001-02 |
 | REQ-CMP-002 | TST-REQ-CMP-002-01, TST-REQ-CMP-002-02 |
 | REQ-CMP-003 | TST-REQ-CMP-003-01, TST-REQ-CMP-003-02 |
 | REQ-CMP-004 | TST-REQ-CMP-004-01 |
+| REQ-CMP-005 | TST-REQ-CMP-005-01, TST-REQ-CMP-005-02, TST-REQ-CMP-005-03 |
 | REQ-NOT-001 | TST-REQ-NOT-001-01, TST-REQ-NOT-001-02, TST-REQ-NOT-001-03 |
 | REQ-NOT-002 | TST-REQ-NOT-002-01, TST-REQ-NOT-002-02 |
 | REQ-NOT-003 | TST-REQ-NOT-003-01, TST-REQ-NOT-003-02, TST-REQ-NOT-003-03 |
@@ -525,7 +665,7 @@
 | REQ-DEP-002 | TST-REQ-DEP-002-01, TST-REQ-DEP-002-02, TST-REQ-DEP-002-03, TST-REQ-DEP-002-04 |
 | REQ-DEP-003 | TST-REQ-DEP-003-01, TST-REQ-DEP-003-02, TST-REQ-DEP-003-03 |
 | REQ-DEP-004 | TST-REQ-DEP-004-01, TST-REQ-DEP-004-02, TST-REQ-DEP-004-03, TST-REQ-DEP-004-04 |
-| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04, TST-REQ-DEP-005-05 |
+| REQ-DEP-005 | TST-REQ-DEP-005-01, TST-REQ-DEP-005-02, TST-REQ-DEP-005-03, TST-REQ-DEP-005-04, TST-REQ-DEP-005-05, TST-REQ-DEP-005-06 |
 | REQ-DEP-006 | TST-REQ-DEP-006-01, TST-REQ-DEP-006-02, TST-REQ-DEP-006-03 |
 | REQ-DEP-007 | TST-REQ-DEP-007-01, TST-REQ-DEP-007-02 |
 | REQ-DEP-008 | TST-REQ-DEP-008-01, TST-REQ-DEP-008-02, TST-REQ-DEP-008-03 |
@@ -537,4 +677,4 @@
 | REQ-OBS-003 | TST-REQ-OBS-003-01, TST-REQ-OBS-003-02 |
 | REQ-OBS-004 | TST-REQ-OBS-004-01, TST-REQ-OBS-004-02 |
 | REQ-OBS-005 | TST-REQ-OBS-005-01, TST-REQ-OBS-005-02 |
-| REQ-OBS-006 | TST-REQ-OBS-006-01, TST-REQ-OBS-006-02, TST-REQ-OBS-006-03 |
+| REQ-OBS-006 | TST-REQ-OBS-006-01, TST-REQ-OBS-006-02, TST-REQ-OBS-006-03, TST-REQ-OBS-006-04 |

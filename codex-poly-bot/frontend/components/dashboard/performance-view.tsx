@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, BarChart3, Bot, BriefcaseBusiness, CircleAlert, ExternalLink } from "lucide-react";
+import { ArrowRight, BarChart3, Bot, BriefcaseBusiness, CalendarClock, CircleAlert, ExternalLink, Landmark } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { Disclosure } from "@/components/dashboard/dashboard-primitives";
@@ -15,10 +15,62 @@ import { useDashboardRealtime, type DashboardRealtimeSnapshot } from "@/lib/use-
 
 // REQ: REQ-UI-013, REQ-UI-016, REQ-UI-021, REQ-UI-025, REQ-CMP-004, REQ-CMP-005
 
+export type FundingHistoryView = {
+  environment: string;
+  interval: { startAt: string; endAt: string };
+  cashFlows: Array<{
+    id: string;
+    venue: string;
+    providers: string[];
+    accountLabel: string;
+    direction: "deposit" | "withdrawal";
+    amountUsd: string;
+    status: string;
+    activityType: string;
+    effectiveAt: string;
+  }>;
+  occurrences: Array<{
+    id: string;
+    scheduleId: string;
+    venue: string;
+    provider: string;
+    accountLabel: string;
+    cadence: string;
+    executionMode: string;
+    direction: string;
+    expectedAmountUsd: string;
+    submittedAmountUsd: string | null;
+    status: string;
+    dueAt: string;
+    matchDeadlineAt: string;
+    alertState: string;
+  }>;
+  performance: {
+    beginningValueUsd: string;
+    endingValueUsd: string;
+    completedDepositsUsd: string;
+    completedWithdrawalsUsd: string;
+    tradingPnlExcludingCashFlowsUsd: string | null;
+    modifiedDietzReturn: string | null;
+    unavailableReason: string | null;
+  };
+  dataStatus: { status: "ready" | "degraded" | "unavailable"; accountCount: number; errors: string[] };
+  directTransferReadiness: {
+    enabled: boolean;
+    ready: boolean;
+    message: string;
+    bankSetupMessage?: string;
+  };
+};
+
 export function PerformanceView({
+  funding,
+  fundingError,
   portfolio,
   loadError,
 }: {
+  funding?: FundingHistoryView;
+  fundingError?: string;
   portfolio?: VenuePortfolioView;
   loadError?: string;
 }) {
@@ -58,6 +110,82 @@ export function PerformanceView({
         <PerformanceMetric label="Win rate" value={formatRate(headline.winRate)} detail={headline.winRateDetail} />
         <PerformanceMetric label="Trades" value={formatCount(headline.tradeCount)} detail="Venue-confirmed fills" />
       </section>
+
+      {fundingError ? <p className="ia-degraded-message" role="status"><CircleAlert aria-hidden="true" size={16} /> Funding data is unavailable. {fundingError}</p> : null}
+
+      <section className="funding-performance-band" aria-labelledby="cash-adjusted-title">
+        <div className="funding-performance-heading">
+          <div>
+            <p className="section-label">Cash-adjusted return</p>
+            <h2 id="cash-adjusted-title">{"Trading P&L excluding deposits"}</h2>
+          </div>
+          <span className={`status ${funding?.performance.unavailableReason ? "idle" : "ok"}`}>
+            {funding?.performance.unavailableReason ? "boundary data needed" : "cash adjusted"}
+          </span>
+        </div>
+        <div className="funding-performance-values">
+          <PerformanceMetric label="Trading P&L" value={formatUsd(funding?.performance.tradingPnlExcludingCashFlowsUsd)} detail="External deposits and withdrawals removed" tone={pnlTone(funding?.performance.tradingPnlExcludingCashFlowsUsd)} />
+          <PerformanceMetric label="Deposits" value={formatUsd(funding?.performance.completedDepositsUsd)} detail="Completed venue cash inflow" />
+          <PerformanceMetric label="Withdrawals" value={formatUsd(funding?.performance.completedWithdrawalsUsd)} detail="Completed venue cash outflow" />
+          <PerformanceMetric label="Modified Dietz" value={formatDecimalRate(funding?.performance.modifiedDietzReturn)} detail="Cash-flow-weighted return" tone={pnlTone(funding?.performance.modifiedDietzReturn)} />
+        </div>
+        {funding?.performance.unavailableReason ? <p className="funding-boundary-message">Cash-adjusted return is unavailable until confirmed account values exist at both interval boundaries. Cash activity remains visible below.</p> : null}
+      </section>
+
+      <div className="funding-ledger-grid">
+        <section className="ia-panel funding-ledger-panel" aria-labelledby="funding-history-title">
+          <div className="ia-section-heading">
+            <div><p className="section-label">Venue activity</p><h2 id="funding-history-title">Funding history</h2></div>
+            <Landmark aria-hidden="true" size={20} />
+          </div>
+          <div className="performance-table-wrap">
+            <table className="performance-table funding-history-table">
+              <thead><tr><th>Account</th><th>Flow</th><th>Amount</th><th>Status</th><th>Effective</th></tr></thead>
+              <tbody>
+                {funding?.cashFlows.length ? funding.cashFlows.map((flow) => (
+                  <tr key={flow.id}>
+                    <th scope="row"><strong>{flow.accountLabel}</strong><span>{providerLabel(flow.providers)}</span></th>
+                    <td className={`funding-direction ${flow.direction}`}>{flow.direction === "deposit" ? "Deposit" : "Withdrawal"}</td>
+                    <td>{formatUsd(flow.amountUsd)}</td>
+                    <td><span className={`status ${fundingStatusTone(flow.status)}`}>{flow.status}</span></td>
+                    <td>{formatDate(flow.effectiveAt)}</td>
+                  </tr>
+                )) : <tr><td className="performance-empty-cell" colSpan={5}>No venue-confirmed deposits or withdrawals in this interval.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="ia-panel funding-ledger-panel" aria-labelledby="expected-deposits-title">
+          <div className="ia-section-heading">
+            <div><p className="section-label">Schedule ledger</p><h2 id="expected-deposits-title">Expected deposits</h2></div>
+            <CalendarClock aria-hidden="true" size={20} />
+          </div>
+          <div className="funding-occurrence-list">
+            {funding?.occurrences.length ? funding.occurrences.map((occurrence) => (
+              <article className={`funding-occurrence ${occurrence.status}`} key={occurrence.id}>
+                <span className="funding-occurrence-node" aria-hidden="true" />
+                <div>
+                  <strong>{occurrence.scheduleId}</strong>
+                  <p>{occurrence.accountLabel} · {cadenceLabel(occurrence.cadence)}</p>
+                  <small>Due {formatDate(occurrence.dueAt)} · {occurrence.executionMode === "direct" ? "Direct ACH" : "Observe and alert"}</small>
+                </div>
+                <div className="funding-occurrence-value">
+                  <strong>{formatUsd(occurrence.submittedAmountUsd ?? occurrence.expectedAmountUsd)}</strong>
+                  <span className={`status ${fundingStatusTone(occurrence.status)}`}>{occurrence.status}</span>
+                </div>
+              </article>
+            )) : <div className="funding-empty-ledger"><strong>No expected deposits</strong><p>Add a funding schedule in Settings to start reconciliation.</p></div>}
+          </div>
+        </section>
+      </div>
+
+      {funding ? (
+        <section className={`funding-readiness-note ${funding.directTransferReadiness.ready ? "ready" : "disabled"}`} aria-label="Direct funding readiness">
+          <strong>{funding.directTransferReadiness.enabled ? "Direct Alpaca ACH" : "Direct transfers off"}</strong>
+          <p>{funding.directTransferReadiness.message} {funding.directTransferReadiness.bankSetupMessage}</p>
+        </section>
+      ) : null}
 
       <section className="ia-panel performance-account-balances" aria-labelledby="account-balances-title">
         <div className="ia-section-heading">
@@ -144,10 +272,13 @@ function PerformanceMetric({ label, value, detail, tone = "" }: { label: string;
 }
 
 function formatRate(value: number | null): string { return value === null ? "Unavailable" : new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 }).format(value); }
+function formatDecimalRate(value: string | null | undefined): string { if (value === null || value === undefined || value === "") return "Unavailable"; const number = Number(value); return Number.isFinite(number) ? new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 2 }).format(number) : "Unavailable"; }
 function formatUsd(value: string | null | undefined): string { if (value === null || value === undefined || value === "") return "Unavailable"; const number = Number(value); return Number.isFinite(number) ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(number) : "Unavailable"; }
 function formatCount(value: number | null | undefined): string { return value === null || value === undefined ? "Unavailable" : value.toLocaleString(); }
 function pnlTone(value: string | null | undefined): string { const number = Number(value); return !Number.isFinite(number) || number === 0 ? "" : number > 0 ? "positive" : "negative"; }
 function venueLabel(value: string): string { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 function providerLabel(providers: string[]): string { return providers.map((provider) => provider === "openai" ? "OpenAI" : provider === "claude" ? "Claude" : provider).join(" + "); }
 function statusTone(status: "ready" | "stale" | "unavailable"): string { return status === "ready" ? "ok" : status === "stale" ? "waiting" : "blocked"; }
+function fundingStatusTone(status: string): string { return ["completed", "matched", "submitted"].includes(status) ? "ok" : ["pending", "expected", "reserved", "unknown"].includes(status) ? "waiting" : ["missing", "failed", "rejected", "returned"].includes(status) ? "blocked" : "idle"; }
+function cadenceLabel(value: string): string { return value === "low_balance" ? "Low balance" : value.charAt(0).toUpperCase() + value.slice(1); }
 function formatDate(value: string | null | undefined): string { if (!value) return "Unavailable"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "Unavailable" : new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date); }

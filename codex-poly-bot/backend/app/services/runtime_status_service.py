@@ -25,7 +25,7 @@ from app.adapters.aws import (
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue
-from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
+from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE, DEFAULT_FUNDING_CONFIG
 from app.services.llm_service import SCORING_SYSTEM_PROMPT
 from app.services.tick_summary_service import (
     DEFAULT_TICK_SUMMARY_CACHE_SECONDS,
@@ -426,7 +426,10 @@ class RuntimeStatusService:
         self.venue_portfolio = VenuePortfolioService(
             self.registry,
             source=venue_portfolio_source
-            or ProviderBackedVenuePortfolioSource(getattr(settings, "runtime_env", {})),
+            or ProviderBackedVenuePortfolioSource(
+                getattr(settings, "runtime_env", {}),
+                registry=self.registry,
+            ),
         )
 
     def refresh_venue_portfolio(self, environment: Environment) -> dict[str, Any]:
@@ -532,6 +535,7 @@ class RuntimeStatusService:
                 "ses_identity": self.settings.ses_identity_email,
                 "email_on_trade_placed": True,
             },
+            "funding": deepcopy(DEFAULT_FUNDING_CONFIG),
         }
         if "symbol_presets" in alpaca_payload or "custom_symbols" in alpaca_payload:
             alpaca_payload["symbol_universe"] = resolve_alpaca_symbol_universe(payload)
@@ -574,7 +578,13 @@ class RuntimeStatusService:
         snapshots = latest_preset_snapshot_payloads(rows)
         return snapshots or seed_alpaca_preset_snapshots()
 
-    def record_worker_heartbeat(self, *, status: str = "ok", message: str | None = None) -> None:
+    def record_worker_heartbeat(
+        self,
+        *,
+        status: str = "ok",
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Persist an ingestion scheduler heartbeat for dashboard reads.
 
         REQ: REQ-DAT-008, REQ-OBS-005
@@ -593,6 +603,7 @@ class RuntimeStatusService:
                         "message": message or "scheduler heartbeat",
                         "scheduled": True,
                         "environment": self.settings.environment.value,
+                        **(metadata or {}),
                     },
                     "created_at": now,
                 },
