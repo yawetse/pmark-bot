@@ -19,6 +19,7 @@ import pytest
 
 from app.db import RepositoryRegistry
 from app.domain import Environment, ExitTriggerType
+from app.main import AppSettings, create_app
 from app.services.config_service import (
     ConfigPatchOperation,
     ConfigService,
@@ -110,6 +111,9 @@ def _short_read_response(
 
 def test_req_alp_019_default_and_patch_validation() -> None:
     assert default_config_payload()["alpaca"]["allow_shorting"] is False
+    runtime_app = create_app(AppSettings())
+    runtime_payload = runtime_app.state.services.runtime_status.runtime_config_payload()
+    assert runtime_payload["alpaca"]["allow_shorting"] is False
 
     service = ConfigService(RepositoryRegistry())
     assert service._validated_patch_value(  # noqa: SLF001 - specification boundary
