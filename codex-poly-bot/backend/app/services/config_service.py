@@ -18,7 +18,7 @@ from app.db import (
     UnitOfWork,
     normalize_config_username,
 )
-from app.domain import Environment, ModelProvider, Venue
+from app.domain import Environment, FundingConfig, ModelProvider, Venue
 from app.services.audit_service import ActorContext, AuditService, ConfigChange, ConfigMutationResult
 from app.services.auth_service import DashboardAccessResult
 from app.services.stock_universe import (
@@ -69,6 +69,15 @@ DEFAULT_EXIT_CONFIG = {
         "market_hours_only": True,
         "close_before_market_close_minutes": 15,
     },
+}
+DEFAULT_FUNDING_CONFIG = {
+    "emergency_stop": False,
+    "direct_transfers_enabled": False,
+    "max_transfer_usd": "0.00",
+    "max_monthly_transfer_usd": "0.00",
+    "timezone": "America/New_York",
+    "missing_after_business_days": 4,
+    "schedules": [],
 }
 
 ACTIVE_STOCK_DAY_TRADER_PROFILE = "active_stock_day_trader"
@@ -280,6 +289,14 @@ class ConfigService:
             raise ConfigConflictError("config version conflict")
 
         with UnitOfWork(self.registry.state) as unit:
+            self.registry.state.lock_transaction_key(
+                f"funding-controls:{environment.value}:{normalize_config_username(username)}"
+            )
+            if expected_version is not None and expected_version != self.current_version(
+                environment,
+                username=username,
+            ):
+                raise ConfigConflictError("config version conflict")
             audit_event = self.audit_service.record_config_change(
                 actor=actor,
                 environment=environment,
@@ -465,11 +482,18 @@ class ConfigService:
     def _validated_patch_value(self, patch: ConfigPatchOperation) -> Any:
         if patch.op not in {"add", "replace", "remove"}:
             raise ConfigValidationError("unsupported config patch operation")
+        if patch.path == "funding" and patch.op == "remove":
+            raise ConfigValidationError("funding config cannot be removed")
         if patch.op == "remove":
             return None
 
         parts = patch.path.split(".")
         value = patch.value
+        if patch.path == "funding":
+            try:
+                return FundingConfig.model_validate(value).model_dump(mode="json")
+            except (TypeError, ValueError) as exc:
+                raise ConfigValidationError(f"invalid funding config: {exc}") from exc
         if patch.path == "default_selected_venue":
             if value not in {venue.value for venue in Venue}:
                 raise ConfigValidationError("unsupported default venue")
@@ -889,6 +913,7 @@ def default_config_payload() -> dict[str, Any]:
             "digest_schedule_utc": "13:00",
             "email_on_trade_placed": True,
         },
+        "funding": deepcopy(DEFAULT_FUNDING_CONFIG),
     }
     payload["alpaca"]["preset_metadata"] = stock_universe_metadata(payload)
     return payload

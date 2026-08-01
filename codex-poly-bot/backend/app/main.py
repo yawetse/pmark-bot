@@ -26,9 +26,13 @@ from app.db import (
     create_session_factory,
     run_migrations,
 )
-from app.domain import Environment, Venue
+from app.domain import Environment, FundingConfig, Venue
+from app.adapters.aws.ses import ses_adapter_from_env
 from app.observability import configure_observability
 from app.services import AuthService, ConfigService, KillSwitchService
+from app.services.funding_service import FundingService
+from app.services.direct_funding_service import DirectFundingService
+from app.venues.alpaca_funding import AlpacaBrokerFundingAdapter
 from app.services.config_service import DEFAULT_ALPACA_SYMBOL_UNIVERSE
 from app.services.dashboard_event_service import (
     DashboardEventBroker,
@@ -147,6 +151,7 @@ class DashboardApiServices:
     config: ConfigService
     kill_switch: KillSwitchService
     runtime_status: RuntimeStatusService
+    funding: FundingService
     dashboard_events: DashboardEventBroker
 
 
@@ -167,15 +172,29 @@ def build_dashboard_api_services(
         registry=shared_registry,
     )
     runtime_status = RuntimeStatusService(settings=settings, registry=shared_registry)
+    config = ConfigService(
+        shared_registry,
+        default_payload_factory=runtime_status.runtime_config_payload,
+    )
+    direct_funding = DirectFundingService(
+        shared_registry,
+        adapter=AlpacaBrokerFundingAdapter(runtime_env=settings.runtime_env),
+    )
     return DashboardApiServices(
         registry=shared_registry,
         auth=auth,
-        config=ConfigService(
-            shared_registry,
-            default_payload_factory=runtime_status.runtime_config_payload,
-        ),
+        config=config,
         kill_switch=KillSwitchService(shared_registry),
         runtime_status=runtime_status,
+        funding=FundingService(
+            shared_registry,
+            direct_service=direct_funding,
+            notification_adapter=ses_adapter_from_env(
+                settings.runtime_env,
+                source=settings.ses_identity_email,
+            ),
+            notification_recipients=tuple(settings.notification_recipients.values()),
+        ),
         dashboard_events=DashboardEventBroker(
             postgres_dsn=postgres_dashboard_event_dsn(shared_registry.state),
         ),
@@ -224,6 +243,7 @@ def create_app(
             app.state.portfolio_refresh_task = asyncio.create_task(
                 _portfolio_refresh_loop(
                     services=resolved_services,
+                    settings=resolved_settings,
                     environment=resolved_settings.environment,
                     interval_seconds=resolved_settings.portfolio_refresh_interval_seconds,
                 )
@@ -411,11 +431,21 @@ async def _worker_heartbeat_loop(
                 config_payload,
                 fallback=interval_seconds,
             )
-            await asyncio.to_thread(
-                services.runtime_status.trigger_scheduled_run,
-                environment=environment,
-                config_payload=config_payload,
-            )
+            tick_errors: list[Exception] = []
+            try:
+                await asyncio.to_thread(
+                    services.runtime_status.trigger_scheduled_run,
+                    environment=environment,
+                    config_payload=config_payload,
+                )
+            except Exception as exc:
+                tick_errors.append(exc)
+                LOGGER.exception("background trading scheduler tick failed")
+            if tick_errors:
+                services.runtime_status.record_worker_heartbeat(
+                    status="failed",
+                    message=_scheduler_failure_message(tick_errors[0]),
+                )
         except Exception as exc:
             LOGGER.exception("background scheduler tick failed")
             services.runtime_status.record_worker_heartbeat(
@@ -449,12 +479,13 @@ def _worker_sleep_delay(interval_seconds: int, elapsed_seconds: float) -> float:
 async def _portfolio_refresh_loop(
     *,
     services: DashboardApiServices,
+    settings: AppSettings,
     environment: Environment,
     interval_seconds: int,
 ) -> None:
-    """Refresh venue account state independently from the trading tick.
+    """Refresh venue state, then run the sole recurring-funding hook.
 
-    REQ: REQ-DB-008, REQ-UI-013, REQ-CMP-005
+    REQ: REQ-DB-008, REQ-UI-013, REQ-CMP-005, REQ-FND-007
     """
 
     while True:
@@ -465,6 +496,33 @@ async def _portfolio_refresh_loop(
             )
         except Exception:
             LOGGER.exception("venue portfolio refresh failed")
+        try:
+            username = _scheduler_config_username(settings, services, environment)
+            reload_result = services.config.config_for_next_loop(
+                environment,
+                username=username,
+            )
+            config_payload = (
+                reload_result.snapshot.payload
+                or services.runtime_status.runtime_config_payload()
+            )
+            funding_config = FundingConfig.model_validate(config_payload.get("funding", {}))
+            funding_result = await asyncio.to_thread(
+                services.funding.run_tick,
+                environment=environment,
+                config=funding_config,
+                config_owner=username or "__shared__",
+                config_version=reload_result.snapshot.version,
+                kill_switch_active=services.kill_switch.state(environment).active,
+                portfolio_freshness_seconds=max(1, interval_seconds * 2),
+            )
+            services.runtime_status.record_worker_heartbeat(
+                status="ok",
+                message="post-portfolio funding tick completed",
+                metadata={"funding": funding_result},
+            )
+        except Exception:
+            LOGGER.exception("post-portfolio funding tick failed")
         await asyncio.sleep(interval_seconds)
 
 

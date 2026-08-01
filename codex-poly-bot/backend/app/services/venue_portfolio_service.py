@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
+import json
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
@@ -16,7 +17,12 @@ import httpx
 
 from app.db import PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
-from app.domain import Environment, ModelProvider, Venue
+from app.domain import Environment, ModelProvider, Venue, VenueCashFlow
+from app.services.funding_service import (
+    FundingRepository,
+    normalize_alpaca_funding_activity,
+    normalize_polymarket_funding_activity,
+)
 from app.venues.polymarket import (
     POLYMARKET_US_API_BASE_URL,
     POLYMARKET_US_GATEWAY_BASE_URL,
@@ -61,11 +67,14 @@ class ProviderBackedVenuePortfolioSource:
         polymarket_client_factory: Callable[[dict[str, str]], Any] | None = None,
         alpaca_transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 10.0,
+        registry: RepositoryRegistry | None = None,
     ) -> None:
         self.runtime_env = dict(runtime_env)
         self.polymarket_client_factory = polymarket_client_factory
         self.alpaca_transport = alpaca_transport
         self.timeout_seconds = max(1.0, float(timeout_seconds))
+        self.funding_repository = FundingRepository(registry) if registry is not None else None
+        self._funding_sync_metadata: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     def fetch_accounts(self, environment: Environment) -> list[dict[str, Any]]:
         accounts: list[dict[str, Any]] = []
@@ -79,7 +88,6 @@ class ProviderBackedVenuePortfolioSource:
         environment: Environment,
         provider: ModelProvider,
     ) -> dict[str, Any]:
-        del environment
         provider_env = _provider_env(self.runtime_env, Venue.POLYMARKET_US, provider)
         key_id = provider_env.get("POLYMARKET_KEY_ID", "").strip()
         secret_key = (
@@ -110,6 +118,17 @@ class ProviderBackedVenuePortfolioSource:
                 provider_env=provider_env,
                 balances=balances,
                 fallback_ref=fallback_ref,
+            )
+            cash_flows, funding_status = self._polymarket_funding_activity(
+                client,
+                environment=environment,
+                provider=provider,
+                account_ref=account_ref,
+                observed_at=observed_at,
+            )
+            funding_sync = self._funding_sync_metadata.get(
+                (environment.value, Venue.POLYMARKET_US.value, account_ref),
+                {},
             )
             usd_balances = [
                 row for row in balances if str(_field(row, "currency") or "USD").upper() == "USD"
@@ -148,6 +167,9 @@ class ProviderBackedVenuePortfolioSource:
                 "realizedPnlUsd": realized_pnl,
                 "positions": positions,
                 "fills": fills,
+                "cashFlows": [flow.model_dump(mode="json") for flow in cash_flows],
+                "fundingStatus": funding_status,
+                "fundingSync": funding_sync,
                 "observedAt": observed_at,
                 "message": "Confirmed from the Polymarket US portfolio API.",
             }
@@ -165,6 +187,134 @@ class ProviderBackedVenuePortfolioSource:
             close = getattr(client, "close", None)
             if callable(close):
                 close()
+
+    def _polymarket_funding_activity(
+        self,
+        client: Any,
+        *,
+        environment: Environment,
+        provider: ModelProvider,
+        account_ref: str,
+        observed_at: datetime,
+    ) -> tuple[list[VenueCashFlow], str]:
+        """Read bounded Polymarket US deposit and withdrawal activity.
+
+        REQ: REQ-FND-001, REQ-FND-004, REQ-FND-020
+        """
+
+        flows: list[VenueCashFlow] = []
+        seen_ids: set[str] = set()
+        stored_sync = self._stored_sync_state(
+            environment=environment,
+            venue=Venue.POLYMARKET_US,
+            account_ref=account_ref,
+        )
+        stored_cursor = str((stored_sync or {}).get("backfill_cursor") or "").strip() or None
+        stored_head = str((stored_sync or {}).get("head_transaction_id") or "").strip() or None
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        complete = False
+        phase = "head" if stored_head or stored_cursor else "history"
+        observed_head: str | None = None
+        next_head = stored_head
+        try:
+            for page_index in range(20):
+                params: dict[str, Any] = {
+                    "limit": PORTFOLIO_PAGE_SIZE,
+                    "sortOrder": "SORT_ORDER_DESCENDING",
+                    "types": [
+                        "ACTIVITY_TYPE_ACCOUNT_DEPOSIT",
+                        "ACTIVITY_TYPE_ACCOUNT_ADVANCED_DEPOSIT",
+                        "ACTIVITY_TYPE_ACCOUNT_WITHDRAWAL",
+                    ],
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                response = client.portfolio.activities(params)
+                activities = _items(_field(response, "activities"))
+                activity_ids = [
+                    str(_field(activity, "id") or "").strip()
+                    for activity in activities
+                ]
+                if page_index == 0 and activity_ids and activity_ids[0]:
+                    observed_head = activity_ids[0]
+                    if phase == "history":
+                        next_head = observed_head
+                for activity in activities:
+                    activity_type = str(_field(activity, "type") or "").replace(
+                        "ACTIVITY_TYPE_", ""
+                    )
+                    nested_name = {
+                        "ACCOUNT_DEPOSIT": "accountDeposit",
+                        "ACCOUNT_ADVANCED_DEPOSIT": "accountAdvancedDeposit",
+                        "ACCOUNT_WITHDRAWAL": "accountWithdrawal",
+                    }.get(activity_type)
+                    nested = _field(activity, nested_name) if nested_name else None
+                    raw = dict(activity) if isinstance(activity, dict) else {}
+                    raw.update(nested if isinstance(nested, dict) else {})
+                    raw["type"] = activity_type
+                    balance_change = _field(activity, "accountBalanceChange")
+                    if isinstance(balance_change, dict):
+                        raw["accountBalanceChange"] = balance_change
+                    for key in ("id", "amount", "cashValue", "updateTime", "createTime", "status"):
+                        if key not in raw and _field(activity, key) is not None:
+                            raw[key] = _field(activity, key)
+                    normalized = normalize_polymarket_funding_activity(
+                        raw,
+                        environment=environment,
+                        provider=provider,
+                        account_ref=account_ref,
+                        observed_at=observed_at,
+                    )
+                    if normalized is None or normalized.venue_transaction_id in seen_ids:
+                        continue
+                    seen_ids.add(normalized.venue_transaction_id)
+                    flows.append(normalized)
+                next_cursor = _text_or_none(_field(response, "nextCursor"))
+                exhausted = bool(_field(response, "eof")) or not next_cursor
+                reached_stored_head = bool(stored_head and stored_head in activity_ids)
+                if phase == "head" and (
+                    reached_stored_head or exhausted or not stored_head
+                ):
+                    if observed_head:
+                        next_head = observed_head
+                    if stored_cursor:
+                        phase = "history"
+                        cursor = stored_cursor
+                        continue
+                    complete = True
+                    cursor = None
+                    break
+                if exhausted:
+                    complete = True
+                    cursor = None
+                    break
+                if next_cursor in seen_cursors:
+                    cursor = next_cursor
+                    break
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
+        except Exception:
+            self._record_funding_sync_metadata(
+                environment=environment,
+                venue=Venue.POLYMARKET_US,
+                account_ref=account_ref,
+                backfill_cursor=stored_cursor,
+                backfill_complete=False,
+                last_error_code="polymarket_funding_read_failed",
+                head_transaction_id=stored_head,
+            )
+            return [], "error"
+        self._record_funding_sync_metadata(
+            environment=environment,
+            venue=Venue.POLYMARKET_US,
+            account_ref=account_ref,
+            backfill_cursor=None if complete else cursor,
+            backfill_complete=complete,
+            last_error_code=None,
+            head_transaction_id=next_head,
+        )
+        return flows, "ready" if complete else "partial"
 
     def _new_polymarket_client(self, provider_env: dict[str, str]) -> Any:
         if self.polymarket_client_factory is not None:
@@ -346,7 +496,6 @@ class ProviderBackedVenuePortfolioSource:
         environment: Environment,
         provider: ModelProvider,
     ) -> dict[str, Any]:
-        del environment
         provider_env = _provider_env(self.runtime_env, Venue.ALPACA, provider)
         key_id = provider_env.get("ALPACA_KEY_ID", "").strip()
         secret_key = provider_env.get("ALPACA_SECRET_KEY", "").strip()
@@ -389,6 +538,18 @@ class ProviderBackedVenuePortfolioSource:
                 )
             account_id = str(_field(account, "id") or key_id)
             account_ref = _account_ref(Venue.ALPACA, account_id)
+            cash_flows, funding_status = self._alpaca_funding_activity(
+                base_url=base_url,
+                headers=headers,
+                environment=environment,
+                provider=provider,
+                account_ref=account_ref,
+                observed_at=observed_at,
+            )
+            funding_sync = self._funding_sync_metadata.get(
+                (environment.value, Venue.ALPACA.value, account_ref),
+                {},
+            )
             positions = [_normalize_alpaca_position(row, observed_at) for row in raw_positions]
             fills = [_normalize_alpaca_fill(row, observed_at) for row in raw_fills]
             unrealized_pnl = sum(
@@ -413,6 +574,9 @@ class ProviderBackedVenuePortfolioSource:
                 "totalPnlUsd": total_pnl,
                 "positions": positions,
                 "fills": fills,
+                "cashFlows": [flow.model_dump(mode="json") for flow in cash_flows],
+                "fundingStatus": funding_status,
+                "fundingSync": funding_sync,
                 "observedAt": observed_at,
                 "message": "Confirmed from the Alpaca Trading API.",
             }
@@ -426,6 +590,205 @@ class ProviderBackedVenuePortfolioSource:
                 message=f"Alpaca portfolio refresh failed: {type(exc).__name__}.",
                 status="error",
             )
+
+    def _alpaca_funding_activity(
+        self,
+        *,
+        base_url: str,
+        headers: dict[str, str],
+        environment: Environment,
+        provider: ModelProvider,
+        account_ref: str,
+        observed_at: datetime,
+    ) -> tuple[list[VenueCashFlow], str]:
+        """Read bounded pages for each documented Alpaca cash activity type.
+
+        REQ: REQ-FND-001, REQ-FND-003, REQ-FND-004
+        """
+
+        flows: list[VenueCashFlow] = []
+        seen_ids: set[str] = set()
+        stored_cursor_raw = self._stored_backfill_cursor(
+            environment=environment,
+            venue=Venue.ALPACA,
+            account_ref=account_ref,
+        )
+        try:
+            stored_payload = json.loads(stored_cursor_raw) if stored_cursor_raw else {}
+        except (TypeError, ValueError):
+            stored_payload = {}
+        if not isinstance(stored_payload, dict):
+            stored_payload = {}
+        stored_cursors = stored_payload.get("cursors", stored_payload)
+        stored_heads = stored_payload.get("heads", {})
+        if not isinstance(stored_cursors, dict):
+            stored_cursors = {}
+        if not isinstance(stored_heads, dict):
+            stored_heads = {}
+        next_cursors: dict[str, str] = {}
+        next_heads: dict[str, str] = {
+            str(key): str(value)
+            for key, value in stored_heads.items()
+            if str(value).strip()
+        }
+        backfill_complete = True
+        try:
+            with httpx.Client(
+                timeout=self.timeout_seconds,
+                transport=self.alpaca_transport,
+            ) as client:
+                for activity_type in ("CSD", "CSW", "TRANS"):
+                    page_token: str | None = None
+                    stored_page_token = str(stored_cursors.get(activity_type) or "").strip()
+                    stored_head = str(stored_heads.get(activity_type) or "").strip()
+                    phase = "head" if stored_head or stored_page_token else "history"
+                    type_complete = False
+                    observed_head: str | None = None
+                    seen_tokens: set[str] = set()
+                    for page_index in range(20):
+                        params = {
+                            "direction": "desc",
+                            "page_size": str(PORTFOLIO_PAGE_SIZE),
+                        }
+                        if page_token:
+                            params["page_token"] = page_token
+                        page = _items(
+                            _response_json(
+                                client.get(
+                                    f"{base_url}/v2/account/activities/{activity_type}",
+                                    headers=headers,
+                                    params=params,
+                                ),
+                                f"Alpaca {activity_type} activity",
+                            )
+                        )
+                        page_ids = [
+                            str(_field(raw, "id") or "").strip()
+                            for raw in page[:PORTFOLIO_PAGE_SIZE]
+                        ]
+                        if page_index == 0 and page_ids and page_ids[0]:
+                            observed_head = page_ids[0]
+                            if phase == "history":
+                                next_heads[activity_type] = observed_head
+                        for raw in page[:PORTFOLIO_PAGE_SIZE]:
+                            normalized = normalize_alpaca_funding_activity(
+                                raw,
+                                environment=environment,
+                                provider=provider,
+                                account_ref=account_ref,
+                                observed_at=observed_at,
+                            )
+                            if (
+                                normalized is None
+                                or normalized.venue_transaction_id in seen_ids
+                            ):
+                                continue
+                            seen_ids.add(normalized.venue_transaction_id)
+                            flows.append(normalized)
+                        short_page = len(page) < PORTFOLIO_PAGE_SIZE
+                        reached_stored_head = bool(
+                            stored_head and stored_head in page_ids
+                        )
+                        if phase == "head" and (
+                            reached_stored_head or short_page or not stored_head
+                        ):
+                            if observed_head:
+                                next_heads[activity_type] = observed_head
+                            if stored_page_token:
+                                phase = "history"
+                                page_token = stored_page_token
+                                continue
+                            type_complete = True
+                            page_token = None
+                            break
+                        if short_page:
+                            type_complete = True
+                            page_token = None
+                            break
+                        next_token = str(_field(page[-1], "id") or "").strip()
+                        if not next_token or next_token in seen_tokens:
+                            if next_token:
+                                page_token = next_token
+                            break
+                        seen_tokens.add(next_token)
+                        page_token = next_token
+                    if not type_complete:
+                        backfill_complete = False
+                        if phase == "head" and stored_page_token:
+                            next_cursors[activity_type] = stored_page_token
+                        elif page_token:
+                            next_cursors[activity_type] = page_token
+        except Exception:
+            self._record_funding_sync_metadata(
+                environment=environment,
+                venue=Venue.ALPACA,
+                account_ref=account_ref,
+                backfill_cursor=stored_cursor_raw,
+                backfill_complete=False,
+                last_error_code="alpaca_funding_read_failed",
+            )
+            return [], "error"
+        cursor_payload = json.dumps(
+            {"cursors": next_cursors, "heads": next_heads},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self._record_funding_sync_metadata(
+            environment=environment,
+            venue=Venue.ALPACA,
+            account_ref=account_ref,
+            backfill_cursor=cursor_payload,
+            backfill_complete=backfill_complete,
+            last_error_code=None,
+        )
+        return flows, "ready" if backfill_complete else "partial"
+
+    def _stored_backfill_cursor(
+        self,
+        *,
+        environment: Environment,
+        venue: Venue,
+        account_ref: str,
+    ) -> str | None:
+        state = self._stored_sync_state(
+            environment=environment,
+            venue=venue,
+            account_ref=account_ref,
+        )
+        return str((state or {}).get("backfill_cursor") or "").strip() or None
+
+    def _stored_sync_state(
+        self,
+        *,
+        environment: Environment,
+        venue: Venue,
+        account_ref: str,
+    ) -> dict[str, Any] | None:
+        if self.funding_repository is None:
+            return None
+        return self.funding_repository.sync_state(
+            environment=environment,
+            venue=venue,
+            account_ref=account_ref,
+        )
+
+    def _record_funding_sync_metadata(
+        self,
+        *,
+        environment: Environment,
+        venue: Venue,
+        account_ref: str,
+        backfill_cursor: str | None,
+        backfill_complete: bool,
+        last_error_code: str | None,
+        head_transaction_id: str | None = None,
+    ) -> None:
+        self._funding_sync_metadata[(environment.value, venue.value, account_ref)] = {
+            "backfillCursor": backfill_cursor,
+            "backfillComplete": backfill_complete,
+            "lastErrorCode": last_error_code,
+            "headTransactionId": head_transaction_id,
+        }
 
     def _alpaca_fills(
         self,
@@ -505,6 +868,7 @@ class VenuePortfolioService:
     ) -> None:
         self.registry = registry
         self.source = source
+        self.funding_repository = FundingRepository(registry)
 
     def refresh(self, environment: Environment) -> dict[str, Any]:
         """Refresh all configured accounts without using order-intent or simulation rows."""
@@ -645,6 +1009,50 @@ class VenuePortfolioService:
                 },
             )
             return
+
+        cash_flows: list[VenueCashFlow] = []
+        for raw_cash_flow in account.get("cashFlows") or []:
+            try:
+                cash_flow = VenueCashFlow.model_validate(raw_cash_flow)
+            except (TypeError, ValueError):
+                continue
+            if (
+                cash_flow.environment != environment
+                or cash_flow.venue.value != venue
+                or cash_flow.account_ref != account_ref
+            ):
+                continue
+            cash_flows.append(cash_flow)
+            self.funding_repository.upsert_cash_flow(cash_flow)
+        funding_status = str(account.get("fundingStatus") or "unavailable")
+        funding_sync = account.get("fundingSync") or {}
+        if funding_status in {"ready", "partial", "error"}:
+            prior_sync = self.funding_repository.sync_state(
+                environment=environment,
+                venue=Venue(venue),
+                account_ref=account_ref,
+            ) or {}
+            self.funding_repository.set_sync_state(
+                environment=environment,
+                venue=Venue(venue),
+                account_ref=account_ref,
+                coverage_through_at=(
+                    observed_at
+                    if funding_status == "ready"
+                    else prior_sync.get("coverage_through_at")
+                ),
+                head_transaction_id=(
+                    funding_sync.get("headTransactionId")
+                    or (
+                        cash_flows[0].venue_transaction_id
+                        if cash_flows
+                        else prior_sync.get("head_transaction_id")
+                    )
+                ),
+                backfill_cursor=funding_sync.get("backfillCursor"),
+                backfill_complete=bool(funding_sync.get("backfillComplete")),
+                last_error_code=funding_sync.get("lastErrorCode"),
+            )
 
         for fill in account.get("fills") or []:
             self._upsert_fill(

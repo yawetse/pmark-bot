@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from app.db import RepositoryRegistry
+from app.db import RepositoryRegistry, UnitOfWork
 from app.domain import Environment
 from app.services.audit_service import ActorContext, AuditService, ConfigChange
 from app.services.auth_service import DashboardAccessResult
@@ -75,17 +75,33 @@ class KillSwitchService:
             activated_by=actor.username,
             activated_at=datetime.now(UTC),
         )
-        self._states[environment] = state
-        audit_event = self.audit_service.record_config_change(
-            actor=actor,
-            action="kill_switch.activate",
-            environment=environment,
-            change=ConfigChange(
-                path="kill_switch.enabled",
-                old_value=False,
-                new_value=True,
-            ),
-        )
+        with UnitOfWork(self.registry.state) as unit:
+            self.registry.state.lock_transaction_key(
+                f"funding-controls:{environment.value}:global"
+            )
+            self._states[environment] = state
+            self.registry.state.upsert_by_id(
+                "shared.operational_controls",
+                f"{environment.value}:global_kill_switch",
+                {
+                    "environment": environment.value,
+                    "control": "global_kill_switch",
+                    "active": True,
+                    "actor": actor.username,
+                    "updated_at": state.activated_at,
+                },
+            )
+            audit_event = self.audit_service.record_config_change(
+                actor=actor,
+                action="kill_switch.activate",
+                environment=environment,
+                change=ConfigChange(
+                    path="kill_switch.enabled",
+                    old_value=False,
+                    new_value=True,
+                ),
+            )
+            unit.commit()
         return KillSwitchActivationResult(
             accepted=True,
             status_code=200,
@@ -96,6 +112,21 @@ class KillSwitchService:
     def state(self, environment: Environment) -> KillSwitchState:
         """Return current kill switch state for an environment."""
 
+        rows = self.registry.state.rows(
+            "shared.operational_controls",
+            filters={
+                "environment": environment.value,
+                "control": "global_kill_switch",
+            },
+        )
+        if rows:
+            latest = rows[0]
+            return KillSwitchState(
+                environment=environment,
+                active=bool(latest.get("active")),
+                activated_by=str(latest.get("actor") or "system"),
+                activated_at=latest.get("updated_at"),
+            )
         return self._states.get(
             environment,
             KillSwitchState(environment=environment, active=False),

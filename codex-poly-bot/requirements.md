@@ -1,8 +1,8 @@
 # codex-poly-bot Requirements
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.1
-**Date:** 2026-07-21
+**Version:** 1.2
+**Date:** 2026-07-31
 **Status:** APPROVED
 
 ## Product Intent
@@ -10,6 +10,8 @@
 `codex-poly-bot` is a standalone live-capable trading bot with a Python/FastAPI backend and a Next.js React dashboard. The bot supports Polymarket US, Polymarket International, and traditional stock-market trading through Alpaca for stocks and ETFs. The bot defaults to Polymarket US, disables every venue unless explicitly enabled by configuration, and runs OpenAI and Claude evaluators at the same time with separate budgets, Alpaca accounts, wallets, and Postgres schemas.
 
 The first version includes market scanning, daily full and incremental S3 data downloads, wallet target analysis, LLM thesis scoring, arbitrage, convergence, whale-copy strategies, Alpaca stock/ETF signal evaluation, Kelly sizing, configurable risk controls, limit and market order execution, exit monitoring, dashboard configuration, GitHub OAuth login, SES email notifications, model and venue comparison analytics, and AWS deployment. Dry-run mode exists from day one, live trading defaults to off, and configuration changes made in the dashboard apply on the next trading loop. The system runs locally with gitignored `.env` files and deploys through GitHub Actions to AWS `us-east-1` development and production environments.
+
+Recurring funding support observes venue-managed deposits for each model-provider account, reconciles deposit and withdrawal activity, reports funding history and missed occurrences, and removes external cash flows from trading-return calculations. Alpaca direct incoming ACH transfers are supported only through separately entitled Broker API credentials and an approved venue-managed ACH relationship. Plaid bank onboarding, raw bank-account storage, and direct Polymarket funding are outside this release. Direct transfers remain disabled with zero limits until an authorized operator configures nonzero safety caps.
 
 ## Source References
 
@@ -27,6 +29,10 @@ The implementation shall not depend on the referenced repos at runtime unless la
 - `https://docs.alpaca.markets/docs/trading/paper-trading/`
 - `https://docs.alpaca.markets/docs/trading/orders/`
 - `https://docs.alpaca.markets/docs/about-market-data-api`
+- `https://docs.alpaca.markets/us/docs/account-activities`
+- `https://docs.alpaca.markets/us/reference/createtransferforaccount`
+- `https://docs.alpaca.markets/reference/createachrelationshipforaccount`
+- `https://docs.polymarket.us/api-reference/portfolio/get-activities`
 
 ## Requirements
 
@@ -103,6 +109,31 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-WAL-005 | P0 | The dashboard shall show wallet, account, and credential status with public identifiers without displaying private keys or API secrets. |
 | REQ-WAL-006 | P0 | If a wallet secret, brokerage credential, or API credential is missing for a live order, then the system shall refuse to place the order and record the refusal reason. |
 | REQ-WAL-007 | P1 | When credentials are rotated, the system shall use the updated secret on the next credential refresh without requiring a redeploy. |
+
+### Recurring Funding and Direct Transfers
+
+| ID | Priority | EARS Requirement |
+|----|----------|------------------|
+| REQ-FND-001 | P0 | When an authenticated Polymarket US or Alpaca account is reconciled, the system shall retrieve deposit and withdrawal activity from the venue's documented account-activity API in addition to balances, positions, and fills. |
+| REQ-FND-002 | P0 | When venue funding activity is normalized, the system shall retain the environment, venue, model providers, sanitized account reference, venue transaction identifier, direction, USD amount, venue status, occurrence time, and last update time without retaining credential or bank-account material. |
+| REQ-FND-003 | P0 | When the same venue funding transaction is observed more than once or through model credentials that resolve to one account, the system shall upsert one cash-flow record and merge provider attribution without duplicating its amount. |
+| REQ-FND-004 | P1 | The system shall retain normalized funding activity and expected funding occurrences indefinitely unless a later archive policy is configured. |
+| REQ-FND-005 | P0 | [ASSUMED] When an authorized operator configures an observed recurring deposit, the system shall support weekly and monthly schedules per environment, venue, and model provider at 09:00 America/New_York, moving weekend or United States federal-holiday occurrences to the next business day. |
+| REQ-FND-006 | P0 | [ASSUMED] When an authorized operator configures a direct low-balance refill, the system shall evaluate it after each confirmed portfolio refresh and calculate the requested amount as the configured target balance minus confirmed available-to-trade balance, capped by the schedule amount and transfer safety limits. |
+| REQ-FND-007 | P0 | When a recurring funding occurrence becomes due, the system shall persist exactly one deterministic occurrence with its expected account, amount, due time, execution mode, status, and idempotency key before any external transfer call. |
+| REQ-FND-008 | P0 | [ASSUMED] If no completed venue cash flow matches an observed recurring occurrence by account, direction, amount within 0.01 USD, and occurrence window within four business days after its due time, then the system shall mark the occurrence missing. |
+| REQ-FND-009 | P0 | When a funding occurrence first becomes missing, rejected, returned, or failed, the system shall send one SES alert and persist the alert result; if a missing occurrence is later reconciled, then the system shall send one recovery notification. |
+| REQ-FND-010 | P0 | When Performance is opened, the dashboard shall show funding history, expected occurrences, venue status, matched or missing state, direction, amount, account attribution, and timestamps without exposing account identifiers, relationship identifiers, or credentials. |
+| REQ-FND-011 | P0 | When portfolio performance is calculated across a period, the system shall calculate cash-flow-adjusted trading P&L as ending account value minus starting account value minus deposits plus withdrawals, and shall not classify deposits or withdrawals as trading profit or loss. |
+| REQ-FND-012 | P0 | [ASSUMED] When a percentage return is calculated across external cash flows, the system shall use the Modified Dietz method with cash flows weighted by their time within the selected period, and shall mark the return unavailable when its weighted capital denominator is zero or negative. |
+| REQ-FND-013 | P0 | The system shall support direct incoming Alpaca ACH transfers only through the documented Alpaca Broker API using separately configured Broker API credentials, the target account identifier, and a previously approved ACH relationship identifier; the system shall not require or integrate Plaid. |
+| REQ-FND-014 | P0 | While direct transfers are disabled, the per-transfer limit is zero, the monthly limit is zero, Broker API credentials are missing, the ACH relationship reference is missing, or persistence is unavailable, the system shall refuse a direct transfer before calling Alpaca and record the refusal reason. |
+| REQ-FND-015 | P0 | Before submitting a direct transfer, the system shall enforce a positive amount, the configured per-transfer limit, the configured calendar-month account limit including pending and completed transfers, and at most one pending direct transfer per venue account. |
+| REQ-FND-016 | P0 | When a direct transfer is retried with the same funding-occurrence idempotency key, the system shall return the persisted attempt or reconcile its venue state without submitting a second transfer request. |
+| REQ-FND-017 | P0 | If Alpaca rejects, returns, or fails a direct transfer, then the system shall persist the terminal status, alert the operator, and require a new authorized occurrence rather than retrying automatically. |
+| REQ-FND-018 | P0 | When the global kill switch or funding emergency stop is active, the system shall block new direct-transfer submissions while continuing read-only venue funding reconciliation and alert recovery. |
+| REQ-FND-019 | P0 | When an authorized operator creates, changes, enables, disables, or deletes a funding schedule or direct-transfer setting, the system shall validate the complete schedule, persist a versioned owner-specific configuration change, and audit the username, old value, new value, environment, timestamp, and IP address. |
+| REQ-FND-020 | P0 | While no documented and entitled Polymarket US funding-write API is configured, the system shall keep Polymarket US funding in observe-and-reconcile mode and shall not attempt direct deposit initiation. |
 
 ### LLM Scoring
 

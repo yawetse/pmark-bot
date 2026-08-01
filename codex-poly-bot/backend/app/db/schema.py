@@ -11,8 +11,10 @@ from dataclasses import dataclass
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
@@ -117,6 +119,22 @@ def _shared_tables() -> list[Table]:
             Column("success", Boolean, nullable=False),
             Column("metadata", JSONB, nullable=False),
             Column("created_at", DateTime(timezone=True), nullable=False),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "operational_controls",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("control", String, nullable=False),
+            Column("active", Boolean, nullable=False),
+            Column("actor", String, nullable=True),
+            Column("updated_at", DateTime(timezone=True), nullable=False),
+            UniqueConstraint(
+                "environment",
+                "control",
+                name="uq_operational_control_environment",
+            ),
             schema=SHARED_SCHEMA,
         ),
         Table(
@@ -895,6 +913,141 @@ def _shared_tables() -> list[Table]:
             Column("updated_at", DateTime(timezone=True), nullable=False),
             schema=SHARED_SCHEMA,
         ),
+        Table(
+            "venue_cash_flows",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("account_ref", String, nullable=False),
+            Column("model_providers", JSONB, nullable=False),
+            Column("venue_transaction_id", String, nullable=False),
+            Column("activity_type", String, nullable=False),
+            Column("direction", String, nullable=False),
+            Column("amount_usd", Numeric(18, 8), nullable=False),
+            Column("venue_status", String, nullable=False),
+            Column("effective_at", DateTime(timezone=True), nullable=False),
+            Column("effective_time_precision", String, nullable=False),
+            Column("observed_at", DateTime(timezone=True), nullable=False),
+            Column("updated_at", DateTime(timezone=True), nullable=False),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            UniqueConstraint(
+                "environment",
+                "venue",
+                "account_ref",
+                "venue_transaction_id",
+                name="uq_venue_cash_flow_transaction",
+            ),
+            CheckConstraint("amount_usd > 0", name="ck_venue_cash_flow_positive_amount"),
+            CheckConstraint(
+                "direction IN ('deposit', 'withdrawal')",
+                name="ck_venue_cash_flow_direction",
+            ),
+            CheckConstraint(
+                "effective_time_precision IN ('timestamp', 'date')",
+                name="ck_venue_cash_flow_precision",
+            ),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "funding_occurrences",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("idempotency_key", String, nullable=False, unique=True),
+            Column("schedule_id", String, nullable=False),
+            Column("config_owner", String, nullable=False),
+            Column("config_version", String, nullable=False),
+            Column("schedule_snapshot", JSONB, nullable=False),
+            Column("schedule_hash", String, nullable=False),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("model_provider", String, nullable=False),
+            Column("account_ref", String, nullable=False),
+            Column("direction", String, nullable=False),
+            Column("execution_mode", String, nullable=False),
+            Column("cadence", String, nullable=False),
+            Column("expected_amount_usd", Numeric(18, 8), nullable=False),
+            Column("submitted_amount_usd", Numeric(18, 8), nullable=True),
+            Column("reserved_amount_usd", Numeric(18, 8), nullable=True),
+            Column("reserved_at", DateTime(timezone=True), nullable=True),
+            Column("triggering_snapshot_id", String, nullable=True),
+            Column("low_balance_episode_key", String, nullable=True, unique=True),
+            Column("due_at", DateTime(timezone=True), nullable=False),
+            Column("match_deadline_at", DateTime(timezone=True), nullable=False),
+            Column("status", String, nullable=False),
+            Column(
+                "matched_cash_flow_id",
+                String,
+                ForeignKey("shared.venue_cash_flows.id"),
+                nullable=True,
+                unique=True,
+            ),
+            Column("request_fingerprint", String, nullable=True),
+            Column("provider_transfer_id", String, nullable=True),
+            Column("post_attempted_at", DateTime(timezone=True), nullable=True),
+            Column("alerted_at", DateTime(timezone=True), nullable=True),
+            Column("recovery_alerted_at", DateTime(timezone=True), nullable=True),
+            Column("refusal_reason", String, nullable=True),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            Column("updated_at", DateTime(timezone=True), nullable=False),
+            CheckConstraint(
+                "expected_amount_usd > 0",
+                name="ck_funding_occurrence_positive_expected",
+            ),
+            CheckConstraint(
+                "reserved_amount_usd IS NULL OR reserved_amount_usd >= 0",
+                name="ck_funding_occurrence_nonnegative_reservation",
+            ),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "funding_sync_state",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("environment", String, nullable=False),
+            Column("venue", String, nullable=False),
+            Column("account_ref", String, nullable=False),
+            Column("head_transaction_id", String, nullable=True),
+            Column("head_synced_at", DateTime(timezone=True), nullable=True),
+            Column("coverage_through_at", DateTime(timezone=True), nullable=True),
+            Column("backfill_cursor", String, nullable=True),
+            Column("backfill_complete", Boolean, nullable=False),
+            Column("last_error_code", String, nullable=True),
+            Column("updated_at", DateTime(timezone=True), nullable=False),
+            UniqueConstraint(
+                "environment",
+                "venue",
+                "account_ref",
+                name="uq_funding_sync_account",
+            ),
+            schema=SHARED_SCHEMA,
+        ),
+        Table(
+            "funding_alert_outbox",
+            metadata,
+            Column("id", String, primary_key=True),
+            Column("transition_key", String, nullable=False, unique=True),
+            Column(
+                "occurrence_id",
+                String,
+                ForeignKey("shared.funding_occurrences.id"),
+                nullable=False,
+            ),
+            Column("environment", String, nullable=False),
+            Column("transition_type", String, nullable=False),
+            Column("delivery_status", String, nullable=False),
+            Column("attempt_count", Integer, nullable=False),
+            Column("next_attempt_at", DateTime(timezone=True), nullable=True),
+            Column("provider_message_id", String, nullable=True),
+            Column("last_error", String, nullable=True),
+            Column("created_at", DateTime(timezone=True), nullable=False),
+            Column("updated_at", DateTime(timezone=True), nullable=False),
+            CheckConstraint(
+                "transition_type IN ('failure', 'recovery')",
+                name="ck_funding_alert_transition",
+            ),
+            schema=SHARED_SCHEMA,
+        ),
     ]
 
 
@@ -1223,6 +1376,36 @@ Index(
     metadata.tables["shared.venue_confirmed_fills"].c.executed_at,
 )
 
+Index(
+    "ix_venue_cash_flows_environment_effective",
+    metadata.tables["shared.venue_cash_flows"].c.environment,
+    metadata.tables["shared.venue_cash_flows"].c.effective_at,
+)
+
+Index(
+    "ix_venue_cash_flows_account_effective",
+    metadata.tables["shared.venue_cash_flows"].c.environment,
+    metadata.tables["shared.venue_cash_flows"].c.account_ref,
+    metadata.tables["shared.venue_cash_flows"].c.effective_at,
+)
+
+Index(
+    "ix_funding_occurrences_environment_due",
+    metadata.tables["shared.funding_occurrences"].c.environment,
+    metadata.tables["shared.funding_occurrences"].c.due_at,
+)
+
+Index(
+    "uq_funding_pending_account",
+    metadata.tables["shared.funding_occurrences"].c.environment,
+    metadata.tables["shared.funding_occurrences"].c.venue,
+    metadata.tables["shared.funding_occurrences"].c.account_ref,
+    unique=True,
+    postgresql_where=metadata.tables["shared.funding_occurrences"].c.status.in_(
+        ("reserved", "submitted", "unknown")
+    ),
+)
+
 
 def _ddl(statement) -> str:
     return f"{str(statement.compile(dialect=_POSTGRES_DIALECT)).strip()};"
@@ -1247,6 +1430,9 @@ _DASHBOARD_EVENT_TABLE_NAMES = (
     "shared.venue_portfolio_snapshots",
     "shared.venue_position_snapshots",
     "shared.venue_confirmed_fills",
+    "shared.venue_cash_flows",
+    "shared.funding_occurrences",
+    "shared.funding_alert_outbox",
 )
 
 _DASHBOARD_EVENT_FUNCTION_SQL = """

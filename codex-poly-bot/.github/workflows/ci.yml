@@ -72,6 +72,7 @@ jobs:
           npm run test:auth-boundary
           npm run test:dashboard-controls
           npm run test:dashboard-operations
+          npm run test:funding-controls
 
   migration-safety:
     name: Migration safety
