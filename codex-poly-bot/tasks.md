@@ -1522,3 +1522,284 @@
 - [x] Traceability matrix maps every redesign requirement to code and evidence
 - [x] Development and production deployment evidence is attached to issue #194
 - [x] Issue #194 is closed only after the production requirement audit passes
+
+---
+
+### TASK-041: Add Funding Domain, Config, Calendar, and Return Math
+
+**Story:** As an operator, I want validated funding schedules and deterministic calculations, so that recurring expectations and adjusted returns use one safe contract.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`
+**Dependencies:** TASK-005, TASK-033
+
+**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-011, REQ-FND-012, REQ-FND-019, REQ-FND-020
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-041-01 | When the default config loads, the system shall include an empty funding schedule list, direct transfers disabled, funding emergency stop inactive, and both direct-transfer limits set to `0.00`. |
+| AC-041-02 | When an authorized operator saves funding settings, the system shall validate one complete funding object, reject duplicate or incomplete schedules and direct Polymarket mode, create one owner-specific config version, and audit username, complete old and new values, environment, timestamp, and IP address. |
+| AC-041-03 | When weekly or monthly due time is calculated, the system shall use 09:00 `America/New_York`, handle daylight saving, use month end for a missing day, and move weekends or federal holidays forward. |
+| AC-041-04 | When a funding occurrence key is built twice from the same normalized inputs, the system shall return the same key; when any identity input changes, it shall return a different key. |
+| AC-041-05 | When completed cash flows occur inside a valid period, the system shall calculate adjusted P&L and Modified Dietz with fixed precision; if the denominator is non-positive or boundary snapshots are stale, percentage return shall be unavailable. |
+| AC-041-06 | When a low-balance gap is calculated, the system shall use `max(0, target - confirmed buying power)` and keep zero-limit handling as a refusal rather than a zero occurrence. |
+
+**Definition of Done:**
+- [ ] Funding domain and config tests pass
+- [ ] Calendar, idempotency, amount, and return-math tests pass
+- [ ] Code annotations trace to each mapped REQ-FND ID
+
+---
+
+### TASK-042: Add Funding Persistence and Concurrency Controls
+
+**Story:** As an operator, I want funding activity and occurrences stored with database constraints, so that retries, concurrent workers, and restarts cannot duplicate cash flows or transfer attempts.
+
+**Priority:** P0
+**Estimate:** XL
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `database`
+**Dependencies:** TASK-003, TASK-041
+
+**Requirements Covered:** REQ-FND-002, REQ-FND-003, REQ-FND-004, REQ-FND-007, REQ-FND-008, REQ-FND-009, REQ-FND-014, REQ-FND-015, REQ-FND-016, REQ-FND-017
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-042-01 | When migrations run, the system shall create cash-flow, occurrence, sync-state, and funding-alert outbox tables with required foreign keys, checks, unique constraints, partial pending-slot uniqueness, and query indexes. |
+| AC-042-02 | When the same venue transaction is upserted through multiple provider credentials, the system shall store one cash flow, merge provider attribution, reject stale state regressions, and retain no raw payload. |
+| AC-042-03 | When the same deterministic occurrence is materialized concurrently, the system shall store one occurrence and return the persisted record. |
+| AC-042-04 | When reconciliation matches a cash flow or changes an occurrence state concurrently, compare-and-set operations shall preserve one match and shall not regress a terminal state. |
+| AC-042-05 | When a direct occurrence is claimed, one short account-scoped transaction shall recheck current controls, reserve the pending slot and monthly amount, set the request fingerprint and `post_attempted_at` only when null, and commit before any network call. |
+| AC-042-06 | When a failure or recovery transition is enqueued more than once, the system shall retain one logical outbox event while allowing bounded delivery retries. |
+| AC-042-07 | When funding records age, the application shall not delete them unless a later archive policy is configured. |
+
+**Definition of Done:**
+- [ ] Migration and repository tests pass on in-memory and Postgres-backed paths where supported
+- [ ] Concurrency, compare-and-set, and one-claim tests pass
+- [ ] Schema contains no raw bank, credential, account-number, routing-number, or relationship-ID columns
+
+---
+
+### TASK-043: Reconcile Bounded Venue Funding Activity
+
+**Story:** As an operator, I want venue-confirmed deposits and withdrawals normalized with coverage state, so that funding history is accurate and an API outage cannot create a false missing alert.
+
+**Priority:** P0
+**Estimate:** XL
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `venue-adapters`
+**Dependencies:** TASK-033, TASK-042
+
+**Requirements Covered:** REQ-FND-001, REQ-FND-002, REQ-FND-003, REQ-FND-004, REQ-FND-008, REQ-FND-020
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-043-01 | When Alpaca account activity is read, the system shall paginate CSD, CSW, and supported TRANS records, treat CSD and CSW as completed, normalize date-only activity at 09:00 Eastern, and persist only allowlisted fields. |
+| AC-043-02 | When Polymarket US portfolio activity is read, the system shall normalize documented deposit and withdrawal activity and shall expose no funding-write method. |
+| AC-043-03 | When a venue account has more history than one tick budget, the system shall sync the current head, persist its head and backfill cursors, continue historical backfill later, and keep each request bounded. |
+| AC-043-04 | When current-head pagination reaches the previous head transaction, the system shall advance `coverage_through_at`; if it fails or remains incomplete, it shall not claim current coverage. |
+| AC-043-05 | When the source contains an ambiguous transfer direction or a new bank field, the system shall skip or ignore the unsupported field with a safe warning and shall not store or log the raw payload. |
+| AC-043-06 | When source code and schemas are inspected, they shall contain no Plaid integration, raw bank fields, or Polymarket funding-write path. |
+
+**Definition of Done:**
+- [ ] Alpaca and Polymarket mocked activity contract tests pass
+- [ ] Pagination, watermark, deduplication, stale-regression, and privacy tests pass
+- [ ] Existing venue portfolio regression tests pass
+
+---
+
+### TASK-044: Implement Funding Materialization, Reconciliation, Alerts, and Runtime Wiring
+
+**Story:** As an operator, I want schedules evaluated and reconciled after portfolio refresh, so that expected deposits, missed deposits, and recovery alerts are dependable across restarts.
+
+**Priority:** P0
+**Estimate:** XL
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `scheduler`
+**Dependencies:** TASK-020, TASK-028, TASK-041, TASK-042, TASK-043
+
+**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-007, REQ-FND-008, REQ-FND-009, REQ-FND-017, REQ-FND-018
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-044-01 | When the funding runtime tick starts, it shall acquire a session-scoped nonblocking environment lock, skip overlap, avoid a long database transaction across network calls, and release the lock in `finally`. |
+| AC-044-02 | When a weekly or monthly occurrence is due, the system shall materialize it once even after worker downtime or a failed portfolio refresh. |
+| AC-044-03 | When a confirmed account crosses below its configured target, the system shall create one low-balance episode and shall not rearm it until a later fresh snapshot is at or above target. |
+| AC-044-04 | When a completed cash flow is available, the system shall match it one-to-one by account, direction, effective window, and expected amount or claimed submitted amount within `0.01`. |
+| AC-044-05 | If the matching deadline passes without a cash flow, the system shall mark missing only after successful activity coverage extends past the deadline and shall enqueue one failure alert. |
+| AC-044-06 | If a late completed cash flow matches a missing occurrence, the system shall mark matched and enqueue one recovery alert. |
+| AC-044-07 | When startup finds a reserved occurrence with `post_attempted_at`, it shall move the occurrence to unknown and reconcile only. |
+| AC-044-08 | When one account refresh fails, the system shall continue other accounts, run fixed cadences, gate low balance on freshness, and record safe funding counts and coverage in heartbeat metadata. |
+| AC-044-09 | While the kill switch or funding emergency stop is active, the runtime shall continue read-only activity reconciliation, missing detection, and recovery alerts. |
+
+**Definition of Done:**
+- [ ] Materialization, episode, matching, deadline, alert, and restart tests pass
+- [ ] Scheduler lock, failure-isolation, freshness, and heartbeat integration tests pass
+- [ ] SES tests prove one logical transition with bounded transport retry
+
+---
+
+### TASK-045: Implement Disabled-by-Default Alpaca Direct Funding
+
+**Story:** As an operator, I want direct incoming Alpaca ACH support behind strict controls, so that it can be enabled later without storing bank data or risking duplicate transfers.
+
+**Priority:** P0
+**Estimate:** XL
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `alpaca`, `safety`
+**Dependencies:** TASK-010, TASK-042, TASK-044
+
+**Requirements Covered:** REQ-FND-006, REQ-FND-013, REQ-FND-014, REQ-FND-015, REQ-FND-016, REQ-FND-017, REQ-FND-018, REQ-FND-020
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-045-01 | When direct funding is disabled, either limit is zero, or the amount is non-positive, the system shall persist a refusal before calling the adapter. |
+| AC-045-02 | When the global kill switch or funding emergency stop is active, the system shall refuse before the adapter call while leaving read reconciliation active. |
+| AC-045-03 | When Broker credentials, account ID, or approved relationship ID are missing, persistence is unavailable, or the current provider account does not match the occurrence and secret-resolved Broker account, the system shall refuse before the adapter call. |
+| AC-045-04 | When a fixed weekly or monthly amount exceeds a per-transfer or remaining monthly cap, the system shall refuse the full transfer; when a low-balance refill fits positive caps only after reduction, it shall submit the capped amount and retain both expected and submitted values. |
+| AC-045-05 | When another reserved, submitted, or unknown transfer exists for the account, the system shall refuse a second pending transfer. |
+| AC-045-06 | When the originating schedule was removed, disabled, changed, moved to another owner, or resolves to another account, the system shall refuse the occurrence before claim. |
+| AC-045-07 | When a claim succeeds, the committed `post_attempted_at` shall permit at most one Broker API POST; a retry shall return or reconcile persisted state without another POST. |
+| AC-045-08 | If the Broker response is ambiguous, the system shall retain the pending slot and monthly reservation, find candidates conservatively from the account transfer list, and remain unknown for zero or multiple candidates. |
+| AC-045-09 | If Alpaca rejects, returns, or fails the transfer, the system shall persist a terminal status, release the failed reservation, alert once, and never auto-retry. |
+| AC-045-10 | When direct funding is configured for Polymarket or Plaid fields are supplied, validation shall reject the configuration because neither write path is supported. |
+| AC-045-11 | When a direct occurrence has withdrawal or any non-deposit direction, the system shall refuse it before the adapter call because direct mode supports incoming Alpaca ACH only. |
+| AC-045-12 | When an allowed direct request is submitted to the mocked adapter, it shall use `/v1/accounts/{account_id}/transfers`, incoming ACH direction, the exact claimed amount, and the secret-resolved relationship ID without persisting or logging the exact account or relationship identifier. |
+| AC-045-13 | When monthly capacity is checked, the account total shall include reserved, submitted, unknown, and matched direct amounts by `reserved_at` in the current `America/New_York` month, exclude released terminal reservations, and start a new total after month rollover. |
+
+**Definition of Done:**
+- [ ] Mocked Broker API adapter tests pass with no real credentials or transfers
+- [ ] Every refusal case asserts zero adapter calls
+- [ ] One-POST, unknown reconciliation, terminal no-retry, account routing, and secret/log privacy tests pass
+
+---
+
+### TASK-046: Add Funding API and Cash-Flow-Adjusted Performance
+
+**Story:** As an operator, I want sanitized funding history and cash-flow-adjusted results, so that I can distinguish strategy returns from money added or withdrawn.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `api`
+**Dependencies:** TASK-021, TASK-041, TASK-042, TASK-044, TASK-045
+
+**Requirements Covered:** REQ-FND-004, REQ-FND-010, REQ-FND-011, REQ-FND-012, REQ-FND-019
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-046-01 | When an authenticated user requests funding history, the API shall return bounded cash-flow and occurrence pages with independent stable cursors and the selected interval. |
+| AC-046-02 | When boundary portfolio snapshots are fresh, the API shall return per-account and eligible aggregate beginning value, ending value, completed deposits, completed withdrawals, adjusted P&L, and Modified Dietz return. |
+| AC-046-03 | If either boundary snapshot is missing or stale or the weighted denominator is non-positive, the API shall return an unavailable reason rather than zero. |
+| AC-046-04 | When a capped low-balance transfer is shown, the API shall expose safe expected and submitted amounts and shall match its completed cash flow to the submitted amount. |
+| AC-046-05 | When API responses are serialized, they shall exclude raw account references, Broker account and relationship IDs, credentials, request fingerprints, raw payloads, bank fields, and Plaid fields by schema. |
+| AC-046-06 | If the request is unauthenticated, unallowlisted, invalid, or persistence cannot produce a safe response, the API shall return the existing 401, 403, 422, or 503 envelope. |
+
+**Definition of Done:**
+- [ ] Auth, interval, valuation, pagination, aggregate, and unavailable-state tests pass
+- [ ] Response schema and log-boundary privacy tests pass
+- [ ] Existing portfolio and dashboard API regression tests pass
+
+---
+
+### TASK-047: Add Funding History and Schedule Controls to the Dashboard
+
+**Story:** As an operator, I want funding history in Performance and schedule controls in Settings, so that I can see deposits, missed expectations, and safe recurring-funding configuration in one place.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `frontend`
+**Dependencies:** TASK-038, TASK-040, TASK-046
+
+**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-010, REQ-FND-011, REQ-FND-012, REQ-FND-019, REQ-FND-020
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-047-01 | When Performance loads, the dashboard shall show sanitized funding history, expected and submitted amounts, matched or missing state, venue cash-flow status, direction, venue, provider, safe account label, timestamps, alert state, and cash-flow-adjusted results. |
+| AC-047-02 | When adjusted percentage return is unavailable, the dashboard shall show the reason and shall not display a fabricated zero. |
+| AC-047-03 | When Settings loads, the dashboard shall support complete weekly, monthly, and low-balance schedule edits plus direct enablement, zero-based limits, and funding emergency stop through one complete-object audited save. |
+| AC-047-04 | While either direct limit is zero or required Broker readiness is incomplete, the dashboard shall state that direct transfers are blocked. |
+| AC-047-05 | When funding guidance renders, it shall state that bank connections stay venue-managed, Plaid is not required, Polymarket is observe-only, and exact Broker references are provisioned outside the dashboard. |
+| AC-047-06 | At desktop and 390-pixel widths, funding tables and controls shall be keyboard usable, avoid color-only state, respect reduced motion, and avoid page-level horizontal scrolling. |
+
+**Definition of Done:**
+- [ ] Frontend typecheck and funding behavior tests pass
+- [ ] Settings version-conflict and complete-object save tests pass
+- [ ] Desktop/mobile browser and accessibility checks pass
+
+---
+
+### TASK-048: Configure Funding Infrastructure and Runbooks
+
+**Story:** As an operator, I want optional secret references and clear funding runbooks, so that deployment stays safe before direct transfers are provisioned.
+
+**Priority:** P0
+**Estimate:** M
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `infrastructure`, `documentation`
+**Dependencies:** TASK-045, TASK-047
+
+**Requirements Covered:** REQ-FND-002, REQ-FND-013, REQ-FND-014, REQ-FND-018, REQ-FND-020
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-048-01 | When CloudFormation deploys, optional environment-separated Alpaca Broker API, account, and relationship secret references shall exist without requiring values, and direct transfers shall default disabled with both limits `0.00`. |
+| AC-048-02 | If Broker secret values are absent in local, development, or production configuration, startup and health shall remain available while direct submission stays blocked with a safe readiness state. |
+| AC-048-03 | When infrastructure and deployment contracts are tested, CloudFormation validation, deployment shell syntax, environment isolation, missing-secret defaults, and zero-cap defaults shall pass. |
+| AC-048-04 | When the infrastructure template and runtime are inspected, they shall contain no Plaid field, raw bank field, or Polymarket funding-write resource or permission. |
+| AC-048-05 | Before release, the runbook shall document venue-managed bank setup, optional Broker entitlement and secret provisioning, schedule configuration, enabling and disabling direct mode, emergency stop, unknown-transfer review, alert recovery, rollback, and the rule that no real transfer is a deployment smoke test. |
+
+**Definition of Done:**
+- [ ] CloudFormation, shell, environment-isolation, and missing-secret tests pass
+- [ ] Funding operations and rollback runbooks match the implemented controls
+- [ ] No Polymarket write, Plaid, raw bank, or required Broker secret resource is present
+
+---
+
+### TASK-049: Verify and Release Recurring Funding
+
+**Story:** As the product owner, I want recurring funding deployed with concrete evidence, so that production observes deposits safely without enabling an unverified bank-transfer path.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** Phase 9 - Recurring funding and direct-transfer controls
+**Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `release`
+**Dependencies:** TASK-041, TASK-042, TASK-043, TASK-044, TASK-045, TASK-046, TASK-047, TASK-048
+
+**Requirements Covered:** REQ-FND-001 through REQ-FND-020
+
+**Acceptance Criteria (EARS):**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-049-01 | Before merge, the release shall create or identify a recurring-funding tracking issue and link the implementation pull request and local verification evidence. |
+| AC-049-02 | Before merge, the branch shall rebase on current `develop` and the system shall pass funding tests, full backend regression, frontend typecheck and behavior tests, CloudFormation validation, deployment shell syntax, secret-boundary checks, and traceability verification. |
+| AC-049-03 | When the feature merges to `develop`, development migrations, CloudFormation, ECS, HTTPS health, authenticated sanitized funding API, and browser checks shall pass, and the final GitHub Actions run URL and status shall be recorded. |
+| AC-049-04 | Before development promotion, authenticated funding readback shall show direct transfers disabled and both limits `0.00`, and a CloudWatch adapter query shall show zero Broker POST events during the release window. |
+| AC-049-05 | When development evidence passes, the promotion pull request shall merge to `main`; production migration, stack, ECS, HTTPS health, TLS, authenticated funding API, dashboard, SES, and ACM evidence shall pass, and the final GitHub Actions run URL and status shall be recorded. |
+| AC-049-06 | Before the release is complete, production funding readback shall show direct transfers disabled and both limits `0.00`, CloudWatch shall show zero Broker POST events during the release window, and no real bank transfer shall have been used as a smoke test. |
+| AC-049-07 | When release evidence is complete, the tracking issue shall contain requirement, test, pull request, deployment, funding-readback, and no-POST evidence before it is closed. |
+
+**Definition of Done:**
+- [ ] Every REQ-FND requirement maps to passing test and implementation evidence
+- [ ] Development and production deployment evidence is attached to the named tracking issue
+- [ ] Direct transfers remain disabled with zero limits and no real transfer is sent
