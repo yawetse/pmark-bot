@@ -3430,7 +3430,7 @@ Direct URLs remain valid. A route-link test asserts that each owner page renders
 | `CashFlowStatus` | `pending`, `completed`, `rejected`, `returned`, `failed`, `canceled`, `unknown` | Only `completed` enters return calculations or occurrence matching | REQ-FND-008, REQ-FND-011, REQ-FND-012, REQ-FND-017 |
 | `FundingOccurrenceStatus` | `expected`, `reserved`, `submitted`, `unknown`, `matched`, `missing`, `refused`, `rejected`, `returned`, `failed` | Terminal transfer failures do not retry; `unknown` is reconciliation-only | REQ-FND-007, REQ-FND-009, REQ-FND-016, REQ-FND-017 |
 | `FundingSchedule` | `id`, `enabled`, `venue`, `model_provider`, `cadence`, `execution_mode`, `direction`, `amount_usd`, `target_balance_usd`, `iso_weekday`, `day_of_month` | Venue and provider form the operator-safe account selector; weekly requires ISO weekday 1 to 7; monthly requires day 1 to 31; low balance requires positive target; observe schedules require positive expected amount | REQ-FND-005, REQ-FND-006, REQ-FND-019 |
-| `VenueCashFlow` | `environment`, `venue`, `providers`, `account_ref`, `venue_transaction_id`, `activity_type`, `direction`, `amount_usd`, `status`, `effective_at`, `observed_at`, `updated_at` | No secret, account number, routing number, relationship ID, or raw payload field exists | REQ-FND-002, REQ-FND-003 |
+| `VenueCashFlow` | `environment`, `venue`, `providers`, `account_ref`, `venue_transaction_id`, `activity_type`, `direction`, `amount_usd`, `status`, `effective_at`, `effective_time_precision`, `observed_at`, `updated_at` | Time precision is `timestamp` or `date`; no secret, account number, routing number, relationship ID, or raw payload field exists | REQ-FND-002, REQ-FND-003 |
 | `FundingOccurrence` | persistence fields from section 28.2 | Idempotency key and schedule ID required; money uses `Decimal`; timestamps are UTC | REQ-FND-007, REQ-FND-016 |
 
 #### `build_funding_occurrence_key(input: FundingOccurrenceKeyInput) -> str`
@@ -3482,10 +3482,11 @@ The existing `ConfigService.save_config_patches` flow provides authorization, op
 | `amount_usd` | Numeric(18, 8) | No | Positive absolute amount |
 | `venue_status` | String | No | Normalized `CashFlowStatus` value |
 | `effective_at` | Timestamp with timezone | No | Venue completion or effective time used for matching and returns |
+| `effective_time_precision` | String | No | `timestamp` for exact venue instants or `date` for values normalized to 09:00 Eastern |
 | `observed_at` | Timestamp with timezone | No | First observed time |
 | `updated_at` | Timestamp with timezone | No | Last venue update time |
 
-Unique constraint: `(environment, venue, account_ref, venue_transaction_id)`. Checks restrict venue, direction, status, and positive amount. Indexes cover `(environment, effective_at DESC)`, `(environment, account_ref, effective_at DESC)`, and completed unmatched lookup. Upsert merges `model_providers` and changes status or effective fields only when the incoming venue update time is not older than the stored update time. It never regresses a terminal state from stale data and never changes the original `observed_at`. The table has no raw-payload column.
+Unique constraint: `(environment, venue, account_ref, venue_transaction_id)`. Checks restrict venue, direction, status, effective-time precision, and positive amount. Indexes cover `(environment, effective_at DESC)`, `(environment, account_ref, effective_at DESC)`, and completed unmatched lookup. Upsert merges `model_providers` and changes status or effective fields only when the incoming venue update time is not older than the stored update time. It never regresses a terminal state from stale data and never changes the original `observed_at`. The table has no raw-payload column.
 
 #### `shared.funding_occurrences`
 

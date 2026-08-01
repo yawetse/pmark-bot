@@ -1535,7 +1535,7 @@
 **Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`
 **Dependencies:** TASK-005, TASK-033
 
-**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-011, REQ-FND-012, REQ-FND-019, REQ-FND-020
+**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-007, REQ-FND-011, REQ-FND-012, REQ-FND-019, REQ-FND-020
 
 **Acceptance Criteria (EARS):**
 
@@ -1626,7 +1626,7 @@
 **Labels:** `codex-poly-bot`, `spec-driven-dev`, `funding`, `scheduler`
 **Dependencies:** TASK-020, TASK-028, TASK-041, TASK-042, TASK-043
 
-**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-007, REQ-FND-008, REQ-FND-009, REQ-FND-017, REQ-FND-018
+**Requirements Covered:** REQ-FND-005, REQ-FND-006, REQ-FND-007, REQ-FND-008, REQ-FND-009, REQ-FND-016, REQ-FND-017, REQ-FND-018
 
 **Acceptance Criteria (EARS):**
 
