@@ -1,8 +1,8 @@
 # codex-poly-bot Low-Level Design
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.1
-**Date:** 2026-07-21
+**Version:** 1.2
+**Date:** 2026-07-31
 **Status:** APPROVED
 **Requirements Source:** `requirements.md`  
 **HLD Source:** `design-hld.md`  
@@ -3407,3 +3407,373 @@ Direct URLs remain valid. A route-link test asserts that each owner page renders
 | # | Question/Assumption | Impact if Wrong | Status |
 |---|---------------------|-----------------|--------|
 | 1 | Markdown docs in repo are enough for v1 operational procedures. | Later may move to a hosted runbook/wiki. | DESIGN CHOICE |
+
+---
+
+## 28. Recurring Funding and Direct Transfers
+
+**Files:** `backend/app/domain/funding.py`, `backend/app/services/funding_service.py`, `backend/app/ports/funding.py`, `backend/app/adapters/alpaca/funding.py`, `backend/app/services/venue_portfolio_service.py`, `backend/app/db/schema.py`, `backend/app/db/repositories.py`, `backend/app/services/config_service.py`, `backend/app/main.py`, `backend/app/api/dashboard.py`, `frontend/components/dashboard/funding-history.tsx`, `frontend/components/dashboard/funding-settings.tsx`, `infra/cloudformation.yml`
+**Responsibility:** Observe venue deposits and withdrawals, materialize recurring expectations, reconcile expected deposits, block unsafe direct transfers, alert on state changes, and exclude external cash flows from trading returns.
+**Requirements Covered:** REQ-FND-001 through REQ-FND-020
+**Dependencies:** Venue portfolio source, Postgres, config service, kill-switch service, SES adapter, Secrets Manager, Alpaca Broker API, dashboard auth
+**Depended On By:** Portfolio refresh loop, Performance, Settings, notification delivery, production operations
+
+### 28.1 Domain and Configuration Contracts
+
+#### Domain types
+
+| Type | Values or Fields | Invariants | REQ Trace |
+|------|------------------|------------|-----------|
+| `FundingDirection` | `deposit`, `withdrawal` | Deposits are positive cash flows; withdrawals are negative in return calculations | REQ-FND-001, REQ-FND-011, REQ-FND-012 |
+| `FundingExecutionMode` | `observe`, `direct` | `direct` is valid only for incoming Alpaca ACH | REQ-FND-013, REQ-FND-020 |
+| `FundingCadence` | `weekly`, `monthly`, `low_balance` | Low balance runs only after confirmed portfolio refresh | REQ-FND-005, REQ-FND-006 |
+| `CashFlowStatus` | `pending`, `completed`, `rejected`, `returned`, `failed`, `canceled`, `unknown` | Only `completed` enters return calculations or occurrence matching | REQ-FND-008, REQ-FND-011, REQ-FND-012, REQ-FND-017 |
+| `FundingOccurrenceStatus` | `expected`, `reserved`, `submitted`, `unknown`, `matched`, `missing`, `refused`, `rejected`, `returned`, `failed` | Terminal transfer failures do not retry; `unknown` is reconciliation-only | REQ-FND-007, REQ-FND-009, REQ-FND-016, REQ-FND-017 |
+| `FundingSchedule` | `id`, `enabled`, `venue`, `model_provider`, `cadence`, `execution_mode`, `direction`, `amount_usd`, `target_balance_usd`, `iso_weekday`, `day_of_month` | Venue and provider form the operator-safe account selector; weekly requires ISO weekday 1 to 7; monthly requires day 1 to 31; low balance requires positive target; observe schedules require positive expected amount | REQ-FND-005, REQ-FND-006, REQ-FND-019 |
+| `VenueCashFlow` | `environment`, `venue`, `providers`, `account_ref`, `venue_transaction_id`, `activity_type`, `direction`, `amount_usd`, `status`, `effective_at`, `observed_at`, `updated_at` | No secret, account number, routing number, relationship ID, or raw payload field exists | REQ-FND-002, REQ-FND-003 |
+| `FundingOccurrence` | persistence fields from section 28.2 | Idempotency key and schedule ID required; money uses `Decimal`; timestamps are UTC | REQ-FND-007, REQ-FND-016 |
+
+#### `build_funding_occurrence_key(input: FundingOccurrenceKeyInput) -> str`
+
+- **Purpose:** Build a deterministic SHA-256 key from environment, venue, sanitized account reference, provider, schedule ID, adjusted due time, direction, and execution mode.
+- **Traces:** REQ-FND-007, REQ-FND-016
+- **Returns:** Lowercase hex digest prefixed with `funding:`.
+- **Errors:** Validation rejects an empty key part or a timestamp without a timezone.
+- **Side Effects:** None.
+
+#### Default config shape
+
+```json
+{
+  "funding": {
+    "emergency_stop": false,
+    "direct_transfers_enabled": false,
+    "max_transfer_usd": "0.00",
+    "max_monthly_transfer_usd": "0.00",
+    "timezone": "America/New_York",
+    "missing_after_business_days": 4,
+    "schedules": []
+  }
+}
+```
+
+`timezone` and `missing_after_business_days` are fixed display fields for this release. They are returned to the dashboard but are not editable. Funding changes use one complete-object patch so the existing audit service records the complete old and new funding value rather than only the first path in a multi-patch request.
+
+| Config Path | Validation | REQ Trace |
+|-------------|------------|-----------|
+| `funding` | Complete `FundingConfig` object. Validate both booleans, non-negative decimal caps, fixed timezone and missing-day values, unique schedule IDs, complete schedule list, and no direct Polymarket entry. Defaults remain disabled with zero caps. | REQ-FND-005, REQ-FND-006, REQ-FND-013, REQ-FND-014, REQ-FND-015, REQ-FND-018, REQ-FND-019, REQ-FND-020 |
+
+The existing `ConfigService.save_config_patches` flow provides authorization, optimistic version checking, owner scope, audit fields, and next-loop visibility. The funding UI sends exactly one `replace funding` operation per save. The server resolves the sanitized account reference and display label from the latest confirmed venue account for the selected venue and provider. Exact account references, Alpaca Broker account IDs, and ACH relationship identifiers are not valid config values.
+
+### 28.2 Persistence Contracts
+
+#### `shared.venue_cash_flows`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | String UUID | No | Internal record ID |
+| `environment` | String | No | `local`, `development`, or `production` |
+| `venue` | String | No | `polymarket_us` or `alpaca` |
+| `account_ref` | String | No | Existing sanitized stable account reference |
+| `model_providers` | JSON | No | Sorted unique provider values |
+| `venue_transaction_id` | String | No | Venue activity or transaction identifier |
+| `activity_type` | String | No | Source activity type such as `CSD` or `ACCOUNT_DEPOSIT` |
+| `direction` | String | No | `deposit` or `withdrawal` |
+| `amount_usd` | Numeric(18, 8) | No | Positive absolute amount |
+| `venue_status` | String | No | Normalized `CashFlowStatus` value |
+| `effective_at` | Timestamp with timezone | No | Venue completion or effective time used for matching and returns |
+| `observed_at` | Timestamp with timezone | No | First observed time |
+| `updated_at` | Timestamp with timezone | No | Last venue update time |
+
+Unique constraint: `(environment, venue, account_ref, venue_transaction_id)`. Checks restrict venue, direction, status, and positive amount. Indexes cover `(environment, effective_at DESC)`, `(environment, account_ref, effective_at DESC)`, and completed unmatched lookup. Upsert merges `model_providers` and changes status or effective fields only when the incoming venue update time is not older than the stored update time. It never regresses a terminal state from stale data and never changes the original `observed_at`. The table has no raw-payload column.
+
+#### `shared.funding_occurrences`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | String UUID | No | Internal occurrence ID |
+| `idempotency_key` | String | No | Deterministic unique key |
+| `schedule_id` | String | No | Stable config schedule ID |
+| `config_owner`, `config_version` | String | No | Owner and version that materialized the occurrence |
+| `schedule_snapshot`, `schedule_hash` | JSON and String | No | Complete safe schedule value and deterministic hash used for pre-submit revalidation |
+| `environment`, `venue`, `model_provider`, `account_ref` | String | No | Occurrence scope; account reference is sanitized |
+| `direction`, `execution_mode`, `cadence` | String | No | Valid domain enum values |
+| `expected_amount_usd` | Numeric(18, 8) | No | Amount expected for matching |
+| `reserved_amount_usd` | Numeric(18, 8) | Yes | Monthly-cap reservation for direct mode |
+| `reserved_at` | Timestamp with timezone | Yes | Calendar-month timestamp in `America/New_York` used for cap accounting |
+| `triggering_snapshot_id`, `low_balance_episode_key` | String | Yes | Low-balance source snapshot and one episode identifier |
+| `due_at`, `match_deadline_at` | Timestamp with timezone | No | Adjusted business-day due time and inclusive matching deadline |
+| `status` | String | No | `FundingOccurrenceStatus` value |
+| `matched_cash_flow_id` | String UUID | Yes | Unique one-to-one match to `venue_cash_flows.id` |
+| `request_fingerprint` | String | Yes | SHA-256 of normalized non-secret request fields |
+| `provider_transfer_id` | String | Yes | Provider transfer reference, never an account or relationship ID |
+| `post_attempted_at` | Timestamp with timezone | Yes | Once set, another POST is forbidden |
+| `alerted_at`, `recovery_alerted_at` | Timestamp with timezone | Yes | Logical transition state |
+| `refusal_reason` | String | Yes | Bounded reason code and safe message |
+| `created_at`, `updated_at` | Timestamp with timezone | No | Audit timestamps |
+
+Foreign keys link `matched_cash_flow_id` to `venue_cash_flows.id` and alert occurrences to this table. Unique constraints cover `idempotency_key`, `matched_cash_flow_id` when non-null, and `low_balance_episode_key` when non-null. A partial unique index permits only one `(environment, venue, account_ref)` row in `reserved`, `submitted`, or `unknown`. Checks restrict enum values, require positive expected amounts, require non-negative reservations, require `reserved_at` when a reservation exists, and require `post_attempted_at` when a request fingerprint exists. Indexes cover due work, account status, monthly reservation totals, and reverse chronological dashboard reads. `unknown`, `reserved`, and `submitted` consume the pending slot and reserved monthly amount. `matched` direct transfers count toward the month identified by `reserved_at`. `refused`, `rejected`, `returned`, and `failed` release unused or failed reservations.
+
+#### `shared.funding_sync_state`
+
+Each environment, venue, and sanitized account reference has one sync-state row with `head_transaction_id`, `head_synced_at`, `coverage_through_at`, `backfill_cursor`, `backfill_complete`, `last_error_code`, and `updated_at`. A successful head sync advances `coverage_through_at` to the sync start time only after pagination reaches the previous head transaction. Missing-deposit detection requires `coverage_through_at` later than the occurrence deadline. The first historical backfill continues in bounded pages without blocking current head sync.
+
+#### `shared.funding_alert_outbox`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | String UUID | No | Delivery record ID |
+| `transition_key` | String | No | Unique environment, account hash, occurrence ID, transition tuple |
+| `occurrence_id` | String UUID | No | Funding occurrence reference |
+| `transition_type` | String | No | `failure` or `recovery` |
+| `status` | String | No | `pending`, `sent`, or `failed` |
+| `attempt_count` | Integer | No | Bounded delivery attempts |
+| `next_attempt_at`, `sent_at`, `created_at`, `updated_at` | Timestamp with timezone | Mixed | Delivery lifecycle |
+| `provider_message_id`, `error_summary` | String | Yes | Safe delivery metadata |
+
+`transition_key` is unique. The transition row commits before SES delivery, so transport retries cannot create a second logical alert.
+
+#### `class FundingRepository`
+
+- `upsert_cash_flow(flow: VenueCashFlow) -> dict[str, Any]`
+- `materialize_occurrence(occurrence: FundingOccurrence) -> dict[str, Any]`
+- `list_cash_flows(environment, *, account_ref=None, completed_only=False, cursor=None, limit=100) -> FundingPage`
+- `list_occurrences(environment, *, statuses=None, cursor=None, limit=100) -> FundingPage`
+- `match_occurrence_if_open(occurrence_id, cash_flow_id) -> dict[str, Any]`
+- `claim_direct_submission(occurrence_id, request_fingerprint) -> FundingSubmissionClaim`
+- `record_transfer_result(occurrence_id, provider_transfer_id, status, error_summary=None) -> dict[str, Any]`
+- `enqueue_alert(occurrence_id, transition_type) -> dict[str, Any]`
+
+`claim_direct_submission` runs in one transaction under a Postgres advisory transaction lock derived from environment, venue, and account reference. It reloads the active config for the stored `config_owner`, verifies that the schedule still exists, is enabled, retains the same critical fields and hash, and belongs to that owner. It resolves the current venue and provider selector from the latest confirmed account map and requires that account reference to equal the occurrence account reference. It reloads the kill-switch row, counts reserved, unknown, submitted, and matched direct amounts by `reserved_at` in the current `America/New_York` calendar month, confirms there is no pending occurrence for the account, and uses a conditional update with `post_attempted_at IS NULL` to set the reservation, `reserved_at`, request fingerprint, `post_attempted_at`, and `reserved` state. Before this claim, the secret-resolved Broker account ID is normalized with the same `_account_ref` function used by portfolio reconciliation and must also equal the occurrence account reference. Either mismatch records `BROKER_ACCOUNT_MISMATCH` and no external call. The claim transaction commits before the network call. A second transaction records the provider response. Persistence failure or a lost compare-and-set claim returns a refusal and no external call is made.
+
+Matching, missing transitions, terminal transfer updates, and alert enqueue operations use compare-and-set predicates on the current state. They cannot replace an existing cash-flow match, reuse a matched cash flow, or regress a terminal occurrence.
+
+### 28.3 Venue Activity Sources
+
+#### Alpaca Trading API reads
+
+`ProviderBackedVenuePortfolioSource` adds paginated funding activity reads next to the existing `FILL` activity read:
+
+- `CSD` maps to a completed `deposit` because Alpaca emits it as a settled account-activity record without a separate status field.
+- `CSW` maps to a completed `withdrawal` because Alpaca emits it as a settled account-activity record without a separate status field.
+- `TRANS` is accepted only when its documented subtype or signed net amount determines deposit versus withdrawal. Ambiguous rows are skipped with a bounded reconciliation warning.
+- Each activity ID is the venue transaction ID.
+- A date-only CSD or CSW `date` is normalized to 09:00 `America/New_York` on that activity date and tagged with `effective_time_precision=date`; a timestamp retains its exact instant.
+- For other activity shapes, completed, executed, or settled maps to `completed`; pending maps to `pending`; rejected, returned, failed, and canceled retain their terminal meanings; unknown source statuses map to `unknown`.
+
+Pagination uses `page_size=100`, descending direction, last activity ID token, duplicate-ID guard, a maximum of 20 current-head pages plus 20 backfill pages per tick, persisted sync state, and bounded request timeout. Current-head pagination stops when it reaches the prior head ID. Initial history continues from `backfill_cursor` on later ticks until complete. The source emits only normalized allowlisted fields.
+
+#### Polymarket US reads
+
+The existing portfolio activity pagination expands its activity-type filter to include `ACCOUNT_DEPOSIT`, `ACCOUNT_ADVANCED_DEPOSIT`, `ACCOUNT_WITHDRAWAL`, and `TRANSFER` in addition to trade and resolution types. Funding normalization reads only `transactionId`, status, amount, create time, update time, and documented direction or activity type from `accountBalanceChange`. Deposit activity maps to `deposit`; withdrawal activity maps to `withdrawal`; ambiguous transfers are skipped with a warning. Current-head and historical backfill use the same 20-page bounds and persisted sync-state rules as Alpaca. No Polymarket funding-write adapter exists.
+
+#### `class AlpacaBrokerFundingAdapter(FundingTransferPort)`
+
+- `submit_incoming_ach(request: DirectFundingRequest) -> DirectFundingResult`
+- `get_transfer(provider_transfer_id: str) -> DirectFundingResult`
+- `find_transfer_candidates(request: UnknownTransferQuery) -> list[DirectFundingResult]`
+
+The adapter resolves `ALPACA_{PROVIDER}_BROKER_API_KEY`, `ALPACA_{PROVIDER}_BROKER_API_SECRET`, `ALPACA_{PROVIDER}_BROKER_ACCOUNT_ID`, and `ALPACA_{PROVIDER}_ACH_RELATIONSHIP_ID` from the runtime secret source at call time. It sends one Broker API request to `/v1/accounts/{account_id}/transfers` with incoming ACH direction, positive decimal amount, and the approved relationship ID. The local request fingerprint is not sent to Alpaca.
+
+The documented Broker API exposes an account transfer list rather than a single-transfer GET. `get_transfer` pages that list and filters by provider transfer ID. For an occurrence without a provider ID, `find_transfer_candidates` filters the bounded account transfer list by incoming direction, exact amount, the relationship ID resolved at query time, and creation time from five minutes before `post_attempted_at` through one hour after it. Exactly one candidate may reconcile the occurrence. Zero or multiple candidates leave it `unknown` for operator review. Logs contain correlation ID, occurrence ID, provider, environment, amount, HTTP status, and bounded error class only. Request bodies and secret identifiers are never logged or persisted.
+
+### 28.4 Funding Service
+
+#### `class FundingService`
+
+- `reconcile_after_portfolio_refresh(environment, config_snapshot, portfolio_summary) -> FundingRunResult`
+- `materialize_due_occurrences(environment, config_snapshot, now=None) -> list[FundingOccurrence]`
+- `reconcile_occurrences(environment, now=None) -> FundingReconciliationResult`
+- `submit_due_direct_occurrences(environment) -> FundingSubmissionResult`
+- `summary(environment) -> FundingSummary`
+- `cash_flow_adjusted_performance(environment, start_at, end_at, beginning_value, ending_value) -> CashFlowAdjustedPerformance`
+
+#### Reconciliation flow
+
+1. Portfolio account reads emit normalized cash flows and `VenuePortfolioService` upserts them in the same account transaction as the confirmed account snapshot.
+2. Under the funding Postgres job lock, the runtime service resolves one current owner-specific config snapshot. Weekly and monthly materialization runs for every enabled schedule even when the latest portfolio refresh failed.
+3. For weekly and monthly schedules, calculate every adjusted due time later than the last materialized due time and not later than `now`. For an empty history, materialize only the most recent due occurrence so enabling a schedule does not backfill an unlimited history.
+4. Low-balance evaluation runs only for an account with a fresh successful snapshot. A below-target episode begins when confirmed buying power crosses from at or above target to below target, or when no prior episode exists. Its key is the schedule ID plus the last at-or-above-target snapshot ID. One occurrence uses the first below-target snapshot ID and its observed time as `triggering_snapshot_id` and `due_at`. While balance stays below target, no second occurrence is created even when the first is refused, missing, submitted, or terminal. A later successful snapshot at or above target rearms the schedule for a future crossing.
+5. The low-balance expected gap is `max(0, target_balance - buying_power)`, capped by a positive schedule amount when supplied. At claim time, when the per-transfer limit and remaining monthly limit are both positive, its submitted amount is `min(expected gap, schedule cap when present, per-transfer limit, remaining monthly limit)`. A zero per-transfer, zero monthly, or non-positive remaining monthly limit does not reduce the occurrence to zero; it records one limit refusal under REQ-FND-014 and makes no external call. Fixed weekly and monthly direct occurrences are never partially funded: if the complete expected amount exceeds either positive limit or the remaining monthly limit, the occurrence is refused.
+6. Materialize with the deterministic key plus `config_owner`, `config_version`, safe schedule snapshot, and schedule hash. A uniqueness conflict returns the existing row.
+7. Query completed, unmatched cash flows and open observe or direct occurrences. The match amount is `reserved_amount_usd` for a claimed direct occurrence and `expected_amount_usd` for observe-only or unclaimed occurrences. Match one-to-one by account, direction, amount difference at most `0.01`, and `effective_at` in `[due_at, match_deadline_at]`. Do not guess when more than one candidate remains after deterministic ordering; leave the occurrence open and emit a warning.
+8. After `match_deadline_at`, mark an unmatched occurrence `missing` only when that account's successful funding sync has `coverage_through_at > match_deadline_at`. An unavailable or incomplete activity sync delays the missing decision and reports degraded coverage. A later completed match changes a missing occurrence to `matched` and enqueues one recovery transition.
+9. At tick or startup, atomically move any `reserved` row with `post_attempted_at` set to `unknown` before reconciliation. Reconcile submitted or unknown direct transfers by provider transfer ID or conservative transfer-list candidate matching. Never issue another POST for an occurrence with `post_attempted_at`.
+
+#### Business-day calculation
+
+Pure functions in `funding_service.py` use `zoneinfo.ZoneInfo("America/New_York")`, Python calendar utilities, and an internal United States federal-holiday calculator with observed-day rules. A weekly schedule uses ISO weekday. A monthly schedule uses the configured day or the month end when shorter. The local due time is 09:00 and converts to UTC after daylight-saving rules. Weekend or federal-holiday due dates move forward one day at a time. `add_business_days(due_at, 4)` produces the inclusive match deadline at the due local time.
+
+#### Direct submission state machine
+
+```text
+expected
+   |
+   | account lock + current control checks + cap reservation
+   v
+reserved
+   |
+   | committed request fingerprint and post_attempted_at; then one POST
+   v
+submitted ---- venue completed cash flow ----> matched
+   |
+   +---- ambiguous response ----> unknown ---- reconciliation only ----> matched or terminal
+   +---- rejected -------------> rejected
+   +---- returned -------------> returned
+   +---- failed ---------------> failed
+
+Any failed pre-submit check: expected -> refused, with no Broker API call.
+```
+
+Immediately before the POST, `claim_direct_submission` holds the account advisory lock, reloads the active config for the stored owner and the global kill-switch state, and revalidates the originating schedule against the stored snapshot and hash. It verifies persistence, confirms the schedule still exists and is enabled, confirms direct transfers enabled, confirms funding emergency stop inactive, confirms nonzero limits, confirms the Broker secret bundle is complete, confirms no other pending or unknown transfer, and calculates the current monthly total including reservations and matched direct transfers.
+
+For low-balance cadence, the conditional claim calculates the submitted amount using the current positive transfer and remaining monthly caps. For weekly and monthly cadence, it requires the full expected amount to fit all current limits. It reserves the submitted amount and persists `reserved_at`, request fingerprint, and `post_attempted_at` only where `post_attempted_at IS NULL`. This first transaction commits before the network call. Only the process that receives the claim may issue the single POST. A second transaction records a success, terminal response, or `unknown` result. A crash after the claim but before the call leaves a `reserved` occurrence that the next tick moves to `unknown` before reconciliation. It can require operator resolution, but it cannot issue a duplicate POST. An ambiguous response retains the pending slot and amount reservation until venue reconciliation proves a terminal state.
+
+#### Cash-flow-adjusted performance
+
+Only completed cash flows with `effective_at` in the selected interval are included. Deposits have positive `CF`; withdrawals have negative `CF`.
+
+```text
+adjusted_pnl = EMV - BMV - sum(CF)
+w_i = (period_end - cash_flow_time_i) / (period_end - period_start)
+modified_dietz = adjusted_pnl / (BMV + sum(w_i * CF_i))
+```
+
+If the interval is empty or the denominator is zero or negative, `modified_dietz` is null with `returnUnavailableReason`. Calculations use `Decimal` and do not use pending, unknown, rejected, returned, failed, or canceled flows.
+
+### 28.5 API and Dashboard Contracts
+
+#### Endpoint contracts
+
+| Method | Endpoint | Request | Response | Status Codes | REQ Trace |
+|--------|----------|---------|----------|--------------|-----------|
+| `GET` | `/api/funding` | `environment`, `start_at`, `end_at`, optional cash-flow and occurrence cursors, `limit` | `FundingSummaryResponse` | 200, 401, 403, 422, 503 | REQ-FND-004, REQ-FND-010, REQ-FND-011, REQ-FND-012 |
+| `POST` or `PUT` | `/api/config` | one versioned `replace funding` patch | existing `ConfigUpdateResponse` | 200, 401, 403, 409, 422, 503 | REQ-FND-019 |
+
+The requested interval is half-open `[start_at, end_at)` and cannot exceed one year; the default is trailing 30 days ending at request time. The calculation boundaries are the requested times rounded inward to minute buckets. For each deduplicated account, beginning value is the nearest confirmed snapshot to the calculation start and ending value is the nearest confirmed snapshot to the calculation end, with each no more than two configured portfolio-refresh intervals from its boundary. An account without both fresh boundary snapshots returns unavailable performance with a reason and is excluded from aggregate Modified Dietz. Cash-flow inclusion and weights use the shared calculation boundaries, never the raw timestamps of older snapshots. Aggregate beginning and ending values sum eligible account snapshots, and aggregate cash flows include only those eligible accounts. The response includes `calculationStartAt`, `calculationEndAt`, and each selected snapshot time so the approximation is visible. Overall and per-account adjusted results are returned separately so missing account history is visible.
+
+Both lists use opaque base64 cursor values built from `(effective_or_due_at, id)`, descending stable order, and a limit from 1 through 100. The response contains independent `cashFlowsNextCursor` and `occurrencesNextCursor` fields. Repository methods accept and apply the decoded cursor predicates.
+
+`FundingSummaryResponse` contains `environment`, `startAt`, `endAt`, `calculationStartAt`, `calculationEndAt`, `generatedAt`, `settings`, `totals`, `performance`, `accountPerformance`, `cashFlows`, `cashFlowsNextCursor`, `occurrences`, `occurrencesNextCursor`, and `degradedSections`. `performance` and each account result include selected beginning and ending snapshot times and values, completed deposit total, completed withdrawal total, adjusted P&L, Modified Dietz return, and unavailable reason. `settings` contains safe booleans, limits, timezone, missing-day policy, and schedules with display labels resolved by the server. `cashFlows` contains venue, provider labels, direction, amount, status, activity type, and timestamps. `occurrences` contains schedule label, venue, provider, direction, mode, `expectedAmountUsd`, `submittedAmountUsd` when claimed, status, due, deadline, matched time, safe refusal reason, and alert state. The UI labels both values when a low-balance refill was capped. Raw account references, exact Broker account IDs, ACH relationship IDs, credentials, request fingerprints, and unredacted provider data are excluded by response schemas rather than post-serialization filtering.
+
+#### Performance UI
+
+`funding-history.tsx` renders:
+
+- completed deposits and withdrawals;
+- expected, matched, missing, refused, unknown, and terminal direct occurrences;
+- amount, venue, model provider, safe account label, due/effective/update timestamps, and alert state;
+- completed deposit and withdrawal totals for the selected performance period;
+- adjusted trading P&L and Modified Dietz return with a short formula disclosure;
+- an unavailable state when the weighted denominator or data is insufficient.
+
+Rows are keyboard reachable, status is not color-only, money and timestamps use existing formatters, and mobile layout does not require horizontal page scrolling.
+
+#### Settings UI
+
+`funding-settings.tsx` reuses the existing config version and mutation path. Operators can add, edit, enable, disable, or remove weekly, monthly, and low-balance schedules and can change the direct-transfer toggle, zero-based limits, and funding emergency stop. The UI states that bank connections remain venue-managed, Plaid is not required, Polymarket is observe-only, and exact Broker references must be provisioned outside the dashboard. Direct mode displays a warning and stays unusable while either limit is zero. Each save sends one `replace funding` patch, one reason, and the complete funding object so validation and audit cannot leave or record a partial schedule.
+
+### 28.6 Scheduler and Runtime Integration
+
+The existing `_portfolio_refresh_loop` remains the single recurring hook. It acquires a session-scoped nonblocking Postgres `pg_try_advisory_lock` on a dedicated connection, scoped by environment, before funding work. It does not open a transaction across venue calls. If another backend task holds the lock, the tick skips funding without error. A `finally` block releases the session lock and closes the connection. Account submission claims continue to use short transaction-scoped advisory locks. Each acquired tick:
+
+1. refreshes confirmed venue account snapshots, positions, fills, and funding activity;
+2. returns a success map per resolved account;
+3. resolves the current scheduler config owner and one config snapshot;
+4. materializes weekly and monthly schedules for all configured accounts, independent of refresh success;
+5. evaluates low-balance schedules only for accounts with successful confirmed refreshes;
+6. reconciles cash flows and direct transfer states for accounts with successful funding-activity coverage, and delays missing transitions for accounts without coverage through the deadline;
+7. continues read-only reconciliation and alerts when direct transfers are stopped;
+8. records funding counts, coverage state, and safe error codes in the portfolio refresh heartbeat;
+9. releases the funding job lock at transaction or run completion.
+
+The loop catches funding failures per account so one unavailable venue does not erase another account's confirmed data. Persistence unavailable blocks occurrence materialization and direct submission. Direct submission is not part of API request handling.
+
+### 28.7 Infrastructure and Secret Boundaries
+
+CloudFormation adds optional Secrets Manager JSON keys or task secret references for each model provider:
+
+- `ALPACA_OPENAI_BROKER_API_KEY`
+- `ALPACA_OPENAI_BROKER_API_SECRET`
+- `ALPACA_OPENAI_BROKER_ACCOUNT_ID`
+- `ALPACA_OPENAI_ACH_RELATIONSHIP_ID`
+- `ALPACA_CLAUDE_BROKER_API_KEY`
+- `ALPACA_CLAUDE_BROKER_API_SECRET`
+- `ALPACA_CLAUDE_BROKER_ACCOUNT_ID`
+- `ALPACA_CLAUDE_ACH_RELATIONSHIP_ID`
+
+They follow `/codex-poly-bot/{environment}/alpaca/{model_provider}/{secret_name}` and existing environment-scoped IAM rules. Templates do not require values for deployment. Missing values leave direct transfers blocked and visible as incomplete. Development and production references remain separate. No Plaid secret, routing number, or bank-account field is added.
+
+Production deploy verification confirms database migration success, `GET /health`, sanitized `GET /api/funding`, default `direct_transfers_enabled=false`, both limits `0.00`, and no direct-transfer POST. A real bank transfer is not a deployment smoke test.
+
+### 28.8 Edge Cases and Error Handling
+
+| # | Scenario | Expected Behavior | REQ Trace |
+|---|----------|-------------------|-----------|
+| 1 | Same account appears under OpenAI and Claude credentials | One cash flow row; sorted provider set includes both | REQ-FND-003 |
+| 2 | Worker restarts after a due time | Most recent due occurrence materializes once through deterministic key | REQ-FND-007 |
+| 3 | Monthly day 31 in February | Due date uses February month end, then business-day adjustment | REQ-FND-005 |
+| 4 | Daylight-saving boundary | Local 09:00 remains stable; UTC value changes through `ZoneInfo` | REQ-FND-005 |
+| 5 | Same-amount deposits overlap | Match only when one candidate remains; otherwise keep unmatched | REQ-FND-008 |
+| 6 | Deposit arrives after missing transition | Match it and enqueue one recovery event | REQ-FND-009 |
+| 7 | Direct mode requested for Polymarket | Reject config with 422; no write adapter exists | REQ-FND-020 |
+| 8 | Direct transfers enabled but either cap is zero | Persist refusal before adapter call | REQ-FND-014 |
+| 9 | Kill switch activates before submission guard | Current-state recheck blocks and records refusal | REQ-FND-018 |
+| 10 | Broker POST times out | Mark `unknown`, retain slot and reservation, never POST again | REQ-FND-016 |
+| 11 | Broker returns rejected, returned, or failed | Persist terminal status, release failed reservation, alert once, require new occurrence | REQ-FND-017 |
+| 12 | Raw activity contains a new bank field | Persistence and API allowlists ignore it; raw payload is not stored | REQ-FND-002 |
+| 13 | Beginning value plus weighted cash flows is non-positive | Adjusted P&L remains available; percentage return is unavailable | REQ-FND-012 |
+| 14 | Notification delivery is uncertain | Retry the same outbox row; do not create another transition | REQ-FND-009 |
+| 15 | Schedule is disabled, removed, changes owner, or changes critical fields after materialization | Pre-submit snapshot/hash revalidation refuses the occurrence before the claim | REQ-FND-014, REQ-FND-019 |
+| 16 | Low balance remains below target across refreshes | One episode and occurrence exist until a confirmed at-or-above-target snapshot rearms it | REQ-FND-006, REQ-FND-007 |
+| 17 | Activity API is unavailable after the matching deadline | Do not mark missing until successful sync coverage advances past the deadline | REQ-FND-008, REQ-FND-009 |
+| 18 | Process crashes after durable claim and before Broker POST | On restart mark or retain unknown, reconcile only, and never POST the occurrence again | REQ-FND-016 |
+| 19 | Older venue state arrives after a terminal state | Reject the stale regression by venue update time and state precedence | REQ-FND-003, REQ-FND-017 |
+| 20 | Funding history exceeds one refresh page budget | Persist head and backfill cursors, continue later, and keep current sync bounded | REQ-FND-004 |
+| 21 | Broker account secret resolves to a different account than the occurrence | Refuse with `BROKER_ACCOUNT_MISMATCH` before claim or POST | REQ-FND-014, REQ-FND-015 |
+| 22 | Boundary portfolio snapshots are too old | Return adjusted performance unavailable instead of mixing valuation and cash-flow periods | REQ-FND-011, REQ-FND-012 |
+| 23 | Another task holds the funding run lock | Skip the run without opening a long database transaction | REQ-FND-007, REQ-FND-016 |
+| 24 | Low-balance gap is larger than the submitted capped amount | Match the completed cash flow to `reserved_amount_usd` and show both expected and submitted values | REQ-FND-006, REQ-FND-008 |
+| 25 | Fixed weekly or monthly amount exceeds a positive cap | Refuse the occurrence; do not submit a partial fixed deposit | REQ-FND-014, REQ-FND-015 |
+| 26 | Provider credential rotation changes the resolved account | Current selector and Broker account checks refuse the stale occurrence | REQ-FND-014, REQ-FND-015 |
+
+| Error Condition | Source | Handling Strategy | User-Visible? |
+|----------------|--------|-------------------|---------------|
+| Venue activity read fails | Polymarket or Alpaca Trading API | Keep last confirmed rows, mark account funding section degraded, retry next refresh | Yes |
+| Broker secret bundle missing | Secret source | Refuse direct occurrence before POST with safe reason code | Yes |
+| Persistence or lock unavailable | Postgres | Block materialization and transfer, keep read model degraded | Yes |
+| Broker HTTP 4xx terminal response | Alpaca Broker API | Persist safe terminal status and enqueue failure transition | Yes |
+| Broker timeout or ambiguous 5xx | Alpaca Broker API | Persist `unknown`, retain reservations, reconcile only | Yes |
+| Config schedule invalid | Config service | Reject entire versioned patch with 422 and no write | Yes |
+| Alert transport fails | SES | Keep occurrence state, retry existing outbox row with capped backoff | Yes |
+
+### 28.9 Non-Functional Requirements and Integration Points
+
+| NFR | Requirement | How Addressed |
+|-----|-------------|---------------|
+| Safety | No unintended or duplicate transfer | Disabled zero defaults, one-POST rule, account routing equality, account lock, current control read, durable reservation |
+| Accuracy | Funding does not inflate trading return | Completed-flow ledger, adjusted P&L, Modified Dietz, deterministic time weights |
+| Privacy | No bank or exact relationship data in app storage or UI | Secret-source-only exact IDs, normalized persistence allowlist, response schema allowlist |
+| Auditability | Schedule and control changes attributable | Existing owner config versions and audit service; durable occurrence transitions |
+| Reliability | Downtime and transport uncertainty recover safely | Catch-up materialization, idempotency keys, unknown reconciliation state, outbox |
+| Performance | Portfolio refresh remains bounded | 100-row pages, 20-page head and backfill limits, persisted watermarks, indexed reads, 100-row dashboard pages |
+
+| Direction | Module | Interface Used | Data Exchanged |
+|-----------|--------|----------------|----------------|
+| Imports | Venue portfolio source | Normalized cash flows and successful account snapshots | Safe venue activity |
+| Imports | Config and kill-switch services | Current owner config and immediate global stop | Safety controls |
+| Imports | Secret source | Broker credentials and exact relationship references | Call-time secrets only |
+| Imports | Alpaca Broker API | Transfer POST and status reads | Direct transfer state |
+| Imports | SES adapter | Existing delivery method | Funding alert messages |
+| Exports to | Portfolio service | Completed cash-flow adjustment | Adjusted P&L and return |
+| Exports to | Dashboard API | Sanitized funding summary | History and settings state |
+| Exports to | Worker loop | Funding run counts and safe errors | Heartbeat metadata |
+
+### 28.10 Open Questions and Assumptions
+
+| # | Question or Assumption | Impact if Wrong | Status |
+|---|------------------------|-----------------|--------|
+| 1 | Weekly and monthly funding is due at 09:00 `America/New_York`; banking weekends and federal holidays move forward. | A different operator schedule requires a later editable-time requirement. | APPROVED ASSUMPTION |
+| 2 | Four business days is the missing-deposit window and `0.01 USD` is the amount tolerance. | Different settlement terms require config expansion. | APPROVED ASSUMPTION |
+| 3 | Alpaca Broker API entitlement and approved ACH relationships are provisioned outside the app. | Direct mode remains safely blocked until provisioned. | OPERATIONAL ASSUMPTION |
+| 4 | Polymarket US exposes read-only funding activity but no entitled direct funding write in scope. | A documented write API would need a new adapter and safety review. | CURRENT API BOUNDARY |
