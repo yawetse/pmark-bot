@@ -1835,6 +1835,6 @@
 | AC-050-11 | If a corporate action creates fractional short quantity that the supported broker path cannot close exactly, automation shall not round down and shall surface an operator action. |
 
 **Definition of Done:**
-- [ ] Short adapter, execution, reconciliation, lifecycle, config, dashboard, and regression tests pass
-- [ ] Paper-account order verification uses a reversible non-marketable order or documented test-only alternative; no live short order is placed
-- [ ] Development and production deployments are verified and evidence is attached to issue 245
+- [x] Short adapter, execution, reconciliation, lifecycle, config, dashboard, and regression tests pass
+- [x] Paper-account order verification uses a documented test-only transport; no paper or live short order was placed
+- [x] Development and production deployments are verified and evidence is attached to issue 245
