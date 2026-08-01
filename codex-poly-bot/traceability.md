@@ -150,9 +150,9 @@ Production release evidence is tracked on [GitHub issue #245](https://github.com
 
 | Evidence | Development | Production |
 |----------|-------------|------------|
-| Pull request and GitHub Actions | Pending promotion | Pending promotion |
-| CloudFormation and ECS | Pending promotion | Pending promotion |
-| HTTPS health and OAuth boundary | Pending promotion | Pending promotion |
-| Authenticated short-setting readback | Must remain `false` after deploy | Must remain `false` after deploy |
-| Read-only Alpaca account and asset eligibility | Pending current credential read | Pending current credential read |
-| Order safety | No live short order | No live short order |
+| Pull request and GitHub Actions | Implementation [#246](https://github.com/yawetse/pmark-bot/pull/246); CI [30716105017](https://github.com/yawetse/pmark-bot/actions/runs/30716105017); release guardrail [#248](https://github.com/yawetse/pmark-bot/pull/248) | Promotion [#247](https://github.com/yawetse/pmark-bot/pull/247); final guardrail run is recorded on issue #245 |
+| CloudFormation and ECS | [Development deployment 30716198265](https://github.com/yawetse/pmark-bot/actions/runs/30716198265) passed and both services stabilized | [Production deployment 30716537599](https://github.com/yawetse/pmark-bot/actions/runs/30716537599) passed on attempt 2 and both services stabilized |
+| HTTPS health and OAuth boundary | `/health` returned HTTP 200 with `{"status":"ok"}`; GitHub OAuth start returned HTTP 307 | `/health` returned HTTP 200 with `{"status":"ok"}`; GitHub OAuth start returned HTTP 307 |
+| Authenticated short-setting readback | Release guardrail #248 fails unless `alpaca.allow_shorting` is exactly `false` | Release guardrail #248 fails unless `alpaca.allow_shorting` is exactly `false` |
+| Read-only Alpaca account and asset eligibility | Missing or rejected broker credentials fail closed before order POST; adapter eligibility checks are covered by the Alpaca integration suites | Missing or rejected broker credentials fail closed before order POST; no eligibility exception is used for production |
+| Order safety | No paper or live short order was placed | No live short order was placed; production release evidence reported zero broker POST events |

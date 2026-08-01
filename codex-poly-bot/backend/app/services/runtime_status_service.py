@@ -461,6 +461,7 @@ class RuntimeStatusService:
         alpaca_payload = {
             "account_mode": self.settings.trading_account_mode,
             "account_status": self.settings.alpaca_account_status,
+            "allow_shorting": False,
             "symbol_universe": list(
                 getattr(self.settings, "alpaca_symbol_universe", DEFAULT_ALPACA_SYMBOL_UNIVERSE)
             ),
