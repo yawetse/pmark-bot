@@ -109,7 +109,7 @@ def _cash_flow(
 
 
 def test_req_fnd_001_03_venue_activity_is_normalized_without_ambiguous_transfers() -> None:
-    """TST-REQ-FND-001-03, TST-REQ-FND-001-04: documented cash activity is normalized."""
+    """TST-REQ-FND-001-03, TST-REQ-FND-001-04, TST-REQ-FND-002-03: normalize activity."""
 
     alpaca = normalize_alpaca_funding_activity(
         {
@@ -381,8 +381,8 @@ def test_req_fnd_004_03_polymarket_head_sync_precedes_backfill_and_coverage() ->
     assert persisted["coverage_through_at"] == NOW
 
 
-def test_req_fnd_002_03_direct_and_portfolio_account_refs_are_identical() -> None:
-    """TST-REQ-FND-002-03: direct funding binds to the confirmed portfolio identity."""
+def test_direct_and_portfolio_account_refs_are_identical() -> None:
+    """Direct funding binds to the confirmed portfolio identity."""
 
     assert funding_account_ref(Venue.ALPACA, "account-123") == _account_ref(
         Venue.ALPACA,
@@ -1134,6 +1134,12 @@ def test_req_fnd_009_04_alert_delivery_retries_then_marks_sent() -> None:
     assert sent["delivery_status"] == "sent"
     assert sent["attempt_count"] == 2
     assert sent["provider_message_id"] == "ses-message-1"
+    repository.set_sync_state(
+        environment=Environment.DEVELOPMENT,
+        venue=Venue.ALPACA,
+        account_ref=ACCOUNT_REF,
+        coverage_through_at=NOW,
+    )
     heartbeat = service.run_tick(
         environment=Environment.DEVELOPMENT,
         config=FundingConfig(),
@@ -1142,7 +1148,14 @@ def test_req_fnd_009_04_alert_delivery_retries_then_marks_sent() -> None:
         kill_switch_active=False,
         now=NOW + timedelta(hours=1),
     )
-    assert heartbeat["fundingAlertCounts"]["sent"] == 1
+    assert heartbeat["fundingAccountCount"] == 1
+    assert heartbeat["fundingCoverageThroughAt"] == NOW.isoformat()
+    assert heartbeat["fundingAlertCounts"] == {
+        "pending": 0,
+        "sending": 0,
+        "failed": 0,
+        "sent": 1,
+    }
 
 
 def test_req_fnd_009_04_alert_delivery_caps_attempts_and_backoff() -> None:
