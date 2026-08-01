@@ -78,7 +78,7 @@
 | TST-REQ-ALP-015-01 | Focus | REQ-ALP-015 | Given Alpaca market data is unavailable, rate-limited, stale, or outside configured trading hours, When live order checks run, Then the order is blocked and the reason is recorded. |
 | TST-REQ-ALP-015-02 | Focus | REQ-ALP-015 | Given Alpaca data is unavailable, stale, rate-limited, or outside trading hours, When live order checks run, Then affected live orders are blocked and the refusal reason is recorded. |
 | TST-REQ-ALP-016-01 | Happy | REQ-ALP-016 | Given distinct Alpaca account identifiers for each model in the same environment and mode, When duplicate checks run, Then Alpaca live trading remains eligible. |
-| TST-REQ-ALP-016-02 | Edge | REQ-ALP-016 | Given two model providers resolve to the same Alpaca account identifier in the same environment and mode, When checks run, Then live trading is blocked for the duplicate account. |
+| TST-REQ-ALP-016-02 | Edge | REQ-ALP-016 | Given two model providers resolve to the same Alpaca account identifier in the same environment and mode, When checks run, Then the account is quarantined and live routing is blocked for both providers. |
 | TST-REQ-ALP-017-01 | Happy | REQ-ALP-017 | Given Alpaca and Postgres agree on positions, open orders, and buying power, When reconciliation runs, Then Alpaca live orders may proceed to remaining checks. |
 | TST-REQ-ALP-017-02 | Edge | REQ-ALP-017 | Given reconciliation has not completed, When Alpaca live execution is requested, Then the order is blocked. |
 | TST-REQ-ALP-017-03 | Focus | REQ-ALP-017 | Given Alpaca account mode is configured with account and portfolio state, When live eligibility checks run, Then account ID, status, positions, open orders, and buying power are validated first. |
@@ -562,7 +562,7 @@
 | REQ-ALP-022 | TST-REQ-ALP-022-01, TST-REQ-ALP-022-02 |
 | REQ-ALP-023 | TST-REQ-ALP-023-01, TST-REQ-ALP-023-02 |
 | REQ-ALP-024 | TST-REQ-ALP-024-01, TST-REQ-ALP-024-02 |
-| REQ-ALP-025 | TST-REQ-ALP-025-01, TST-REQ-ALP-025-02 |
+| REQ-ALP-025 | TST-REQ-ALP-025-01, TST-REQ-ALP-025-02, TST-REQ-ALP-025-03 |
 | REQ-ALP-026 | TST-REQ-ALP-026-01, TST-REQ-ALP-026-02 |
 | REQ-DAT-001 | TST-REQ-DAT-001-01, TST-REQ-DAT-001-02 |
 | REQ-DAT-002 | TST-REQ-DAT-002-01, TST-REQ-DAT-002-02 |

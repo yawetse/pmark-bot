@@ -106,7 +106,7 @@ const METHOD_STEPS: MethodStep[] = [
       {
         name: "Stock universe",
         description:
-          "Limit Alpaca candidates to the configured long-only stock and ETF universe.",
+          "Limit Alpaca candidates to the configured stock and ETF universe.",
       },
     ],
     decisionRule:
@@ -193,7 +193,7 @@ const METHOD_STEPS: MethodStep[] = [
       {
         name: "Stock and ETF signal",
         description:
-          "Evaluate price action, volume, event context, liquidity, account state, and long-only constraints for Alpaca.",
+          "Evaluate price action, volume, event context, liquidity, account state, direction, and borrow eligibility for Alpaca.",
       },
     ],
     decisionRule:
@@ -224,7 +224,7 @@ const METHOD_STEPS: MethodStep[] = [
       {
         name: "Cumulative risk limits",
         description:
-          "Apply position, daily-loss, allocation, open-position, market-hours, and long-only limits together.",
+          "Apply position, daily-loss, allocation, open-position, market-hours, direction, and borrow limits together.",
       },
       {
         name: "Slippage protection",

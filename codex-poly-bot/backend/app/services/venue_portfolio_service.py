@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.db import PersistenceUnavailableError, RepositoryRegistry
+from app.db import AlpacaReconciliationSnapshot, PersistenceUnavailableError, RepositoryRegistry
 from app.db.schema import SHARED_SCHEMA
 from app.domain import Environment, ModelProvider, Venue, VenueCashFlow
 from app.services.funding_service import (
@@ -37,6 +37,15 @@ PORTFOLIO_FILL_ROW_LIMIT = 2_000
 PORTFOLIO_RECENT_FILL_LIMIT = 50
 PORTFOLIO_HISTORY_BUCKET_LIMIT = 60
 PORTFOLIO_PAGE_SIZE = 100
+TERMINAL_LOCAL_ORDER_STATUSES = {"refused", "simulated", "filled", "canceled", "failed"}
+ALPACA_TERMINAL_ORDER_STATUS_MAP = {
+    "filled": "filled",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+    "expired": "canceled",
+    "replaced": "canceled",
+    "rejected": "failed",
+}
 
 
 class VenuePortfolioSource(Protocol):
@@ -529,6 +538,32 @@ class ProviderBackedVenuePortfolioSource:
                         "Alpaca positions",
                     )
                 )
+                raw_open_orders = _items(
+                    _response_json(
+                        client.get(
+                            f"{base_url}/v2/orders",
+                            headers=headers,
+                            params={"status": "open", "limit": "500"},
+                        ),
+                        "Alpaca open orders",
+                    )
+                )
+                raw_closed_orders = _items(
+                    _response_json(
+                        client.get(
+                            f"{base_url}/v2/orders",
+                            headers=headers,
+                            params={"status": "closed", "limit": "500", "direction": "desc"},
+                        ),
+                        "Alpaca closed orders",
+                    )
+                )
+                market_clock = _response_json(
+                    client.get(f"{base_url}/v2/clock", headers=headers),
+                    "Alpaca market clock",
+                )
+                if not isinstance(market_clock, dict):
+                    raise ValueError("Alpaca market clock response is invalid")
                 raw_fills = self._alpaca_fills(client, base_url=base_url, headers=headers)
                 portfolio_history = self._alpaca_portfolio_history(
                     client,
@@ -536,7 +571,9 @@ class ProviderBackedVenuePortfolioSource:
                     headers=headers,
                     account=account,
                 )
-            account_id = str(_field(account, "id") or key_id)
+            account_id = str(_field(account, "id") or "").strip()
+            if not account_id:
+                raise ValueError("Alpaca account identity is unavailable")
             account_ref = _account_ref(Venue.ALPACA, account_id)
             cash_flows, funding_status = self._alpaca_funding_activity(
                 base_url=base_url,
@@ -563,6 +600,27 @@ class ProviderBackedVenuePortfolioSource:
                 "status": "ready",
                 "venue": Venue.ALPACA.value,
                 "provider": provider.value,
+                "_accountId": account_id,
+                "_accountStatus": str(_field(account, "status") or "unknown"),
+                "_openOrderIds": [
+                    str(_field(order, "id") or _field(order, "client_order_id") or "").strip()
+                    for order in raw_open_orders
+                    if str(_field(order, "id") or _field(order, "client_order_id") or "").strip()
+                ],
+                "_orderStates": {
+                    identifier: str(_field(order, "status") or "").strip().lower()
+                    for order in raw_closed_orders
+                    for identifier in (
+                        str(_field(order, "id") or "").strip(),
+                        str(_field(order, "client_order_id") or "").strip(),
+                    )
+                    if identifier
+                },
+                "_marketClock": {
+                    "is_open": _field(market_clock, "is_open") is True,
+                    "timestamp": _text_or_none(_field(market_clock, "timestamp")),
+                    "next_close": _text_or_none(_field(market_clock, "next_close")),
+                },
                 "accountRef": account_ref,
                 "accountMode": account_mode,
                 "cashUsd": _decimal_or_none(_field(account, "cash")),
@@ -874,6 +932,21 @@ class VenuePortfolioService:
         """Refresh all configured accounts without using order-intent or simulation rows."""
 
         accounts = self.source.fetch_accounts(environment)
+        current_alpaca_routes = {
+            ModelProvider(str(account["provider"])): (
+                str(account.get("accountMode") or "paper"),
+                str(account.get("_accountId") or ""),
+            )
+            for account in accounts
+            if account.get("venue") == Venue.ALPACA.value
+            and account.get("status") == "ready"
+            and str(account.get("_accountId") or "").strip()
+            and str(account.get("provider") or "") in {provider.value for provider in ModelProvider}
+        }
+        self.registry.shared().reconcile_alpaca_account_quarantines(
+            environment=environment,
+            routes=current_alpaca_routes,
+        )
         for account in accounts:
             self._persist_account(environment, account)
         return self.summary(environment)
@@ -945,7 +1018,7 @@ class VenuePortfolioService:
             for position in account.get("_positions", [])
         ]
         public_accounts = [
-            {key: value for key, value in account.items() if key != "_positions"}
+            {key: value for key, value in account.items() if not key.startswith("_")}
             for account in accounts
         ]
         return {
@@ -1064,6 +1137,16 @@ class VenuePortfolioService:
                 now=now,
             )
         positions = [dict(position) for position in account.get("positions") or []]
+        if venue == Venue.ALPACA.value and str(account.get("_accountId") or "").strip():
+            self._persist_alpaca_execution_state(
+                environment=environment,
+                provider=provider,
+                account=account,
+                positions=positions,
+                fills=[dict(fill) for fill in account.get("fills") or []],
+                observed_at=observed_at,
+                now=now,
+            )
         account_fills = self._account_fills(environment, venue, account_ref)
         if venue == Venue.ALPACA.value:
             realized = _decimal_or_none(account.get("realizedPnlUsd"))
@@ -1157,6 +1240,295 @@ class VenuePortfolioService:
                     "state": str(position.get("state") or "open"),
                     "observed_at": _datetime_or_now(position.get("updatedAt") or observed_at),
                     "created_at": now,
+                },
+            )
+
+    def _persist_alpaca_execution_state(
+        self,
+        *,
+        environment: Environment,
+        provider: str,
+        account: dict[str, Any],
+        positions: list[dict[str, Any]],
+        fills: list[dict[str, Any]],
+        observed_at: datetime,
+        now: datetime,
+    ) -> None:
+        """Mirror current broker state into the execution and reconciliation tables."""
+
+        account_id = str(account.get("_accountId") or "").strip()
+        if not account_id:
+            raise ValueError("Alpaca account identity is unavailable")
+        model_provider = ModelProvider(provider)
+        account_mode = str(account.get("accountMode") or "paper")
+        account_status = str(account.get("_accountStatus") or "unknown")
+        shared = self.registry.shared()
+        registration = shared.register_alpaca_account(
+            environment=environment,
+            account_mode=account_mode,
+            model_provider=model_provider,
+            account_id=account_id,
+        )
+
+        previous_rows = shared.alpaca_historical_positions(
+            environment=environment,
+            account_mode=account_mode,
+            account_id=account_id,
+        )
+        latest_previous: dict[str, dict[str, Any]] = {}
+        for row in previous_rows:
+            symbol = str(row.get("symbol") or "").upper()
+            prior = latest_previous.get(symbol)
+            if prior is None or _datetime_or_min(row.get("observed_at")) > _datetime_or_min(
+                prior.get("observed_at")
+            ):
+                latest_previous[symbol] = row
+
+        broker_positions: dict[str, Decimal] = {}
+        for position in positions:
+            symbol = str(position.get("instrumentId") or "").upper()
+            quantity = _decimal_or_zero(position.get("quantity"))
+            if not symbol or quantity == 0:
+                continue
+            side = str(position.get("positionSide") or "").lower()
+            if side not in {"long", "short"}:
+                raise ValueError("Alpaca position direction is unavailable")
+            broker_positions[symbol] = quantity
+            shared.record_alpaca_historical_position(
+                environment=environment,
+                account_mode=account_mode,
+                account_id=account_id,
+                symbol=symbol,
+                quantity=quantity,
+                average_entry_price=_decimal_or_none(position.get("averageEntryPrice")),
+                cost_basis=_decimal_or_none(position.get("costBasisUsd")),
+                market_value=_decimal_or_none(position.get("marketValueUsd")),
+                current_price=_decimal_or_none(position.get("currentPrice")),
+                unrealized_pnl_usd=_decimal_or_none(position.get("unrealizedPnlUsd")),
+                raw_payload={
+                    "side": side,
+                    "source": "venue_portfolio_refresh",
+                    "market_clock": dict(account.get("_marketClock") or {}),
+                },
+                observed_at=observed_at,
+                created_at=now,
+            )
+
+        for symbol, prior in latest_previous.items():
+            if symbol in broker_positions or _decimal_or_zero(prior.get("quantity")) == 0:
+                continue
+            prior_payload = prior.get("raw_payload") if isinstance(prior.get("raw_payload"), dict) else {}
+            shared.record_alpaca_historical_position(
+                environment=environment,
+                account_mode=account_mode,
+                account_id=account_id,
+                symbol=symbol,
+                quantity=Decimal("0"),
+                raw_payload={
+                    "side": str(prior_payload.get("side") or "unknown"),
+                    "source": "venue_portfolio_refresh",
+                    "closed": True,
+                },
+                observed_at=observed_at,
+                created_at=now,
+            )
+
+        existing_fill_ids = {
+            str(row.get("activity_id") or "")
+            for row in shared.alpaca_historical_fills(
+                environment=environment,
+                account_mode=account_mode,
+                account_id=account_id,
+            )
+        }
+        for fill in fills:
+            activity_id = str(fill.get("sourceTradeId") or "").strip()
+            if not activity_id or activity_id in existing_fill_ids:
+                continue
+            shared.record_alpaca_historical_fill(
+                environment=environment,
+                account_mode=account_mode,
+                account_id=account_id,
+                activity_id=activity_id,
+                order_id=_text_or_none(fill.get("venueOrderId")),
+                symbol=str(fill.get("instrumentId") or ""),
+                side=str(fill.get("side") or ""),
+                quantity=abs(_decimal_or_zero(fill.get("quantity"))),
+                price=_decimal_or_zero(fill.get("price")),
+                filled_at=_datetime_or_now(fill.get("executedAt")),
+                raw_payload={"source": "venue_portfolio_refresh"},
+                imported_at=now,
+                created_at=now,
+            )
+            existing_fill_ids.add(activity_id)
+
+        self._reconcile_alpaca_order_intents(
+            environment=environment,
+            model_provider=model_provider,
+            fills=fills,
+            order_states=(
+                account.get("_orderStates")
+                if isinstance(account.get("_orderStates"), dict)
+                else {}
+            ),
+            open_order_ids={
+                str(value)
+                for value in account.get("_openOrderIds") or []
+                if str(value)
+            },
+            now=now,
+        )
+
+        broker_open_orders = tuple(
+            sorted(str(value) for value in account.get("_openOrderIds") or [] if str(value))
+        )
+        postgres_open_orders = tuple(
+            sorted(
+                str(row.get("venue_order_id") or row.get("idempotency_key") or "")
+                for row in self.registry.state.rows(f"{SHARED_SCHEMA}.order_intents")
+                if row.get("environment") == environment.value
+                and row.get("venue") == Venue.ALPACA.value
+                and row.get("model_provider") == model_provider.value
+                and str(row.get("status") or "") not in TERMINAL_LOCAL_ORDER_STATUSES
+                and str(row.get("venue_order_id") or row.get("idempotency_key") or "")
+            )
+        )
+        buying_power = _decimal_or_zero(account.get("buyingPowerUsd"))
+        base_snapshot = {
+            "account_id": account_id,
+            "positions": broker_positions,
+            "open_orders": broker_open_orders,
+            "buying_power": buying_power,
+            "environment": environment,
+            "model_provider": model_provider,
+            "account_mode": account_mode,
+            "configured_account_id": account_id,
+            "broker_account_id": account_id,
+            "account_status": account_status,
+            "observed_at": observed_at,
+            "freshness_seconds": max(0, int((now - observed_at).total_seconds())),
+        }
+        broker_snapshot = AlpacaReconciliationSnapshot(
+            **base_snapshot,
+            broker_positions=broker_positions,
+            postgres_positions=broker_positions,
+            broker_open_orders=broker_open_orders,
+            postgres_open_orders=postgres_open_orders,
+            is_live_safe=registration.live_trading_allowed,
+        )
+        postgres_snapshot = AlpacaReconciliationSnapshot(
+            **{**base_snapshot, "open_orders": postgres_open_orders},
+            broker_positions=broker_positions,
+            postgres_positions=broker_positions,
+            broker_open_orders=broker_open_orders,
+            postgres_open_orders=postgres_open_orders,
+            is_live_safe=True,
+        )
+        model_repository = self.registry.for_model(model_provider)
+        reconciliation = model_repository.reconcile_alpaca_state(
+            broker_snapshot,
+            postgres_snapshot,
+        )
+        mismatch_messages = tuple(
+            value
+            for value in (
+                registration.refusal_reason,
+                reconciliation.mismatch_reason,
+            )
+            if value
+        )
+        model_repository.record_alpaca_account_snapshot(
+            environment=environment,
+            account_mode=account_mode,
+            snapshot=AlpacaReconciliationSnapshot(
+                **base_snapshot,
+                broker_positions=broker_positions,
+                postgres_positions=broker_positions,
+                broker_open_orders=broker_open_orders,
+                postgres_open_orders=postgres_open_orders,
+                mismatches=mismatch_messages,
+                is_live_safe=(
+                    registration.live_trading_allowed
+                    and reconciliation.live_order_allowed
+                    and account_status.lower() == "active"
+                ),
+            ),
+        )
+
+    def _reconcile_alpaca_order_intents(
+        self,
+        *,
+        environment: Environment,
+        model_provider: ModelProvider,
+        fills: list[dict[str, Any]],
+        order_states: dict[str, Any],
+        open_order_ids: set[str],
+        now: datetime,
+    ) -> None:
+        """Move submitted local intents to terminal state from exact broker evidence."""
+
+        filled_order_ids = {
+            str(fill.get("venueOrderId") or "").strip()
+            for fill in fills
+            if str(fill.get("venueOrderId") or "").strip()
+        }
+        for row in self.registry.state.rows(f"{SHARED_SCHEMA}.order_intents"):
+            if (
+                row.get("environment") != environment.value
+                or row.get("venue") != Venue.ALPACA.value
+                or row.get("model_provider") != model_provider.value
+                or str(row.get("status") or "") in TERMINAL_LOCAL_ORDER_STATUSES
+            ):
+                continue
+            venue_order_id = str(row.get("venue_order_id") or "").strip()
+            idempotency_key = str(row.get("idempotency_key") or "").strip()
+            broker_status = (
+                "filled"
+                if venue_order_id in filled_order_ids and venue_order_id not in open_order_ids
+                else ""
+            )
+            if not broker_status:
+                broker_status = str(
+                    order_states.get(venue_order_id)
+                    or order_states.get(idempotency_key)
+                    or ""
+                ).strip().lower()
+            local_status = ALPACA_TERMINAL_ORDER_STATUS_MAP.get(broker_status)
+            if local_status is None:
+                continue
+            prior_source = (
+                row.get("source_payload")
+                if isinstance(row.get("source_payload"), dict)
+                else {}
+            )
+            prior_status = str(row.get("status") or "")
+            self.registry.state.update_by_id(
+                f"{SHARED_SCHEMA}.order_intents",
+                str(row["id"]),
+                {
+                    "status": local_status,
+                    "refusal_reason": None,
+                    "source_payload": {
+                        **prior_source,
+                        "brokerReconciliation": {
+                            "source": "venue_portfolio_refresh",
+                            "status": broker_status,
+                        },
+                    },
+                    "updated_at": now,
+                },
+            )
+            self.registry.shared().record_audit_event(
+                event_type="alpaca_order_reconciled",
+                actor="system",
+                action="alpaca.order.reconciled",
+                environment=environment,
+                entity_id=str(row["id"]),
+                metadata={
+                    "model_provider": model_provider.value,
+                    "previous_status": prior_status,
+                    "broker_status": broker_status,
+                    "local_status": local_status,
                 },
             )
 
@@ -1395,6 +1767,7 @@ def _portfolio_history(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _position_payload(row: dict[str, Any], providers: list[str]) -> dict[str, Any]:
+    quantity = _decimal_or_zero(row.get("quantity"))
     return {
         "id": str(row.get("id")),
         "venue": str(row.get("venue")),
@@ -1403,7 +1776,8 @@ def _position_payload(row: dict[str, Any], providers: list[str]) -> dict[str, An
         "instrumentId": str(row.get("instrument_id")),
         "title": str(row.get("title")),
         "outcome": row.get("outcome"),
-        "quantity": _decimal_text(row.get("quantity")),
+        "quantity": _decimal_text(quantity),
+        "positionSide": "short" if quantity < 0 else "long",
         "averageEntryPrice": _money_or_none(row.get("average_entry_price")),
         "currentPrice": _money_or_none(row.get("current_price")),
         "costBasisUsd": _money_or_none(row.get("cost_basis_usd")),
@@ -1438,11 +1812,17 @@ def _fill_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_alpaca_position(row: dict[str, Any], observed_at: datetime) -> dict[str, Any]:
+    quantity = abs(_decimal_or_zero(_field(row, "qty")))
+    position_side = str(_field(row, "side") or "").strip().lower()
+    if position_side not in {"long", "short"}:
+        raise ValueError("Alpaca position side must be long or short")
+    signed_quantity = -quantity if position_side == "short" else quantity
     return {
         "instrumentId": str(_field(row, "symbol") or "unknown").upper(),
         "title": str(_field(row, "symbol") or "Unknown").upper(),
         "outcome": None,
-        "quantity": _decimal_or_zero(_field(row, "qty")),
+        "quantity": signed_quantity,
+        "positionSide": "short" if signed_quantity < 0 else "long",
         "averageEntryPrice": _decimal_or_none(_field(row, "avg_entry_price")),
         "currentPrice": _decimal_or_none(_field(row, "current_price")),
         "costBasisUsd": _decimal_or_none(_field(row, "cost_basis")),

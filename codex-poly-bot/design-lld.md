@@ -370,6 +370,7 @@
 | `positions` | Provider schema table | Live and dry-run positions | Signed quantity and explicit long/short direction agree |
 | `position_events` | Provider schema table | Position transition history | Prior and new state are both recorded |
 | `alpaca_account_snapshots` | Provider schema table | Broker account state | Account ID must match configured provider/environment |
+| `alpaca_account_quarantines` | Shared table | Duplicate account identities detected across model providers | A quarantined environment, account mode, and account ID blocks every provider route until corrected |
 | `comparison_metric_snapshots` | Shared table | Materialized dashboard metrics | Missing metrics store unavailable reason |
 | `venue_portfolio_snapshots` | Shared table | Sanitized venue account balances and P&L by environment, provider, and account | Credential material is never stored |
 | `venue_position_snapshots` | Shared table | Open positions tied to a confirmed portfolio snapshot | Snapshot and account references are required |
@@ -381,7 +382,7 @@
 |---|----------|-------------------|-----------|
 | 1 | Postgres unavailable before live order | Block live order and surface degraded status | REQ-DB-007 |
 | 2 | Duplicate order idempotency key | Return existing intent or duplicate-refusal result | REQ-EXE-016 |
-| 3 | Claude and OpenAI Alpaca credentials resolve to same account ID | Block duplicated account live trading | REQ-ALP-016 |
+| 3 | Claude and OpenAI Alpaca credentials resolve to same account ID | Quarantine the account and block both provider routes from live entry or automated exit | REQ-ALP-016 |
 | 4 | Broker position and Postgres position mismatch | Persist mismatch and block affected Alpaca live orders | REQ-ALP-018 |
 | 5 | Audit event correction needed | Write new corrective audit event, do not mutate original | REQ-OBS-004 |
 | 6 | One candidate insert fails during scanner persistence | Roll back the scanner run and every candidate in the batch | REQ-DB-009 |
@@ -1090,10 +1091,10 @@ Sensitive actions fail if audit persistence fails. This includes config changes,
 - **Key steps:**
   1. Validate asset class and tradability.
   2. Validate regular market hours and stale-data threshold.
-  3. For sell-to-open, read the current account and asset, then require account shorting eligibility, at least 2,000 USD equity, sufficient short buying power using the current ask plus 3 percent, and `borrow_status=easy_to_borrow`.
+  3. For sell-to-open, verify the current account matches the registered provider account, read the broker clock, latest ask, asset, current position, and open orders, then require an open regular session, account shorting eligibility, at least 2,000 USD equity, sufficient short buying power using the current ask plus 3 percent, no current position or open order, and `borrow_status=easy_to_borrow`.
   4. Use notional orders only for long entries; require positive whole-share quantity for sell-to-open and use the exact reconciled absolute quantity for buy-to-close.
   5. Set the explicit Alpaca `position_intent`, time in force `day`, and extended-hours `false`.
-  6. Refuse a new entry when a reconciled position or unresolved order already exists for the symbol.
+  6. Refuse a new entry when either the persisted reconciliation state or the immediate broker read shows a position or unresolved order for the symbol.
 
 #### Alpaca Snapshot Ingestion
 
@@ -1604,7 +1605,7 @@ The provider adapter does not mutate budget state directly. Atomic reservation, 
 | 2 | Dashboard asks for private key | API never exposes private key | REQ-WAL-005 |
 | 3 | Credential missing during live order | Execution refuses before venue call | REQ-WAL-006 |
 | 4 | Secret rotated | Cache invalidates and new secret used on refresh | REQ-WAL-007 |
-| 5 | Alpaca duplicate account ID across model providers | Status is blocked for duplicated account | REQ-ALP-016 |
+| 5 | Alpaca duplicate account ID across model providers | Quarantine the account and block both provider routes | REQ-ALP-016 |
 
 ### 12.5 Error Handling
 

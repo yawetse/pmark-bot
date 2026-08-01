@@ -239,8 +239,9 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
               <div>
                 <strong>Conservative scope</strong>
                 <p>
-                  Alpaca v1 is long-only stocks and ETFs. Options, short selling, margin, and
-                  unsupported asset classes are refused.
+                  Alpaca supports long stocks and ETFs plus disabled-by-default,
+                  easy-to-borrow U.S. equity shorts. Options, crypto, hard-to-borrow locates,
+                  and margin-funded long purchases are refused.
                 </p>
               </div>
             </div>

@@ -63,6 +63,7 @@ export const ALLOWED_CONFIG_PATHS = [
   "scanner.alpaca.strategies.unusual_volume.enabled",
   "scanner.alpaca.strategies.unusual_volume.min_ratio",
   "alpaca.account_mode",
+  "alpaca.allow_shorting",
   "alpaca.symbol_presets",
   "alpaca.custom_symbols",
   "alpaca.custom_presets",
@@ -122,7 +123,7 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     label: "Alpaca venue",
     description: "Allows stock and ETF evaluation through Alpaca when account checks pass.",
     valueHint: "true or false",
-    effect: "Alpaca remains long-only for stocks and ETFs.",
+    effect: "Alpaca scans stocks and ETFs. New shorts remain separately disabled unless the short-selling gate and broker checks pass.",
   },
   trading_loop_interval_seconds: {
     label: "Trading loop interval",
@@ -459,6 +460,12 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "Selects Alpaca paper or live account mode.",
     valueHint: "paper or live",
     effect: "Live mode also requires credentials, reconciliation, and risk approval.",
+  },
+  "alpaca.allow_shorting": {
+    label: "Alpaca short selling",
+    description: "Allows bearish stock signals to request new easy-to-borrow short positions.",
+    valueHint: "true or false",
+    effect: "New shorts still require current Alpaca account, equity, buying-power, asset, borrow, reconciliation, and market-hours approval. Existing shorts remain eligible to close when this is off.",
   },
   "alpaca.symbol_presets": {
     label: "Alpaca stock presets",

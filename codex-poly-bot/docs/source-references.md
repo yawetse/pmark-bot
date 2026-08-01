@@ -16,6 +16,13 @@ These references document the external APIs and deployment services used by the 
 - Polygon PoS RPC endpoints: https://docs.polygon.technology/pos/reference/rpc-endpoints
 - Historical Polymarket reference only, no copied code: https://github.com/warproxxx/poly_data
 - Alpaca Trading API documentation: https://docs.alpaca.markets/docs/trading-api
+- Alpaca order creation and position-intent reference: https://docs.alpaca.markets/reference/postorder
+- Alpaca account and trading-plan fields: https://docs.alpaca.markets/docs/account-plans
+- Alpaca asset shortability and borrow-status reference: https://docs.alpaca.markets/reference/get-v2-assets-symbol-1
+- Alpaca U.S. market clock: https://docs.alpaca.markets/us/reference/legacyclock
+- Alpaca current open position by symbol: https://docs.alpaca.markets/us/reference/getopenposition-1
+- Alpaca filtered open orders: https://docs.alpaca.markets/us/v1.1/reference/getallorders-1
+- Alpaca latest quote for one stock: https://docs.alpaca.markets/us/reference/stocklatestquotesingle-1
 
 ## Historical Import License Decision
 

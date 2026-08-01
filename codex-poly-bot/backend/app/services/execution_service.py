@@ -29,6 +29,11 @@ class AlpacaVenueSubmitter(Protocol):
         quantity: Decimal | None = None,
         side: str = "buy",
         client_order_id: str | None = None,
+        position_intent: str | None = None,
+        estimated_unit_price: Decimal | None = None,
+        expected_account_id: str | None = None,
+        entry_cutoff_minutes: int | None = None,
+        max_quote_age_seconds: int | None = None,
     ) -> str:
         ...
 
@@ -68,7 +73,14 @@ class AlpacaExecutionRequest:
     account_mode: str
     risk_approved: bool
     symbol: str
-    notional: Decimal | str
+    notional: Decimal | str | None = None
+    quantity: Decimal | str | None = None
+    side: str = "buy"
+    position_intent: str | None = None
+    estimated_unit_price: Decimal | str | None = None
+    expected_account_id: str | None = None
+    entry_cutoff_minutes: int | None = None
+    max_quote_age_seconds: int | None = None
     risk_refusal_reason: str | None = None
     client_order_id: str | None = None
 
@@ -166,6 +178,11 @@ class FakeAlpacaVenueSubmitter:
         quantity: Decimal | None = None,
         side: str = "buy",
         client_order_id: str | None = None,
+        position_intent: str | None = None,
+        estimated_unit_price: Decimal | None = None,
+        expected_account_id: str | None = None,
+        entry_cutoff_minutes: int | None = None,
+        max_quote_age_seconds: int | None = None,
     ) -> str:
         """Record an approved submit call.
 
@@ -182,6 +199,13 @@ class FakeAlpacaVenueSubmitter:
                 "notional": str(notional) if notional is not None else "",
                 "quantity": str(quantity) if quantity is not None else "",
                 "side": side,
+                "position_intent": position_intent or "",
+                "estimated_unit_price": (
+                    str(estimated_unit_price) if estimated_unit_price is not None else ""
+                ),
+                "expected_account_id": expected_account_id or "",
+                "entry_cutoff_minutes": str(entry_cutoff_minutes or ""),
+                "max_quote_age_seconds": str(max_quote_age_seconds or ""),
                 "client_order_id": client_order_id or "",
             },
         )
@@ -372,7 +396,15 @@ def execute_alpaca_order(
     REQ: REQ-ALP-005, REQ-ALP-006, REQ-ALP-007
     """
 
-    notional = _decimal(request.notional, "notional")
+    notional = _decimal(request.notional, "notional") if request.notional is not None else None
+    quantity = _decimal(request.quantity, "quantity") if request.quantity is not None else None
+    estimated_unit_price = (
+        _decimal(request.estimated_unit_price, "estimated_unit_price")
+        if request.estimated_unit_price is not None
+        else None
+    )
+    if notional is None and quantity is None:
+        raise ValueError("Alpaca execution requires notional or quantity")
     symbol = request.symbol.strip().upper()
     mode_result = resolve_alpaca_account_mode(request.account_mode)
     if not mode_result.ok:
@@ -396,7 +428,10 @@ def execute_alpaca_order(
             broker_submitted=False,
             payload={
                 "account_mode": mode_result.payload["account_mode"],
-                "notional": str(notional),
+                "notional": str(notional) if notional is not None else None,
+                "quantity": str(quantity) if quantity is not None else None,
+                "side": request.side,
+                "position_intent": request.position_intent,
                 "symbol": symbol,
             },
         )
@@ -409,13 +444,25 @@ def execute_alpaca_order(
         )
 
     try:
-        venue_order_id = submitter.submit_order(
-            account_mode=mode_result.payload["account_mode"],
-            symbol=symbol,
-            notional=notional,
-            side="buy",
-            client_order_id=request.client_order_id,
-        )
+        submit_kwargs: dict[str, Any] = {
+            "account_mode": mode_result.payload["account_mode"],
+            "symbol": symbol,
+            "notional": notional,
+            "quantity": quantity,
+            "side": request.side,
+            "client_order_id": request.client_order_id,
+        }
+        if request.position_intent is not None:
+            submit_kwargs["position_intent"] = request.position_intent
+        if estimated_unit_price is not None:
+            submit_kwargs["estimated_unit_price"] = estimated_unit_price
+        if request.expected_account_id is not None:
+            submit_kwargs["expected_account_id"] = request.expected_account_id
+        if request.entry_cutoff_minutes is not None:
+            submit_kwargs["entry_cutoff_minutes"] = request.entry_cutoff_minutes
+        if request.max_quote_age_seconds is not None:
+            submit_kwargs["max_quote_age_seconds"] = request.max_quote_age_seconds
+        venue_order_id = submitter.submit_order(**submit_kwargs)
     except Exception as exc:
         return AlpacaExecutionResult(
             status="refused",
@@ -430,7 +477,10 @@ def execute_alpaca_order(
         broker_submitted=True,
         payload={
             "account_mode": mode_result.payload["account_mode"],
-            "notional": str(notional),
+            "notional": str(notional) if notional is not None else None,
+            "quantity": str(quantity) if quantity is not None else None,
+            "side": request.side,
+            "position_intent": request.position_intent,
             "symbol": symbol,
             "venue_order_id": venue_order_id,
         },

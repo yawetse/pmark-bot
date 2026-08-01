@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 import httpx
 
-from app.domain import Environment
+from app.db import RepositoryRegistry
+from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.venue_portfolio_service import (
     ProviderBackedVenuePortfolioSource,
@@ -161,6 +163,14 @@ def _ready_accounts() -> list[dict]:
         "status": "ready",
         "venue": "alpaca",
         "provider": "openai",
+        "_accountId": "alpaca-account-a",
+        "_accountStatus": "ACTIVE",
+        "_openOrderIds": [],
+        "_marketClock": {
+            "is_open": True,
+            "timestamp": observed_at.isoformat(),
+            "next_close": (observed_at + timedelta(hours=4)).isoformat(),
+        },
         "accountRef": "alpaca-account-a",
         "accountMode": "paper",
         "cashUsd": "50.00",
@@ -175,6 +185,7 @@ def _ready_accounts() -> list[dict]:
                 "title": "SPY",
                 "outcome": None,
                 "quantity": "1",
+                "positionSide": "long",
                 "averageEntryPrice": "100.00",
                 "currentPrice": "110.00",
                 "costBasisUsd": "100.00",
@@ -258,6 +269,10 @@ def test_req_db_008_01_reconciliation_persists_sanitized_venue_snapshots() -> No
     snapshots = state.rows("shared.venue_portfolio_snapshots")
     positions = state.rows("shared.venue_position_snapshots")
     fills = state.rows("shared.venue_confirmed_fills")
+    alpaca_registry = state.rows("shared.alpaca_account_registry")
+    alpaca_positions = state.rows("shared.alpaca_historical_positions")
+    alpaca_fills = state.rows("shared.alpaca_historical_fills")
+    alpaca_reconciliation = state.rows("openai.alpaca_account_snapshots")
     assert len(snapshots) == 3
     assert len(positions) == 3
     assert len(fills) == 3
@@ -265,7 +280,28 @@ def test_req_db_008_01_reconciliation_persists_sanitized_venue_snapshots() -> No
     assert {row["venue"] for row in snapshots} == {"polymarket_us", "alpaca"}
     assert {row["model_provider"] for row in snapshots} == {"openai", "claude"}
     assert all(row["account_ref"] for row in snapshots)
-    serialized = str({"snapshots": snapshots, "positions": positions, "fills": fills}).lower()
+    assert len(alpaca_registry) == 1
+    assert alpaca_registry[0]["account_id"] == "alpaca-account-a"
+    assert alpaca_positions[0]["quantity"] == 1
+    assert {row["activity_id"] for row in alpaca_fills} == {
+        "alpaca-fill-1",
+        "alpaca-fill-2",
+    }
+    assert alpaca_reconciliation[0]["is_live_safe"] is False
+    assert "broker and Postgres state mismatch" in alpaca_reconciliation[0]["mismatches"]
+    assert alpaca_reconciliation[0]["broker_positions"] == {"SPY": "1"}
+    assert alpaca_reconciliation[0]["postgres_positions"] == {"SPY": "1"}
+    serialized = str(
+        {
+            "snapshots": snapshots,
+            "positions": positions,
+            "fills": fills,
+            "alpaca_registry": alpaca_registry,
+            "alpaca_positions": alpaca_positions,
+            "alpaca_fills": alpaca_fills,
+            "alpaca_reconciliation": alpaca_reconciliation,
+        }
+    ).lower()
     assert "secret" not in serialized
     assert "private_key" not in serialized
 
@@ -398,6 +434,7 @@ def test_req_ui_013_04_provider_source_normalizes_confirmed_venue_data() -> None
                 200,
                 json={
                     "id": "alpaca-account-one",
+                    "status": "ACTIVE",
                     "cash": "50.00",
                     "buying_power": "100.00",
                     "portfolio_value": "200.00",
@@ -410,6 +447,7 @@ def test_req_ui_013_04_provider_source_normalizes_confirmed_venue_data() -> None
                 json=[
                     {
                         "symbol": "SPY",
+                        "side": "long",
                         "qty": "1.25",
                         "avg_entry_price": "100.00",
                         "current_price": "110.00",
@@ -418,6 +456,17 @@ def test_req_ui_013_04_provider_source_normalizes_confirmed_venue_data() -> None
                         "unrealized_pl": "12.50",
                     }
                 ],
+            )
+        if request.url.path == "/v2/orders":
+            return httpx.Response(200, json=[])
+        if request.url.path == "/v2/clock":
+            return httpx.Response(
+                200,
+                json={
+                    "is_open": True,
+                    "timestamp": "2026-07-13T12:00:00Z",
+                    "next_close": "2026-07-13T20:00:00Z",
+                },
             )
         if request.url.path == "/v2/account/activities/FILL":
             return httpx.Response(
@@ -483,6 +532,68 @@ def test_req_ui_013_04_provider_source_normalizes_confirmed_venue_data() -> None
     assert alpaca["totalPnlUsd"] == 20
     assert alpaca["positions"][0]["quantity"] == 1.25
     assert alpaca["fills"][0]["sourceTradeId"] == "alpaca-fill-one"
+    registry = RepositoryRegistry()
+    alpaca["_orderStates"] = {"alpaca-canceled-order": "canceled"}
+    alpaca["_openOrderIds"] = ["alpaca-partial-order"]
+    alpaca["fills"].append(
+        {
+            "sourceTradeId": "alpaca-partial-fill",
+            "venueOrderId": "alpaca-partial-order",
+            "instrumentId": "SPY",
+            "title": "SPY",
+            "side": "sell",
+            "quantity": Decimal("0.5"),
+            "price": Decimal("110"),
+            "notionalUsd": Decimal("55"),
+            "realizedPnlUsd": None,
+            "state": "filled",
+            "executedAt": datetime.now(UTC),
+        }
+    )
+    shared = registry.shared()
+    for venue_order_id in (
+        "alpaca-order-one",
+        "alpaca-canceled-order",
+        "alpaca-partial-order",
+    ):
+        shared.record_order_intent(
+            environment=Environment.PRODUCTION,
+            execution_run_id=f"execution-{venue_order_id}",
+            pipeline_run_id=f"pipeline-{venue_order_id}",
+            strategy_consensus_output_id=None,
+            venue=Venue.ALPACA.value,
+            instrument_id="alpaca:SPY",
+            model_provider=ModelProvider.OPENAI,
+            side="sell",
+            order_type="market",
+            status="submitted",
+            notional_usd=Decimal("100"),
+            size_multiplier=Decimal("1"),
+            idempotency_key=f"client-{venue_order_id}",
+            risk_payload={},
+            source_payload={},
+            venue_order_id=venue_order_id,
+        )
+    VenuePortfolioService(
+        registry,
+        source=StaticVenuePortfolioSource(accounts),
+    ).refresh(Environment.PRODUCTION)
+    registrations = registry.state.rows("shared.alpaca_account_registry")
+    execution_positions = registry.state.rows("shared.alpaca_historical_positions")
+    execution_fills = registry.state.rows("shared.alpaca_historical_fills")
+    reconciliation = registry.state.rows("openai.alpaca_account_snapshots")
+    reconciled_intents = registry.state.rows("shared.order_intents")
+    assert registrations[0]["account_id"] == "alpaca-account-one"
+    assert execution_positions[0]["quantity"] == 1.25
+    assert execution_fills[0]["activity_id"] == "alpaca-fill-one"
+    assert {
+        row["venue_order_id"]: row["status"] for row in reconciled_intents
+    } == {
+        "alpaca-order-one": "filled",
+        "alpaca-canceled-order": "canceled",
+        "alpaca-partial-order": "submitted",
+    }
+    assert reconciliation[0]["is_live_safe"] is True
     serialized = str(accounts)
     assert "pm-openai-secret" not in serialized
     assert "alpaca-openai-secret" not in serialized

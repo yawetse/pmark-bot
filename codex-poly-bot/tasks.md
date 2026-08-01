@@ -1823,7 +1823,7 @@
 | AC ID | EARS Criterion |
 |-------|----------------|
 | AC-050-01 | When configuration is seeded or the active stock profile is applied, Alpaca shorting shall remain disabled until an authorized audited boolean change enables it. |
-| AC-050-02 | Before sell-to-open, the adapter shall read the current account and asset and refuse before order POST unless every account status, block and user-suspension flag, equity, buying-power, U.S.-equity, tradability, shortability, and easy-to-borrow gate passes. |
+| AC-050-02 | Before sell-to-open, the adapter shall verify the registered account identity and read the current account, market clock, latest ask, asset, position, and open orders; it shall refuse before order POST unless every account, session, buying-power, U.S.-equity, borrow, and empty-symbol-state gate passes. |
 | AC-050-03 | When a short entry is submitted, the request shall use positive whole-share quantity and explicit sell-to-open intent, never a fractional or notional short entry. |
 | AC-050-04 | When Alpaca reports a short position, persistence, portfolio normalization, lifecycle loading, P&L, trailing stop, position age, exit audit, notifications, and dashboard output shall preserve short direction. |
 | AC-050-05 | When a short exits, the system shall submit buy-to-close for the exact reconciled absolute quantity; a long exit shall remain sell-to-close. |

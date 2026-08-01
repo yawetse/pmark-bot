@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.adapters.aws import InMemorySesEmailAdapter
-from app.db import RepositoryRegistry
+from app.db import AlpacaReconciliationSnapshot, RepositoryRegistry
 from app.domain import Environment, ModelProvider, OrderSide, OrderType, PositionState, Venue
 from app.services import NotificationDeliveryLedger, PipelineLifecycleService
 from app.services.lifecycle_service import _slippage_ok
@@ -26,6 +26,11 @@ class RecordingAlpacaSubmitter:
         quantity: Decimal | None = None,
         side: str = "buy",
         client_order_id: str | None = None,
+        position_intent: str | None = None,
+        estimated_unit_price: Decimal | None = None,
+        expected_account_id: str | None = None,
+        entry_cutoff_minutes: int | None = None,
+        max_quote_age_seconds: int | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -34,10 +39,21 @@ class RecordingAlpacaSubmitter:
                 "notional": str(notional) if notional is not None else "",
                 "quantity": str(quantity) if quantity is not None else "",
                 "side": side,
+                "position_intent": position_intent or "",
+                "estimated_unit_price": str(estimated_unit_price or ""),
+                "expected_account_id": expected_account_id or "",
+                "entry_cutoff_minutes": str(entry_cutoff_minutes or ""),
+                "max_quote_age_seconds": str(max_quote_age_seconds or ""),
                 "client_order_id": client_order_id or "",
             }
         )
         return f"alpaca-{side}-{symbol}-{len(self.calls)}"
+
+
+class FailingAlpacaSubmitter(RecordingAlpacaSubmitter):
+    def submit_order(self, **kwargs: object) -> str:
+        self.calls.append({key: str(value) for key, value in kwargs.items()})
+        raise RuntimeError("broker rejected exact fractional cover")
 
 
 class RecordingPolymarketSubmitter:
@@ -415,7 +431,7 @@ def test_req_exe_016_11_alpaca_daily_loss_ignores_prior_days() -> None:
         quantity=Decimal("1"),
         price=Decimal("300"),
         filled_at=now - timedelta(days=2),
-        raw_payload={},
+        raw_payload={"side": "long"},
     )
     shared.record_alpaca_historical_fill(
         environment=Environment.DEVELOPMENT,
@@ -427,7 +443,7 @@ def test_req_exe_016_11_alpaca_daily_loss_ignores_prior_days() -> None:
         quantity=Decimal("1"),
         price=Decimal("150"),
         filled_at=now - timedelta(days=1),
-        raw_payload={},
+        raw_payload={"side": "long"},
     )
     alpaca = RecordingAlpacaSubmitter()
     result = PipelineLifecycleService(registry, alpaca_submitter=alpaca).run_execution(
@@ -703,7 +719,7 @@ def test_req_ext_001_03_exit_run_records_polymarket_and_stock_exit_intents() -> 
         current_price=Decimal("112"),
         market_value=Decimal("112"),
         unrealized_pnl_usd=Decimal("12"),
-        raw_payload={"high_watermark_price": "115"},
+        raw_payload={"side": "long", "high_watermark_price": "115"},
         observed_at=now,
         created_at=now,
     )
@@ -745,7 +761,7 @@ def test_req_ext_001_04_stock_position_closes_before_regular_market_close() -> N
         quantity=Decimal("1"),
         price=Decimal("100"),
         filled_at=now - timedelta(hours=1),
-        raw_payload={},
+        raw_payload={"side": "long"},
     )
     shared.record_alpaca_historical_position(
         environment=Environment.DEVELOPMENT,
@@ -757,7 +773,14 @@ def test_req_ext_001_04_stock_position_closes_before_regular_market_close() -> N
         current_price=Decimal("100.20"),
         market_value=Decimal("100.20"),
         unrealized_pnl_usd=Decimal("0.20"),
-        raw_payload={},
+        raw_payload={
+            "side": "long",
+            "market_clock": {
+                "is_open": True,
+                "timestamp": now.isoformat(),
+                "next_close": (now + timedelta(minutes=10)).isoformat(),
+            },
+        },
         observed_at=now,
     )
 
@@ -796,7 +819,7 @@ def test_req_ext_001_05_stock_exit_submits_one_order_when_multiple_rules_match()
         quantity=Decimal("1"),
         price=Decimal("100"),
         filled_at=now - timedelta(hours=1),
-        raw_payload={},
+        raw_payload={"side": "long"},
     )
     shared.record_alpaca_historical_position(
         environment=Environment.DEVELOPMENT,
@@ -808,7 +831,7 @@ def test_req_ext_001_05_stock_exit_submits_one_order_when_multiple_rules_match()
         current_price=Decimal("112"),
         market_value=Decimal("112"),
         unrealized_pnl_usd=Decimal("12"),
-        raw_payload={},
+        raw_payload={"side": "long"},
         observed_at=now,
     )
     alpaca = RecordingAlpacaSubmitter()
@@ -860,7 +883,7 @@ def test_req_ext_001_06_submitted_stock_exit_is_not_resubmitted_for_same_positio
         current_price=Decimal("112"),
         market_value=Decimal("112"),
         unrealized_pnl_usd=Decimal("12"),
-        raw_payload={},
+        raw_payload={"side": "long"},
         observed_at=now,
     )
     alpaca = RecordingAlpacaSubmitter()
@@ -926,7 +949,7 @@ def test_req_ext_001_07_stock_trailing_stop_uses_recorded_position_high_watermar
             current_price=current_price,
             market_value=current_price,
             unrealized_pnl_usd=current_price - Decimal("100"),
-            raw_payload={},
+            raw_payload={"side": "long"},
             observed_at=observed_at,
         )
 
@@ -1025,7 +1048,7 @@ def test_req_ext_006_01_live_exit_submits_through_configured_venue_submitters() 
         current_price=Decimal("112"),
         market_value=Decimal("112"),
         unrealized_pnl_usd=Decimal("12"),
-        raw_payload={"high_watermark_price": "115"},
+        raw_payload={"side": "long", "high_watermark_price": "115"},
         observed_at=now,
         created_at=now,
     )
@@ -1053,6 +1076,360 @@ def test_req_ext_006_01_live_exit_submits_through_configured_venue_submitters() 
     assert alpaca.calls[0]["symbol"] == "SPY"
     assert alpaca.calls[0]["side"] == "sell"
     assert alpaca.calls[0]["quantity"] == "1"
+
+
+def test_req_alp_019_022_short_entry_requires_gate_and_uses_whole_share_intent() -> None:
+    registry = RepositoryRegistry()
+    now = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.register_alpaca_account(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="claude-paper-account",
+    )
+    registry.for_model(ModelProvider.CLAUDE).record_alpaca_account_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        snapshot=AlpacaReconciliationSnapshot(
+            account_id="claude-paper-account",
+            positions={},
+            open_orders=(),
+            buying_power=Decimal("1000"),
+            environment=Environment.DEVELOPMENT,
+            model_provider=ModelProvider.CLAUDE,
+            account_mode="paper",
+            configured_account_id="claude-paper-account",
+            broker_account_id="claude-paper-account",
+            account_status="active",
+            observed_at=now,
+            is_live_safe=True,
+        ),
+    )
+    run = shared.record_strategy_consensus_run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-short-entry",
+        reasoning_run_id="reasoning-short-entry",
+        trigger="manual",
+        status="approved",
+        config={},
+        vote_count=1,
+        approved_count=1,
+        refused_count=0,
+        started_at=now,
+        completed_at=now,
+    )
+    output = shared.record_strategy_consensus_output(
+        environment=Environment.DEVELOPMENT,
+        consensus_run_id=run["id"],
+        venue=Venue.ALPACA.value,
+        instrument_id="alpaca:F",
+        model_provider=ModelProvider.CLAUDE,
+        status="approved",
+        side=OrderSide.SELL.value,
+        size_multiplier=Decimal("1"),
+        signal_count=1,
+        strategy_names=["momentum"],
+        source_payload={"candidate": {"symbol": "F"}},
+        created_at=now,
+    )
+    strategy_run = {"id": run["id"], "outputs": [output], "status": "approved"}
+    market_data = [{
+        "id": "pull-short",
+        "venue": Venue.ALPACA.value,
+        "status": "pulled",
+        "createdAt": now.isoformat(),
+        "candidates": [{
+            "id": "alpaca:F",
+            "venue": Venue.ALPACA.value,
+            "symbol": "F",
+            "price": "12.50",
+            "spread": "0.01",
+            "pulledAt": now.isoformat(),
+        }],
+    }]
+    config = _config(live_enabled=True)
+    config["alpaca"]["allow_shorting"] = True
+    submitter = RecordingAlpacaSubmitter()
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_submitters={ModelProvider.CLAUDE: submitter},
+    ).run_execution(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-short-entry",
+        trigger="manual",
+        strategy_run=strategy_run,
+        market_data_pulls=market_data,
+        config_payload=config,
+        credential_status={f"{Venue.ALPACA.value}:{ModelProvider.CLAUDE.value}": True},
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 1
+    assert submitter.calls[0]["side"] == "sell"
+    assert submitter.calls[0]["quantity"] == "7"
+    assert submitter.calls[0]["notional"] == ""
+    assert submitter.calls[0]["position_intent"] == "sell_to_open"
+
+
+def test_req_alp_022_short_entry_requires_fresh_safe_reconciliation() -> None:
+    registry = RepositoryRegistry()
+    now = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.register_alpaca_account(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="claude-paper-account",
+    )
+    service = PipelineLifecycleService(registry)
+
+    missing = service._alpaca_reconciliation_refusal(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        model_provider=ModelProvider.CLAUDE,
+        now=now,
+        max_freshness_seconds=300,
+    )
+    registry.for_model(ModelProvider.CLAUDE).record_alpaca_account_snapshot(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        snapshot=AlpacaReconciliationSnapshot(
+            account_id="claude-paper-account",
+            positions={},
+            open_orders=(),
+            buying_power=Decimal("1000"),
+            observed_at=now,
+            is_live_safe=False,
+        ),
+    )
+    blocked = service._alpaca_reconciliation_refusal(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        model_provider=ModelProvider.CLAUDE,
+        now=now,
+        max_freshness_seconds=300,
+    )
+
+    assert missing == "ALPACA_RECONCILIATION_REQUIRED"
+    assert blocked == "ALPACA_RECONCILIATION_BLOCKED"
+
+
+def test_req_alp_016_duplicate_account_quarantine_blocks_original_provider_route() -> None:
+    registry = RepositoryRegistry()
+    shared = registry.shared()
+    shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.OPENAI,
+        account_id="shared-live-account",
+    )
+    shared.register_alpaca_account(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="shared-live-account",
+    )
+
+    submitter = RecordingAlpacaSubmitter()
+    service = PipelineLifecycleService(registry, alpaca_submitter=submitter)
+    config = _config(live_enabled=True)
+    config["alpaca"]["account_mode"] = "live"
+    account_id = service._alpaca_account_id(
+        environment=Environment.PRODUCTION,
+        account_mode="live",
+        model_provider=ModelProvider.OPENAI,
+    )
+    execution = service._execute_entry_order(
+        environment=Environment.PRODUCTION,
+        venue=Venue.ALPACA.value,
+        model_provider=ModelProvider.OPENAI,
+        side="buy",
+        order_type="market",
+        instrument_id="alpaca:SPY",
+        notional=Decimal("100"),
+        idempotency_key="quarantined-long-entry",
+        output={},
+        candidate={"symbol": "SPY", "price": "100"},
+        config_payload=config,
+        position_intent="buy_to_open",
+        expected_account_id=None,
+    )
+
+    assert account_id == ""
+    assert execution["refusal_reason"] == "ALPACA_ACCOUNT_QUARANTINED"
+    assert submitter.calls == []
+
+
+def test_req_alp_023_025_026_short_exit_is_exact_and_provider_routed() -> None:
+    registry = RepositoryRegistry()
+    now = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+    shared = registry.shared()
+    shared.register_alpaca_account(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        model_provider=ModelProvider.CLAUDE,
+        account_id="claude-paper-account",
+    )
+    shared.record_alpaca_historical_fill(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="claude-paper-account",
+        activity_id="short-fill",
+        symbol="F",
+        side="sell",
+        quantity=Decimal("1.25"),
+        price=Decimal("100"),
+        filled_at=now - timedelta(hours=1),
+        raw_payload={},
+    )
+    shared.record_alpaca_historical_position(
+        environment=Environment.DEVELOPMENT,
+        account_mode="paper",
+        account_id="claude-paper-account",
+        symbol="F",
+        quantity=Decimal("-1.25"),
+        average_entry_price=Decimal("100"),
+        current_price=Decimal("90"),
+        market_value=Decimal("-112.50"),
+        unrealized_pnl_usd=Decimal("12.50"),
+        raw_payload={"side": "short"},
+        observed_at=now,
+    )
+    openai_submitter = RecordingAlpacaSubmitter()
+    claude_submitter = RecordingAlpacaSubmitter()
+    config = _config(live_enabled=True)
+    config["alpaca"]["allow_shorting"] = False
+
+    result = PipelineLifecycleService(
+        registry,
+        alpaca_exit_submitter=openai_submitter,
+        alpaca_submitters={
+            ModelProvider.OPENAI: openai_submitter,
+            ModelProvider.CLAUDE: claude_submitter,
+        },
+    ).run_exit(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="pipeline-short-exit",
+        trigger="scheduled",
+        market_data_pulls=[],
+        config_payload=config,
+        started_at=now,
+        completed_at=now,
+    )
+
+    assert result.payload["submittedCount"] == 1
+    assert openai_submitter.calls == []
+    assert claude_submitter.calls[0]["side"] == "buy"
+    assert claude_submitter.calls[0]["quantity"] == "1.25"
+    assert claude_submitter.calls[0]["position_intent"] == "buy_to_close"
+    assert claude_submitter.calls[0]["expected_account_id"] == "claude-paper-account"
+    assert registry.state.rows("openai.order_events") == []
+    assert registry.state.rows("claude.order_events")[0]["event_type"] == "submitted"
+    exit_intent = registry.state.rows("shared.exit_intents")[0]
+    assert exit_intent["side"] == "buy"
+    assert exit_intent["source_payload"]["modelProvider"] == "claude"
+
+
+def test_req_alp_025_fractional_cover_failure_requires_operator_action() -> None:
+    service = PipelineLifecycleService(
+        RepositoryRegistry(),
+        alpaca_exit_submitter=FailingAlpacaSubmitter(),
+    )
+
+    result = service._execute_exit_order(  # noqa: SLF001 - specification boundary
+        position={
+            "position_id": "short-fractional",
+            "venue": Venue.ALPACA.value,
+            "instrument_id": "alpaca:F",
+            "symbol": "F",
+            "quantity": Decimal("1.25"),
+            "position_side": "short",
+            "model_provider": ModelProvider.CLAUDE,
+            "routing_resolved": True,
+            "account_mode": "paper",
+            "account_ref": "claude-paper-account",
+        },
+        venue=Venue.ALPACA.value,
+        execution_mode="live",
+        risk_approved=True,
+        refusal_reason=None,
+        config_payload=_config(live_enabled=True),
+        idempotency_key="exact-cover",
+    )
+
+    assert result.status == "refused"
+    assert result.refusal_reason == "ALPACA_EXACT_COVER_UNAVAILABLE"
+    assert result.payload["operator_action_required"] is True
+
+
+def test_req_alp_026_short_exit_refuses_disabled_venue_and_unresolved_routing() -> None:
+    for registered, venue_enabled, expected_reason in (
+        (True, False, "ALPACA_VENUE_DISABLED"),
+        (False, True, "ALPACA_EXIT_ACCOUNT_UNRESOLVED"),
+    ):
+        registry = RepositoryRegistry()
+        now = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+        shared = registry.shared()
+        if registered:
+            shared.register_alpaca_account(
+                environment=Environment.DEVELOPMENT,
+                account_mode="paper",
+                model_provider=ModelProvider.CLAUDE,
+                account_id="claude-paper-account",
+            )
+        shared.record_alpaca_historical_fill(
+            environment=Environment.DEVELOPMENT,
+            account_mode="paper",
+            account_id="claude-paper-account",
+            activity_id=f"short-{registered}",
+            symbol="F",
+            side="sell",
+            quantity=Decimal("1"),
+            price=Decimal("100"),
+            filled_at=now - timedelta(hours=1),
+            raw_payload={"side": "sell"},
+        )
+        shared.record_alpaca_historical_position(
+            environment=Environment.DEVELOPMENT,
+            account_mode="paper",
+            account_id="claude-paper-account",
+            symbol="F",
+            quantity=Decimal("-1"),
+            average_entry_price=Decimal("100"),
+            current_price=Decimal("90"),
+            market_value=Decimal("-90"),
+            unrealized_pnl_usd=Decimal("10"),
+            raw_payload={"side": "short"},
+            observed_at=now,
+        )
+        openai_submitter = RecordingAlpacaSubmitter()
+        claude_submitter = RecordingAlpacaSubmitter()
+        config = _config(live_enabled=True)
+        config["venues"][Venue.ALPACA.value]["enabled"] = venue_enabled
+
+        result = PipelineLifecycleService(
+            registry,
+            alpaca_submitters={
+                ModelProvider.OPENAI: openai_submitter,
+                ModelProvider.CLAUDE: claude_submitter,
+            },
+        ).run_exit(
+            environment=Environment.DEVELOPMENT,
+            pipeline_run_id=f"pipeline-short-refusal-{registered}",
+            trigger="scheduled",
+            market_data_pulls=[],
+            config_payload=config,
+            started_at=now,
+            completed_at=now,
+        )
+
+        assert result.payload["refusedCount"] == 1
+        assert result.payload["intents"][0]["refusalReason"] == expected_reason
+        assert openai_submitter.calls == []
+        assert claude_submitter.calls == []
 
 
 def _strategy_run_with_outputs(
