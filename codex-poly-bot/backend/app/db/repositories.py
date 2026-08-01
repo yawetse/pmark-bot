@@ -113,18 +113,26 @@ class DatabaseState:
         before: tuple[datetime, str] | None = None,
         newest_first: bool = False,
         filters: dict[str, Any] | None = None,
+        ids: set[str] | None = None,
     ) -> list[dict]:
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
         if table_name in self.fail_on_read_tables:
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
         rows = self.tables.setdefault(table_name, [])
-        if filters is None and limit is None and not newest_first and before is None:
+        if (
+            filters is None
+            and ids is None
+            and limit is None
+            and not newest_first
+            and before is None
+        ):
             return rows
         selected_rows = [
             row
             for row in rows
-            if all(row.get(key) == value for key, value in (filters or {}).items())
+            if (ids is None or row.get("id") in ids)
+            and all(row.get(key) == value for key, value in (filters or {}).items())
         ]
         if before is not None:
             before_key = (before[0].isoformat(), before[1])
@@ -359,6 +367,7 @@ class PersistentDatabaseState(DatabaseState):
         before: tuple[datetime, str] | None = None,
         newest_first: bool = False,
         filters: dict[str, Any] | None = None,
+        ids: set[str] | None = None,
     ) -> list[dict]:
         if not self.available:
             raise PersistenceUnavailableError("Postgres persistence is unavailable")
@@ -366,6 +375,12 @@ class PersistentDatabaseState(DatabaseState):
             raise PersistenceUnavailableError(f"Postgres persistence is unavailable for {table_name}")
         table = _table_for_name(table_name)
         statement = table.select()
+        if ids is not None:
+            if "id" not in table.c:
+                raise SchemaViolationError(f"ID lookup is unavailable for {table_name}")
+            if not ids:
+                return []
+            statement = statement.where(table.c.id.in_(sorted(ids)))
         for key, value in (filters or {}).items():
             if key not in table.c:
                 raise SchemaViolationError(f"unknown repository column: {table_name}.{key}")

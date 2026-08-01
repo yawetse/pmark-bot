@@ -453,12 +453,12 @@ def test_req_ui_008_10_operations_details_read_only_the_latest_run(monkeypatch) 
     )
 
 
-def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypatch) -> None:
+def test_req_ui_008_09_pipeline_detail_records_use_indexed_store_reads(monkeypatch) -> None:
     """TST-REQ-UI-008-09: Validates REQ-UI-008 and REQ-OBS-005
 
     Given: a selected pipeline run has step record IDs
     When: scenario detail loads the records for that run
-    Then: record lookup uses bounded recent reads instead of full table scans
+    Then: record lookup hydrates all step IDs once with indexed, environment-scoped reads
     """
 
     settings = AppSettings(environment=Environment.DEVELOPMENT)
@@ -498,6 +498,24 @@ def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypat
         },
     )
     state.insert(
+        service.PIPELINE_STEPS_TABLE,
+        {
+            "id": "step-2",
+            "run_id": "run-1",
+            "environment": Environment.DEVELOPMENT.value,
+            "step_key": "scanner",
+            "step_order": 2,
+            "label": "Scanner",
+            "status": "accepted",
+            "started_at": now,
+            "completed_at": now,
+            "message": None,
+            "metrics": {},
+            "record_ids": ["scanner-1"],
+            "created_at": now,
+        },
+    )
+    state.insert(
         service.MARKET_DATA_PULLS_TABLE,
         {
             "id": "pull-1",
@@ -510,6 +528,23 @@ def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypat
             "message": "Pulled test data.",
             "error_code": None,
             "run_id": "run-1",
+            "created_at": now,
+        },
+    )
+    state.insert(
+        service.SCANNER_RUNS_TABLE,
+        {
+            "id": "scanner-1",
+            "environment": Environment.DEVELOPMENT.value,
+            "pipeline_run_id": "run-1",
+            "trigger": "scheduled",
+            "status": "accepted",
+            "config": {},
+            "input_count": 1,
+            "accepted_count": 1,
+            "rejected_count": 0,
+            "started_at": now,
+            "completed_at": now,
             "created_at": now,
         },
     )
@@ -527,10 +562,19 @@ def test_req_ui_008_09_pipeline_detail_records_use_bounded_store_reads(monkeypat
     assert detail is not None
     assert detail["records"][0]["recordCount"] == 1
     assert detail["records"][0]["items"][0]["id"] == "pull-1"
+    assert detail["records"][1]["items"][0]["id"] == "scanner-1"
+    record_calls = [
+        (table_name, kwargs)
+        for table_name, kwargs in calls
+        if kwargs.get("ids") is not None
+    ]
+    assert len(record_calls) == len({table_name for table_name, _ in record_calls})
     assert any(
         table_name == service.MARKET_DATA_PULLS_TABLE
         and kwargs.get("limit") == DASHBOARD_PIPELINE_RECORD_ROW_LIMIT
         and kwargs.get("newest_first") is True
+        and kwargs.get("filters") == {"environment": Environment.DEVELOPMENT.value}
+        and kwargs.get("ids") == {"pull-1", "scanner-1"}
         for table_name, kwargs in calls
     )
 
