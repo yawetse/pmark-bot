@@ -26,6 +26,8 @@ def _script_module() -> ModuleType:
 def _safe_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APPLICATION_DOMAIN_NAME", "example.test")
     monkeypatch.setenv("BACKEND_TOKEN_SIGNING_SECRET", "test-signing-secret")
+    monkeypatch.setenv("CERTIFICATE_ARN", "arn:aws:acm:us-east-1:123:certificate/test")
+    monkeypatch.setenv("SES_IDENTITY_EMAIL", "alerts@example.test")
     monkeypatch.setenv("DEPLOY_ENVIRONMENT", "development")
     monkeypatch.setenv("RELEASE_START_MS", "1785546000000")
     monkeypatch.setenv("RUNTIME_CONFIG_USERNAME", "yaw")
@@ -74,11 +76,18 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
         }
 
     monkeypatch.setattr(module, "_get_json", get_json)
+    monkeypatch.setattr(
+        module,
+        "_release_asset_status",
+        lambda *_: {"sesIdentityVerified": True, "acmCertificateStatus": "ISSUED"},
+    )
     monkeypatch.setattr(module, "_broker_post_count", lambda *_: 0)
 
     assert module.main() == 0
     output = capsys.readouterr().out
     assert '"brokerPostEvents": 0' in output
+    assert '"sesIdentityVerified": true' in output
+    assert '"acmCertificateStatus": "ISSUED"' in output
     assert '"realTransferSmokeTest": "not-performed"' in output
 
 
@@ -120,10 +129,65 @@ def test_release_verifier_blocks_unsafe_readback_or_broker_post_events(
         }
 
     monkeypatch.setattr(module, "_get_json", get_json)
+    monkeypatch.setattr(
+        module,
+        "_release_asset_status",
+        lambda *_: {"sesIdentityVerified": True, "acmCertificateStatus": "ISSUED"},
+    )
     monkeypatch.setattr(module, "_broker_post_count", lambda *_: broker_posts)
 
     with pytest.raises(RuntimeError):
         module.main()
+
+
+@pytest.mark.parametrize(
+    ("ses_verified", "certificate_status", "expected_message"),
+    [
+        (False, "ISSUED", "SES identity is not verified"),
+        (True, "PENDING_VALIDATION", "ACM certificate is not issued"),
+    ],
+)
+def test_release_verifier_blocks_unverified_ses_or_acm_assets(
+    monkeypatch: pytest.MonkeyPatch,
+    ses_verified: bool,
+    certificate_status: str,
+    expected_message: str,
+) -> None:
+    module = _script_module()
+
+    def aws_json(arguments: list[str]) -> dict[str, object]:
+        if arguments[0] == "sesv2":
+            return {"VerifiedForSendingStatus": ses_verified}
+        return {"Certificate": {"Status": certificate_status}}
+
+    monkeypatch.setattr(module, "_aws_json", aws_json)
+
+    with pytest.raises(RuntimeError, match=expected_message):
+        module._release_asset_status(
+            "alerts@example.test",
+            "arn:aws:acm:us-east-1:123:certificate/test",
+        )
+
+
+def test_release_verifier_accepts_verified_ses_and_issued_acm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _script_module()
+
+    def aws_json(arguments: list[str]) -> dict[str, object]:
+        if arguments[0] == "sesv2":
+            return {"VerifiedForSendingStatus": True}
+        return {"Certificate": {"Status": "ISSUED"}}
+
+    monkeypatch.setattr(module, "_aws_json", aws_json)
+
+    assert module._release_asset_status(
+        "alerts@example.test",
+        "arn:aws:acm:us-east-1:123:certificate/test",
+    ) == {
+        "sesIdentityVerified": True,
+        "acmCertificateStatus": "ISSUED",
+    }
 
 
 def test_active_workflow_runs_funding_checks_and_both_release_verifiers() -> None:

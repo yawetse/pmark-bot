@@ -110,6 +110,38 @@ def _broker_post_count(log_group: str, start_ms: str) -> int:
     return len(payload.get("events", []))
 
 
+def _aws_json(arguments: list[str]) -> dict[str, Any]:
+    result = subprocess.run(
+        ["aws", *arguments, "--output", "json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def _release_asset_status(
+    ses_identity_email: str,
+    certificate_arn: str,
+) -> dict[str, object]:
+    identity = _aws_json(
+        ["sesv2", "get-email-identity", "--email-identity", ses_identity_email]
+    )
+    if identity.get("VerifiedForSendingStatus") is not True:
+        raise RuntimeError("SES identity is not verified for sending")
+    certificate = _aws_json(
+        ["acm", "describe-certificate", "--certificate-arn", certificate_arn]
+    ).get("Certificate") or {}
+    if certificate.get("Status") != "ISSUED":
+        raise RuntimeError(
+            f"ACM certificate is not issued: {certificate.get('Status') or 'unknown'}"
+        )
+    return {
+        "sesIdentityVerified": True,
+        "acmCertificateStatus": "ISSUED",
+    }
+
+
 def main() -> int:
     environment = _required("DEPLOY_ENVIRONMENT")
     if environment not in {"development", "production"}:
@@ -119,6 +151,8 @@ def main() -> int:
     username = _runtime_username()
     token = _backend_token(username, _required("BACKEND_TOKEN_SIGNING_SECRET"))
     release_start_ms = _required("RELEASE_START_MS")
+    ses_identity_email = _required("SES_IDENTITY_EMAIL")
+    certificate_arn = _required("CERTIFICATE_ARN")
     log_group = os.environ.get(
         "APPLICATION_LOG_GROUP_NAME",
         f"/aws/ecs/codex-poly-bot/{environment}",
@@ -151,6 +185,7 @@ def main() -> int:
     if actual != expected:
         raise RuntimeError(f"unsafe direct-transfer readback: {actual!r}")
 
+    release_assets = _release_asset_status(ses_identity_email, certificate_arn)
     broker_post_count = _broker_post_count(log_group, release_start_ms)
     if broker_post_count != 0:
         raise RuntimeError(
@@ -167,6 +202,7 @@ def main() -> int:
                 "maxMonthlyTransferUsd": "0.00",
                 "brokerPostEvents": 0,
                 "realTransferSmokeTest": "not-performed",
+                **release_assets,
             },
             sort_keys=True,
         )
