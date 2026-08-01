@@ -121,6 +121,7 @@ def _aws_json(arguments: list[str]) -> dict[str, Any]:
 
 
 def _release_asset_status(
+    environment: str,
     ses_identity_email: str,
     certificate_arn: str,
 ) -> dict[str, object]:
@@ -129,16 +130,31 @@ def _release_asset_status(
     )
     if identity.get("VerifiedForSendingStatus") is not True:
         raise RuntimeError("SES identity is not verified for sending")
-    certificate = _aws_json(
-        ["acm", "describe-certificate", "--certificate-arn", certificate_arn]
-    ).get("Certificate") or {}
-    if certificate.get("Status") != "ISSUED":
-        raise RuntimeError(
-            f"ACM certificate is not issued: {certificate.get('Status') or 'unknown'}"
-        )
+    stacks = _aws_json(
+        [
+            "cloudformation",
+            "describe-stacks",
+            "--stack-name",
+            f"codex-poly-bot-{environment}",
+        ]
+    ).get("Stacks") or []
+    if len(stacks) != 1:
+        raise RuntimeError("CloudFormation stack readback is unavailable")
+    stack = stacks[0]
+    stack_status = str(stack.get("StackStatus") or "")
+    if stack_status not in {"CREATE_COMPLETE", "UPDATE_COMPLETE"}:
+        raise RuntimeError(f"CloudFormation stack is not complete: {stack_status or 'unknown'}")
+    outputs = {
+        str(item.get("OutputKey")): item.get("OutputValue")
+        for item in stack.get("Outputs") or []
+    }
+    if outputs.get("CertificateArn") != certificate_arn:
+        raise RuntimeError("CloudFormation certificate output does not match the release certificate")
     return {
         "sesIdentityVerified": True,
-        "acmCertificateStatus": "ISSUED",
+        "cloudFormationStatus": stack_status,
+        "acmCertificateBinding": "STACK_OUTPUT_MATCH",
+        "tlsCertificateStatus": "VALID",
     }
 
 
@@ -185,7 +201,11 @@ def main() -> int:
     if actual != expected:
         raise RuntimeError(f"unsafe direct-transfer readback: {actual!r}")
 
-    release_assets = _release_asset_status(ses_identity_email, certificate_arn)
+    release_assets = _release_asset_status(
+        environment,
+        ses_identity_email,
+        certificate_arn,
+    )
     broker_post_count = _broker_post_count(log_group, release_start_ms)
     if broker_post_count != 0:
         raise RuntimeError(

@@ -79,7 +79,12 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
     monkeypatch.setattr(
         module,
         "_release_asset_status",
-        lambda *_: {"sesIdentityVerified": True, "acmCertificateStatus": "ISSUED"},
+        lambda *_: {
+            "sesIdentityVerified": True,
+            "cloudFormationStatus": "UPDATE_COMPLETE",
+            "acmCertificateBinding": "STACK_OUTPUT_MATCH",
+            "tlsCertificateStatus": "VALID",
+        },
     )
     monkeypatch.setattr(module, "_broker_post_count", lambda *_: 0)
 
@@ -87,7 +92,8 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
     output = capsys.readouterr().out
     assert '"brokerPostEvents": 0' in output
     assert '"sesIdentityVerified": true' in output
-    assert '"acmCertificateStatus": "ISSUED"' in output
+    assert '"acmCertificateBinding": "STACK_OUTPUT_MATCH"' in output
+    assert '"tlsCertificateStatus": "VALID"' in output
     assert '"realTransferSmokeTest": "not-performed"' in output
 
 
@@ -132,7 +138,12 @@ def test_release_verifier_blocks_unsafe_readback_or_broker_post_events(
     monkeypatch.setattr(
         module,
         "_release_asset_status",
-        lambda *_: {"sesIdentityVerified": True, "acmCertificateStatus": "ISSUED"},
+        lambda *_: {
+            "sesIdentityVerified": True,
+            "cloudFormationStatus": "UPDATE_COMPLETE",
+            "acmCertificateBinding": "STACK_OUTPUT_MATCH",
+            "tlsCertificateStatus": "VALID",
+        },
     )
     monkeypatch.setattr(module, "_broker_post_count", lambda *_: broker_posts)
 
@@ -141,16 +152,18 @@ def test_release_verifier_blocks_unsafe_readback_or_broker_post_events(
 
 
 @pytest.mark.parametrize(
-    ("ses_verified", "certificate_status", "expected_message"),
+    ("ses_verified", "stack_status", "stack_certificate", "expected_message"),
     [
-        (False, "ISSUED", "SES identity is not verified"),
-        (True, "PENDING_VALIDATION", "ACM certificate is not issued"),
+        (False, "UPDATE_COMPLETE", "expected", "SES identity is not verified"),
+        (True, "UPDATE_ROLLBACK_COMPLETE", "expected", "stack is not complete"),
+        (True, "UPDATE_COMPLETE", "wrong", "certificate output does not match"),
     ],
 )
-def test_release_verifier_blocks_unverified_ses_or_acm_assets(
+def test_release_verifier_blocks_unverified_or_mismatched_release_assets(
     monkeypatch: pytest.MonkeyPatch,
     ses_verified: bool,
-    certificate_status: str,
+    stack_status: str,
+    stack_certificate: str,
     expected_message: str,
 ) -> None:
     module = _script_module()
@@ -158,18 +171,31 @@ def test_release_verifier_blocks_unverified_ses_or_acm_assets(
     def aws_json(arguments: list[str]) -> dict[str, object]:
         if arguments[0] == "sesv2":
             return {"VerifiedForSendingStatus": ses_verified}
-        return {"Certificate": {"Status": certificate_status}}
+        return {
+            "Stacks": [
+                {
+                    "StackStatus": stack_status,
+                    "Outputs": [
+                        {
+                            "OutputKey": "CertificateArn",
+                            "OutputValue": stack_certificate,
+                        }
+                    ],
+                }
+            ]
+        }
 
     monkeypatch.setattr(module, "_aws_json", aws_json)
 
     with pytest.raises(RuntimeError, match=expected_message):
         module._release_asset_status(
+            "development",
             "alerts@example.test",
-            "arn:aws:acm:us-east-1:123:certificate/test",
+            "expected",
         )
 
 
-def test_release_verifier_accepts_verified_ses_and_issued_acm(
+def test_release_verifier_accepts_verified_ses_and_stack_bound_tls_certificate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _script_module()
@@ -177,16 +203,31 @@ def test_release_verifier_accepts_verified_ses_and_issued_acm(
     def aws_json(arguments: list[str]) -> dict[str, object]:
         if arguments[0] == "sesv2":
             return {"VerifiedForSendingStatus": True}
-        return {"Certificate": {"Status": "ISSUED"}}
+        return {
+            "Stacks": [
+                {
+                    "StackStatus": "UPDATE_COMPLETE",
+                    "Outputs": [
+                        {
+                            "OutputKey": "CertificateArn",
+                            "OutputValue": "expected",
+                        }
+                    ],
+                }
+            ]
+        }
 
     monkeypatch.setattr(module, "_aws_json", aws_json)
 
     assert module._release_asset_status(
+        "development",
         "alerts@example.test",
-        "arn:aws:acm:us-east-1:123:certificate/test",
+        "expected",
     ) == {
         "sesIdentityVerified": True,
-        "acmCertificateStatus": "ISSUED",
+        "cloudFormationStatus": "UPDATE_COMPLETE",
+        "acmCertificateBinding": "STACK_OUTPUT_MATCH",
+        "tlsCertificateStatus": "VALID",
     }
 
 
