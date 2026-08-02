@@ -11,6 +11,8 @@
     "default_selected_venue": "alpaca",
     "polymarket_us_enabled": false,
     "polymarket_international_enabled": false,
+    "kalshi_enabled": false,
+    "kalshi_environment": "demo",
     "alpaca_enabled": true
   },
   "resource_names": [

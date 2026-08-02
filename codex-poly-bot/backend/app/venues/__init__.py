@@ -3,6 +3,7 @@
 REQ: REQ-VEN-003, REQ-VEN-004, REQ-VEN-005, REQ-EXE-010,
 REQ-EXE-011, REQ-EXE-015, REQ-ALP-003, REQ-ALP-004,
 REQ-ALP-008, REQ-ALP-015
+REQ-KAL-003, REQ-KAL-004, REQ-KAL-005, REQ-KAL-006
 """
 
 from app.venues.alpaca import (
@@ -47,6 +48,17 @@ from app.venues.polymarket import (
     validate_polymarket_credentials,
     validate_polymarket_config,
 )
+from app.venues.kalshi import (
+    KALSHI_DEMO_API_BASE_URL,
+    KALSHI_PRODUCTION_API_BASE_URL,
+    KalshiAuthSigner,
+    KalshiCredentials,
+    KalshiLiveOrderAdapter,
+    KalshiLiveOrderRequest,
+    KalshiOrderOutcome,
+    KalshiOrderResult,
+    kalshi_live_order_adapter_from_env,
+)
 
 __all__ = [
     "AlpacaAccountCredential",
@@ -87,4 +99,13 @@ __all__ = [
     "validate_order_type",
     "validate_polymarket_credentials",
     "validate_polymarket_config",
+    "KALSHI_DEMO_API_BASE_URL",
+    "KALSHI_PRODUCTION_API_BASE_URL",
+    "KalshiAuthSigner",
+    "KalshiCredentials",
+    "KalshiLiveOrderAdapter",
+    "KalshiLiveOrderRequest",
+    "KalshiOrderOutcome",
+    "KalshiOrderResult",
+    "kalshi_live_order_adapter_from_env",
 ]

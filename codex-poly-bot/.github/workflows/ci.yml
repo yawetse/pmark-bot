@@ -132,6 +132,12 @@ jobs:
           ALPACA_SYMBOL_UNIVERSE: ${{ vars.ALPACA_SYMBOL_UNIVERSE }}
           ALPACA_SYMBOL_CHUNK_SIZE: ${{ vars.ALPACA_SYMBOL_CHUNK_SIZE }}
           ALPACA_HISTORICAL_BAR_LIMIT: ${{ vars.ALPACA_HISTORICAL_BAR_LIMIT }}
+          KALSHI_ENABLED: ${{ vars.KALSHI_ENABLED }}
+          KALSHI_MARKET_ORDER_SLIPPAGE: ${{ vars.KALSHI_MARKET_ORDER_SLIPPAGE }}
+          KALSHI_MARKET_DATA_LIMIT: ${{ vars.KALSHI_MARKET_DATA_LIMIT }}
+          KALSHI_MARKET_PAGE_SIZE: ${{ vars.KALSHI_MARKET_PAGE_SIZE }}
+          KALSHI_READ_RETRIES: ${{ vars.KALSHI_READ_RETRIES }}
+          KALSHI_RETRY_BACKOFF_SECONDS: ${{ vars.KALSHI_RETRY_BACKOFF_SECONDS }}
           BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
           CERTIFICATE_ARN: ${{ vars.CERTIFICATE_ARN }}
           DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
@@ -144,6 +150,7 @@ jobs:
           DASHBOARD_GITHUB_CLIENT_SECRET: ${{ secrets.DASHBOARD_GITHUB_CLIENT_SECRET }}
           PRIVATE_SUBNET_IDS: ${{ vars.PRIVATE_SUBNET_IDS }}
           PUBLIC_SUBNET_IDS: ${{ vars.PUBLIC_SUBNET_IDS }}
+          BACKEND_SERVICE_SUBNET_IDS: ${{ vars.BACKEND_SERVICE_SUBNET_IDS }}
           RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
           ENABLE_BACKGROUND_WORKER: ${{ vars.ENABLE_BACKGROUND_WORKER }}
           WORKER_HEARTBEAT_INTERVAL_SECONDS: ${{ vars.WORKER_HEARTBEAT_INTERVAL_SECONDS }}
@@ -222,6 +229,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install release verifier dependencies
+        run: python -m pip install -e codex-poly-bot/backend
       - name: Mark release verification window
         id: release-window
         run: echo "start_ms=$(( $(git show -s --format=%ct "$GITHUB_SHA") * 1000 ))" >> "$GITHUB_OUTPUT"
@@ -253,6 +265,15 @@ jobs:
           RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
           SES_IDENTITY_EMAIL: ${{ vars.SES_IDENTITY_EMAIL }}
         run: python codex-poly-bot/scripts/verify-funding-release.py
+      - name: Verify Kalshi read-only release guardrails
+        env:
+          APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
+          BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
+          DEPLOY_ENVIRONMENT: development
+          RELEASE_START_MS: ${{ steps.release-window.outputs.start_ms }}
+          RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
+        run: python codex-poly-bot/scripts/verify-kalshi-release.py
 
   deploy-production:
     name: Deploy production
@@ -270,6 +291,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install release verifier dependencies
+        run: python -m pip install -e codex-poly-bot/backend
       - name: Mark release verification window
         id: release-window
         run: echo "start_ms=$(( $(git show -s --format=%ct "$GITHUB_SHA") * 1000 ))" >> "$GITHUB_OUTPUT"
@@ -301,3 +327,12 @@ jobs:
           RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
           SES_IDENTITY_EMAIL: ${{ vars.SES_IDENTITY_EMAIL }}
         run: python codex-poly-bot/scripts/verify-funding-release.py
+      - name: Verify Kalshi read-only release guardrails
+        env:
+          APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
+          BACKEND_TOKEN_SIGNING_SECRET: ${{ secrets.BACKEND_TOKEN_SIGNING_SECRET }}
+          DASHBOARD_ALLOWED_USERS: ${{ vars.DASHBOARD_ALLOWED_USERS }}
+          DEPLOY_ENVIRONMENT: production
+          RELEASE_START_MS: ${{ steps.release-window.outputs.start_ms }}
+          RUNTIME_CONFIG_USERNAME: ${{ vars.RUNTIME_CONFIG_USERNAME }}
+        run: python codex-poly-bot/scripts/verify-kalshi-release.py

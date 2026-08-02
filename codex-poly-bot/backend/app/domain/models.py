@@ -2,7 +2,7 @@
 
 REQ: REQ-VEN-001, REQ-ALP-001, REQ-ALP-002, REQ-DB-004, REQ-DB-005,
 REQ-LLM-003, REQ-STR-007, REQ-EXE-008, REQ-EXE-016, REQ-EXT-001,
-REQ-CMP-001, REQ-CMP-003, REQ-OBS-001
+REQ-CMP-001, REQ-CMP-003, REQ-OBS-001, REQ-KAL-001
 """
 
 from __future__ import annotations
@@ -18,12 +18,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class Venue(str, Enum):
     """Supported trading venues.
 
-    REQ: REQ-VEN-001, REQ-ALP-001
+    REQ: REQ-VEN-001, REQ-ALP-001, REQ-KAL-001
     """
 
     POLYMARKET_US = "polymarket_us"
     POLYMARKET_INTERNATIONAL = "polymarket_international"
     ALPACA = "alpaca"
+    KALSHI = "kalshi"
 
 
 class InstrumentType(str, Enum):
@@ -139,10 +140,15 @@ def _probability(value: Decimal, field_name: str) -> Decimal:
 def supported_venues() -> set[Venue]:
     """Return all venues supported by v1.
 
-    REQ: REQ-VEN-001, REQ-ALP-001
+    REQ: REQ-VEN-001, REQ-ALP-001, REQ-KAL-001
     """
 
-    return {Venue.POLYMARKET_US, Venue.POLYMARKET_INTERNATIONAL, Venue.ALPACA}
+    return {
+        Venue.POLYMARKET_US,
+        Venue.POLYMARKET_INTERNATIONAL,
+        Venue.ALPACA,
+        Venue.KALSHI,
+    }
 
 
 def supported_polymarket_venues() -> set[Venue]:
@@ -152,6 +158,15 @@ def supported_polymarket_venues() -> set[Venue]:
     """
 
     return {Venue.POLYMARKET_US, Venue.POLYMARKET_INTERNATIONAL}
+
+
+def supported_prediction_market_venues() -> set[Venue]:
+    """Return every supported prediction-market venue.
+
+    REQ: REQ-VEN-001, REQ-KAL-001
+    """
+
+    return {*supported_polymarket_venues(), Venue.KALSHI}
 
 
 class Instrument(DomainModel):
@@ -183,9 +198,9 @@ class Instrument(DomainModel):
                 raise ValueError("Alpaca instruments require symbol")
             return self
         if self.instrument_type != InstrumentType.PREDICTION_MARKET:
-            raise ValueError("Polymarket instruments must be prediction markets")
+            raise ValueError("prediction-market venue instruments must be prediction markets")
         if not self.market_id or not self.market_id.strip() or not self.outcome_id or not self.outcome_id.strip():
-            raise ValueError("Polymarket instruments require market_id and outcome_id")
+            raise ValueError("prediction-market instruments require market_id and outcome_id")
         return self
 
     @property

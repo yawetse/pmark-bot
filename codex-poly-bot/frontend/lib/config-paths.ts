@@ -1,11 +1,12 @@
 // REQ: REQ-UI-005, REQ-UI-006, REQ-UI-007, REQ-ALP-014, REQ-NOT-006,
-// REQ-STR-009, REQ-LLM-006, REQ-EXE-007
+// REQ-STR-009, REQ-LLM-006, REQ-EXE-007, REQ-KAL-009
 
 export const ALLOWED_CONFIG_PATHS = [
   "default_selected_venue",
   "live_enabled",
   "venues.polymarket_us.enabled",
   "venues.polymarket_international.enabled",
+  "venues.kalshi.enabled",
   "venues.alpaca.enabled",
   "trading_loop_interval_seconds",
   "strategies.arbitrage.enabled",
@@ -27,6 +28,10 @@ export const ALLOWED_CONFIG_PATHS = [
   "risk.polymarket.max_daily_loss_usd",
   "risk.polymarket.max_open_positions",
   "risk.polymarket.market_order_slippage_threshold",
+  "risk.kalshi.max_position_usd",
+  "risk.kalshi.max_daily_loss_usd",
+  "risk.kalshi.max_open_positions",
+  "risk.kalshi.market_order_slippage_threshold",
   "risk.alpaca.max_position_usd",
   "risk.alpaca.max_daily_loss_usd",
   "risk.alpaca.max_open_positions",
@@ -47,6 +52,13 @@ export const ALLOWED_CONFIG_PATHS = [
   "scanner.polymarket.max_hours_to_resolution",
   "scanner.polymarket.allowed_categories",
   "scanner.polymarket.blocked_categories",
+  "scanner.kalshi.market_data_limit",
+  "scanner.kalshi.min_depth",
+  "scanner.kalshi.min_liquidity",
+  "scanner.kalshi.max_spread",
+  "scanner.kalshi.min_volume",
+  "scanner.kalshi.min_hours_to_resolution",
+  "scanner.kalshi.max_hours_to_resolution",
   "scanner.alpaca.min_quote_liquidity",
   "scanner.alpaca.max_spread",
   "scanner.alpaca.min_history_bars",
@@ -98,7 +110,7 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   default_selected_venue: {
     label: "Default venue",
     description: "Chooses the primary venue the bot evaluates first.",
-    valueHint: "polymarket_us, polymarket_international, or alpaca",
+    valueHint: "polymarket_us, polymarket_international, kalshi, or alpaca",
     effect: "Applies on the next loop.",
   },
   live_enabled: {
@@ -118,6 +130,12 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "Allows international Polymarket activity when the environment supports it.",
     valueHint: "true or false",
     effect: "Unsupported venue settings still block live orders.",
+  },
+  "venues.kalshi.enabled": {
+    label: "Kalshi venue",
+    description: "Allows standard binary Kalshi markets to enter scanning and scoring.",
+    valueHint: "true or false",
+    effect: "Live orders still require current account, exchange, credential, and risk checks.",
   },
   "venues.alpaca.enabled": {
     label: "Alpaca venue",
@@ -245,6 +263,30 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     valueHint: "Ratio, such as 0.02 for 2 percent",
     effect: "Market orders above the threshold are refused.",
   },
+  "risk.kalshi.max_position_usd": {
+    label: "Kalshi max position",
+    description: "Maximum principal and reserved fee exposure for one Kalshi position.",
+    valueHint: "Positive dollar value",
+    effect: "Orders above the limit are refused.",
+  },
+  "risk.kalshi.max_daily_loss_usd": {
+    label: "Kalshi daily loss limit",
+    description: "Maximum confirmed daily Kalshi loss before new exposure is blocked.",
+    valueHint: "Positive dollar value",
+    effect: "The risk gate blocks new Kalshi orders at or above this loss.",
+  },
+  "risk.kalshi.max_open_positions": {
+    label: "Kalshi open positions",
+    description: "Maximum open Kalshi positions per model account.",
+    valueHint: "Positive whole number",
+    effect: "The risk gate blocks new positions above the limit.",
+  },
+  "risk.kalshi.market_order_slippage_threshold": {
+    label: "Kalshi slippage limit",
+    description: "Maximum price movement added to an IOC limit for a Kalshi market-style order.",
+    valueHint: "Ratio, such as 0.02",
+    effect: "The limit price remains bounded to this amount and the market price step.",
+  },
   "risk.alpaca.max_position_usd": {
     label: "Alpaca max position",
     description: "Maximum stock or ETF exposure for one order.",
@@ -364,6 +406,48 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
     description: "Optional category blocklist for Polymarket scanning.",
     valueHint: "JSON array, such as [\"Sports\"]",
     effect: "Matching categories are rejected.",
+  },
+  "scanner.kalshi.market_data_limit": {
+    label: "Kalshi markets",
+    description: "Maximum active Kalshi markets fetched before scanner filters run.",
+    valueHint: "Whole number from 1 to 250",
+    effect: "Higher values increase authenticated order-book reads.",
+  },
+  "scanner.kalshi.min_depth": {
+    label: "Kalshi min depth",
+    description: "Minimum fixed-point contract depth required on each side.",
+    valueHint: "Positive number, such as 5",
+    effect: "Markets below this depth are rejected before reasoning.",
+  },
+  "scanner.kalshi.min_liquidity": {
+    label: "Kalshi min liquidity",
+    description: "Minimum combined Kalshi order-book notional.",
+    valueHint: "Positive dollar value, such as 10",
+    effect: "Markets below this liquidity are rejected.",
+  },
+  "scanner.kalshi.max_spread": {
+    label: "Kalshi max spread",
+    description: "Maximum allowed YES or NO bid and ask spread.",
+    valueHint: "Ratio, such as 0.05",
+    effect: "Wider markets are rejected before reasoning.",
+  },
+  "scanner.kalshi.min_volume": {
+    label: "Kalshi min volume",
+    description: "Minimum fixed-point market volume for scanner acceptance.",
+    valueHint: "Positive contract count",
+    effect: "Markets below the threshold are rejected.",
+  },
+  "scanner.kalshi.min_hours_to_resolution": {
+    label: "Kalshi min hours",
+    description: "Minimum time remaining before the market closes.",
+    valueHint: "Positive number, such as 4",
+    effect: "Markets too close to closing are rejected.",
+  },
+  "scanner.kalshi.max_hours_to_resolution": {
+    label: "Kalshi max hours",
+    description: "Maximum time remaining before the market closes.",
+    valueHint: "Positive number, such as 168",
+    effect: "Markets tying up capital longer are rejected.",
   },
   "scanner.alpaca.min_quote_liquidity": {
     label: "Stock quote liquidity",

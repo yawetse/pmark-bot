@@ -109,6 +109,25 @@ def test_req_dep_011_01_rds_uses_gp3_storage() -> None:
     assert "StorageType: gp2" not in template
 
 
+def test_req_dep_004_04_backend_rollout_uses_scoped_subnets_and_rollback() -> None:
+    """TST-REQ-DEP-004-04: backend releases preserve availability on task failure."""
+
+    template = (PROJECT_ROOT / "infra" / "cloudformation.yml").read_text()
+    deploy_script = (PROJECT_ROOT / "scripts" / "deploy-stack.sh").read_text()
+    root_workflow = (
+        PROJECT_ROOT.parent / ".github" / "workflows" / "codex-poly-bot-ci.yml"
+    ).read_text()
+
+    assert "BackendServiceSubnetIds:" in template
+    assert "Subnets: !Ref BackendServiceSubnetIds" in template
+    assert "HealthCheckGracePeriodSeconds: 60" in template
+    assert "DeploymentCircuitBreaker:" in template
+    assert "Rollback: true" in template
+    assert 'backend_service_subnet_ids="${BACKEND_SERVICE_SUBNET_IDS:-${PUBLIC_SUBNET_IDS}}"' in deploy_script
+    assert '"BackendServiceSubnetIds=${backend_service_subnet_ids}"' in deploy_script
+    assert "BACKEND_SERVICE_SUBNET_IDS: ${{ vars.BACKEND_SERVICE_SUBNET_IDS }}" in root_workflow
+
+
 def test_req_dat_006_02_cloudformation_s3_raw_lifecycle_retains_365_days() -> None:
     """TST-REQ-DAT-006-02: Validates REQ-DAT-006
 

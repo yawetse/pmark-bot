@@ -138,6 +138,7 @@ function buildBlockedCredentialSteps(
   const polymarket = credentials.find((credential) =>
     credential.venue.includes("polymarket"),
   );
+  const kalshi = credentials.find((credential) => credential.venue === "kalshi");
   const alpaca = credentials.find((credential) => credential.venue === "alpaca");
 
   if (polymarket && !polymarket.present) {
@@ -147,6 +148,14 @@ function buildBlockedCredentialSteps(
         polymarket.message ||
         "A required production Polymarket credential value is missing.",
       meta: `Reference: ${polymarket.reference ?? "/codex-poly-bot/production/polymarket"}`,
+    });
+  }
+
+  if (kalshi && !kalshi.present) {
+    steps.push({
+      title: "Kalshi account",
+      body: kalshi.message || "Kalshi key ID and RSA private key are not ready.",
+      meta: `Reference: ${kalshi.reference ?? "/codex-poly-bot/production/kalshi"}`,
     });
   }
 

@@ -179,7 +179,7 @@ def main() -> int:
         raise RuntimeError(f"unexpected health response: {health!r}")
 
     funding = _get_json(
-        f"{application_url}/api/funding?limit=1",
+        f"{application_url}/api/funding/readiness",
         headers={
             "Authorization": f"Bearer {token}",
             "X-Environment": environment,

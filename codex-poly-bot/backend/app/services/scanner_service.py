@@ -1,6 +1,7 @@
 """Deterministic scanner persistence for Polymarket and stock candidates.
 
-REQ: REQ-STR-003, REQ-DAT-008, REQ-DB-009, REQ-OBS-005, REQ-UI-004
+REQ: REQ-STR-003, REQ-DAT-008, REQ-DB-009, REQ-OBS-005, REQ-UI-004,
+REQ-KAL-001, REQ-KAL-002
 """
 
 from __future__ import annotations
@@ -44,6 +45,18 @@ DEFAULT_SCANNER_CONFIG: dict[str, Any] = {
             "unusual_volume": {"enabled": True, "min_ratio": "1.25"},
         },
     },
+    Venue.KALSHI.value: {
+        "market_data_limit": DEFAULT_POLYMARKET_MARKET_DATA_LIMIT,
+        "min_depth": "5",
+        "min_liquidity": "10",
+        "max_spread": "0.05",
+        "min_volume": "0",
+        "min_hours_to_resolution": "4",
+        "max_hours_to_resolution": "168",
+        "allowed_categories": [],
+        "blocked_categories": [],
+        "target_wallet_recent_hours": 72,
+    },
 }
 
 
@@ -71,9 +84,13 @@ class ScannerService:
         market_data_pulls: list[dict[str, Any]],
         config_payload: dict[str, Any],
         started_at: datetime,
+        kill_switch_active: bool = False,
         completed_at: datetime | None = None,
     ) -> ScannerRunResult:
-        """Scan provider candidates and persist one scanner run."""
+        """Scan provider candidates and honor the immediate kill switch.
+
+        REQ: REQ-KAL-007
+        """
 
         finished_at = completed_at or datetime.now(UTC)
         scanner_config = scanner_config_from_payload(config_payload)
@@ -83,6 +100,7 @@ class ScannerService:
             market_data_pulls=market_data_pulls,
             config_payload=config_payload,
             scanner_config=scanner_config,
+            kill_switch_active=kill_switch_active,
             scanned_at=finished_at,
         )
         accepted_count = sum(1 for candidate in candidate_results if candidate["status"] == "accepted")
@@ -160,6 +178,7 @@ class ScannerService:
         market_data_pulls: list[dict[str, Any]],
         config_payload: dict[str, Any],
         scanner_config: dict[str, Any],
+        kill_switch_active: bool,
         scanned_at: datetime,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -173,6 +192,10 @@ class ScannerService:
                 if not isinstance(candidate, dict):
                     continue
                 venue = str(candidate.get("venue") or pull.get("venue") or "")
+                if venue == Venue.KALSHI.value and (
+                    kill_switch_active or not _kalshi_scanning_enabled(config_payload)
+                ):
+                    continue
                 if venue == Venue.ALPACA.value:
                     results.append(
                         self._scan_stock_candidate(
@@ -183,17 +206,22 @@ class ScannerService:
                             scanned_at=scanned_at,
                         )
                     )
-                elif venue in {Venue.POLYMARKET_US.value, Venue.POLYMARKET_INTERNATIONAL.value}:
+                elif venue in {
+                    Venue.POLYMARKET_US.value,
+                    Venue.POLYMARKET_INTERNATIONAL.value,
+                    Venue.KALSHI.value,
+                }:
                     results.append(
                         self._scan_polymarket_candidate(
                             environment=environment,
                             candidate=candidate,
-                            config=scanner_config["polymarket"],
+                            config=scanner_config[
+                                Venue.KALSHI.value if venue == Venue.KALSHI.value else "polymarket"
+                            ],
                             scanned_at=scanned_at,
                         )
                     )
         return results
-
     def _scan_polymarket_candidate(
         self,
         *,
@@ -215,12 +243,16 @@ class ScannerService:
             else None
         )
         category = str(candidate.get("category") or "").strip()
-        target_overlap = self._target_wallet_overlap(
-            environment=environment,
-            market_id=_market_id(candidate),
-            outcome_id=_outcome_id(candidate),
-            scanned_at=scanned_at,
-            recent_hours=_int_setting(config.get("target_wallet_recent_hours"), 72),
+        target_overlap = (
+            {"count": 0, "wallets": []}
+            if candidate.get("venue") == Venue.KALSHI.value
+            else self._target_wallet_overlap(
+                environment=environment,
+                market_id=_market_id(candidate),
+                outcome_id=_outcome_id(candidate),
+                scanned_at=scanned_at,
+                recent_hours=_int_setting(config.get("target_wallet_recent_hours"), 72),
+            )
         )
         metrics = {
             "midpoint": _string_or_none(price),
@@ -357,6 +389,12 @@ class ScannerService:
         )
 
 
+def _kalshi_scanning_enabled(config_payload: dict[str, Any]) -> bool:
+    venues = config_payload.get("venues") if isinstance(config_payload, dict) else None
+    kalshi = venues.get(Venue.KALSHI.value) if isinstance(venues, dict) else None
+    return bool(kalshi.get("enabled", False)) if isinstance(kalshi, dict) else False
+
+
 def scanner_config_from_payload(config_payload: dict[str, Any]) -> dict[str, Any]:
     """Merge scanner defaults with runtime config."""
 
@@ -371,6 +409,12 @@ def scanner_config_from_payload(config_payload: dict[str, Any]) -> dict[str, Any
         "alpaca": _merge_dicts(
             DEFAULT_SCANNER_CONFIG["alpaca"],
             configured.get("alpaca") if isinstance(configured.get("alpaca"), dict) else {},
+        ),
+        Venue.KALSHI.value: _merge_dicts(
+            DEFAULT_SCANNER_CONFIG[Venue.KALSHI.value],
+            configured.get(Venue.KALSHI.value)
+            if isinstance(configured.get(Venue.KALSHI.value), dict)
+            else {},
         ),
     }
 
