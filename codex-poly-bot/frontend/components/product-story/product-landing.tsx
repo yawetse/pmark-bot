@@ -104,7 +104,7 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
             </h1>
             <p className="landing-lede">
               Codex Poly Bot turns live market data into reviewable trading decisions across
-              Polymarket and Alpaca. It can simulate or submit orders within limits an
+              Polymarket, Kalshi, and Alpaca. It can simulate or submit orders within limits an
               operator can inspect and change.
             </p>
 
@@ -239,9 +239,10 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
               <div>
                 <strong>Conservative scope</strong>
                 <p>
-                  Alpaca supports long stocks and ETFs plus disabled-by-default,
-                  easy-to-borrow U.S. equity shorts. Options, crypto, hard-to-borrow locates,
-                  and margin-funded long purchases are refused.
+                  Kalshi supports standard binary markets on the primary subaccount. Alpaca
+                  supports long stocks and ETFs plus disabled-by-default, easy-to-borrow U.S.
+                  equity shorts. Unsupported contracts, options, crypto, hard-to-borrow
+                  locates, and margin-funded long purchases are refused.
                 </p>
               </div>
             </div>
