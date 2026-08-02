@@ -53,6 +53,14 @@ type NotificationSettingsView = {
   recipientCount?: number;
 };
 
+type OverviewBundle = {
+  config: ConfigSnapshot;
+  operations: OperationsSummaryView;
+  marketData: MarketDataPullView;
+  tickSchedule: TickScheduleView;
+  notifications: NotificationSettingsView;
+};
+
 type PanelState<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
@@ -118,11 +126,14 @@ export function OverviewDashboard() {
 
   useEffect(() => {
     let active = true;
-    void loadPanel("config/current", setConfig, () => active);
-    void loadPanel("operations/summary", setOperations, () => active);
-    void loadPanel("market-data/latest", setMarketData, () => active);
-    void loadPanel("operations/tick-schedule", setSchedule, () => active);
-    void loadPanel("notifications/settings", setNotifications, () => active);
+    void loadOverviewBundle({
+      active: () => active,
+      setConfig,
+      setOperations,
+      setMarketData,
+      setSchedule,
+      setNotifications,
+    });
     return () => {
       active = false;
     };
@@ -133,7 +144,13 @@ export function OverviewDashboard() {
     setMarketData({ status: "ready", data: snapshot.marketData });
     setSchedule({ status: "ready", data: snapshot.tickSchedule });
   }, []);
-  const realtime = useDashboardRealtime({ onSnapshot: onRealtimeSnapshot });
+  const initialLoadComplete = [config, operations, marketData, schedule, notifications].every(
+    (state) => state.status === "ready",
+  );
+  const realtime = useDashboardRealtime({
+    onSnapshot: onRealtimeSnapshot,
+    enabled: initialLoadComplete,
+  });
 
   const configData = config.status === "ready" ? config.data : null;
   const operationData = operations.status === "ready" ? operations.data : null;
@@ -563,9 +580,37 @@ function recentResult(operations: OperationsSummaryView | null): { title: string
   return { title: "No order was placed", body: operations.pipelineRuns[0]?.status ? `The latest check ended with status ${operations.pipelineRuns[0].status}.` : "No completed check is available yet." };
 }
 
-async function loadPanel<T>(path: string, setState: (state: PanelState<T>) => void, active: () => boolean) {
-  const result = await dashboardApi<T>(path);
-  if (active()) setState(result.ok ? { status: "ready", data: result.data } : { status: "error", message: result.message });
+async function loadOverviewBundle({
+  active,
+  setConfig,
+  setOperations,
+  setMarketData,
+  setSchedule,
+  setNotifications,
+}: {
+  active: () => boolean;
+  setConfig: (state: PanelState<ConfigSnapshot>) => void;
+  setOperations: (state: PanelState<OperationsSummaryView>) => void;
+  setMarketData: (state: PanelState<MarketDataPullView>) => void;
+  setSchedule: (state: PanelState<TickScheduleView>) => void;
+  setNotifications: (state: PanelState<NotificationSettingsView>) => void;
+}) {
+  const result = await dashboardApi<OverviewBundle>("dashboard/overview");
+  if (!active()) return;
+  if (!result.ok) {
+    const error = { status: "error" as const, message: result.message };
+    setConfig(error);
+    setOperations(error);
+    setMarketData(error);
+    setSchedule(error);
+    setNotifications(error);
+    return;
+  }
+  setConfig({ status: "ready", data: result.data.config });
+  setOperations({ status: "ready", data: result.data.operations });
+  setMarketData({ status: "ready", data: result.data.marketData });
+  setSchedule({ status: "ready", data: result.data.tickSchedule });
+  setNotifications({ status: "ready", data: result.data.notifications });
 }
 
 async function submitConfigPatch(snapshot: ConfigSnapshot, path: AllowedConfigPath, value: ConfigValue): Promise<ApiClientResult<ConfigUpdateResponse>> {
