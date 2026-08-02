@@ -677,6 +677,59 @@ def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
     assert dashboard.json()["data_source"] == "fastapi"
 
 
+def test_req_ui_017_overview_returns_one_bounded_initial_payload() -> None:
+    """TST-REQ-UI-017-06: Validates REQ-UI-017 and REQ-OBS-005
+
+    Given: an authenticated consumer opens the overview
+    When: its bounded overview endpoint is requested
+    Then: the five initial panels are returned from one config snapshot
+    """
+    client, token = _client()
+
+    response = client.get(
+        "/api/dashboard/overview",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["environment"] == "development"
+    assert set(payload) == {
+        "environment",
+        "generatedAt",
+        "config",
+        "operations",
+        "marketData",
+        "tickSchedule",
+        "notifications",
+    }
+    assert payload["operations"]["killSwitch"] == "inactive"
+
+
+def test_req_ui_009_readiness_omits_expensive_dashboard_sections() -> None:
+    """TST-REQ-UI-009-03: Validates REQ-UI-009 and REQ-OBS-005
+
+    Given: an authenticated operator opens system health
+    When: the readiness endpoint is requested
+    Then: it returns readiness fields without model, economics, or history reads
+    """
+    client, token = _client()
+
+    response = client.get(
+        "/api/dashboard/readiness",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"]["health"] == "ok"
+    assert "credentials" in payload["wallet"]
+    assert "notifications" in payload
+    assert "economics" not in payload
+    assert "models" not in payload
+    assert "operations" not in payload
+
+
 def test_req_obs_006_postgres_startup_failure_is_not_hidden(monkeypatch) -> None:
     """TST-REQ-OBS-006-02: Validates REQ-OBS-006
 
