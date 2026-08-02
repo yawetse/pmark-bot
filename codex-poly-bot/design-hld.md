@@ -106,7 +106,7 @@ Backend process owns v1 background loops:
 | Exit monitor | Profit target, volume spike, and stale thesis exit decisions | Yes, exit decisions | `ExitMonitor` |
 | Dashboard and auth | GitHub OAuth, config UI, status UI, kill switch UI | No, writes config through API | Next.js pages, API client |
 | Notifications | SES digest and threshold alerts | Yes, delivery attempts and cooldown state | `NotificationService`, `EmailPort` |
-| Comparison analytics | Compare model performance across Polymarket and Alpaca | Yes, derived metric snapshots | `ComparisonService`, dashboard API |
+| Comparison analytics | Compare model performance across Polymarket, Kalshi, and Alpaca | Yes, derived metric snapshots | `ComparisonService`, dashboard API |
 | Funding reconciliation | Normalize venue cash flows, materialize expected occurrences, match deposits, calculate cash-flow-adjusted returns, and emit funding alerts | Yes, cash flows and funding occurrences | `FundingService`, `FundingRepository`, venue activity adapters |
 | Alpaca Broker transfer adapter | Submit entitled incoming ACH transfers after local safety checks | No | `FundingTransferPort`, Alpaca Broker API |
 | Deployment and Codex setup | CloudFormation, GitHub Actions, local Docker, Codex docs | No | workflow files, templates, setup scripts |
@@ -117,7 +117,7 @@ Backend process owns v1 background loops:
 Primary trading loop:
 
 1. The backend scheduler reads active config from Postgres.
-2. The venue adapter scans enabled venues only, including enabled Polymarket venues and Alpaca stock or ETF universes.
+2. The venue adapter scans enabled venues only, including enabled Polymarket and Kalshi event markets and Alpaca stock or ETF universes.
 3. The strategy engine applies deterministic filters to reduce candidate markets.
 4. The LLM scoring service sends eligible candidates to Claude and OpenAI, subject to each model budget.
 5. Each model provider writes scoring output to its own schema.
@@ -417,7 +417,7 @@ Audit events are append-only at the application layer. Updates that correct data
 
 ### 5.6 Compliance and Venue Boundaries
 
-The system supports Polymarket US, Polymarket International, and Alpaca through explicit venue flags. The default selected venue is Polymarket US, but all venues are disabled until an authorized user enables a venue in configuration. The design does not include VPN, proxy, or other bypass behavior. Alpaca supports long stocks and ETFs and, when explicitly enabled, easy-to-borrow U.S. equity shorts during regular market hours only. Extended-hours trading is disabled. Live trading is blocked if venue, brokerage, account mode, jurisdiction, trading-hours, market calendar, halt status, tradability, account shorting eligibility, or market-data configuration is unsupported or incomplete.
+The system supports Polymarket US, Polymarket International, Kalshi, and Alpaca through explicit venue flags. The default selected venue is Polymarket US, but event-market venues remain disabled until an authorized user enables one, while the active stock profile enables Alpaca explicitly. The design does not include VPN, proxy, or other bypass behavior. Kalshi local and development traffic is pinned to the recommended demo host and production traffic to the recommended production host. Alpaca supports long stocks and ETFs and, when explicitly enabled, easy-to-borrow U.S. equity shorts during regular market hours only. Extended-hours trading is disabled. Live trading is blocked if venue, credential scope, provider account identity, brokerage, account mode, jurisdiction, trading-hours, market calendar, halt status, tradability, account shorting eligibility, or market-data configuration is unsupported or incomplete.
 
 ### 5.7 Retry and Timeout Policy
 
@@ -521,9 +521,9 @@ Development and production do not share wallet private keys, venue API credentia
 
 ### 5.11 Dashboard Model Separation
 
-The dashboard has a combined overview plus separate Claude and OpenAI views. Each model view shows positions, decisions, strategy signals, budget usage, P&L, refusals, and recent order events for that provider, grouped by Polymarket and Alpaca. Shared system views show ingestion, venue status, Alpaca account mode and health, audit log, notifications, environment health, and kill switch state.
+The dashboard has a combined overview plus separate Claude and OpenAI views. Each model view shows positions, decisions, strategy signals, budget usage, P&L, refusals, and recent order events for that provider, grouped by Polymarket, Kalshi, and Alpaca. Shared system views show ingestion, venue status, Kalshi credential and reconciliation freshness, Alpaca account mode and health, audit log, notifications, environment health, and kill switch state.
 
-Performance uses venue-confirmed account APIs for actual portfolio value, realized and unrealized P&L, open holdings, and confirmed fills. It groups Polymarket US and Alpaca by provider account, deduplicates credentials that resolve to the same account, preserves the last confirmed snapshot when refresh fails, and marks missing values unavailable. Submitted, unfilled, and simulated orders are excluded. Overview receives only a compact current-status result and a link to Performance. AI and AWS costs remain in economics views rather than being mixed into actual venue P&L.
+Performance uses venue-confirmed account APIs for actual portfolio value, realized and unrealized P&L, open holdings, and confirmed fills. It groups Polymarket US, Kalshi, and Alpaca by provider account, blocks Kalshi live exposure when provider account fingerprints collide, preserves the last confirmed snapshot when refresh fails, and marks missing values unavailable. Submitted, unfilled, and simulated orders are excluded. Overview receives only a compact current-status result and a link to Performance. AI and AWS costs remain in economics views rather than being mixed into actual venue P&L.
 
 Comparison views calculate P&L, win rate, drawdown, model cost, open exposure, trade count, and return-to-risk metrics by model provider, venue, environment, instrument type, and time window. Supported windows are all-time, current trading day, trailing 7 days, and trailing 30 days. Missing or insufficient data is shown as unavailable rather than zero.
 
@@ -663,6 +663,7 @@ Performance keeps both raw venue equity movement and adjusted trading results av
 |-----------------|-------------------------|
 | REQ-VEN-001, REQ-VEN-002, REQ-VEN-003, REQ-VEN-004, REQ-VEN-005, REQ-VEN-006 | Venue adapters, venue flags, risk refusals |
 | REQ-ALP-001 through REQ-ALP-026 | Alpaca adapter, stock/ETF scope, account isolation, global dry-run, Alpaca risk defaults, short eligibility and position intent, signed reconciliation, exits |
+| REQ-KAL-001 through REQ-KAL-014 | Kalshi adapter, market data, provider account isolation, fixed-point orders, durable reconciliation, portfolio, dashboard, and deployment evidence |
 | REQ-DAT-001, REQ-DAT-002, REQ-DAT-003, REQ-DAT-004, REQ-DAT-005, REQ-DAT-006, REQ-DAT-007, REQ-DAT-008 | Ingestion service, S3 adapter, retention policy |
 | REQ-DB-001, REQ-DB-002, REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-006, REQ-DB-007, REQ-DB-008, REQ-DB-009, REQ-DB-010 | Postgres repositories, schemas, migrations, venue portfolio records, scanner transactions, commit notifications |
 | REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-004, REQ-WAL-005, REQ-WAL-006, REQ-WAL-007 | Wallet service, wallet CLI, Secrets Manager |
@@ -676,3 +677,115 @@ Performance keeps both raw venue equity movement and adjusted trading results av
 | REQ-NOT-001, REQ-NOT-002, REQ-NOT-003, REQ-NOT-004, REQ-NOT-005, REQ-NOT-006, REQ-NOT-007 | Notification service and SES adapter |
 | REQ-DEP-001, REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006, REQ-DEP-007, REQ-DEP-008, REQ-DEP-009, REQ-DEP-010 | CloudFormation, GitHub Actions, Docker, Codex setup |
 | REQ-OBS-001, REQ-OBS-002, REQ-OBS-003, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006 | Structured logs, audit service, dashboard health |
+
+## 9. Kalshi Venue Extension
+
+### 9.1 Goals and Non-Goals
+
+The extension adds Kalshi to the existing layered monolith without changing the scheduler, model-provider comparison, or database ownership model. It optimizes for safe REST integration, exact fixed-point arithmetic, explicit credential boundaries, reuse of the prediction-market scanner and reasoning path, and fail-closed live execution.
+
+This release does not support multivariate-event markets, RFQ, FIX, non-primary subaccounts, WebSocket streaming, historical public trade backfills, automated deposits, or live-money deployment smoke orders. Historical authenticated account reconciliation is in scope because Kalshi partitions older user records from live endpoints.
+
+### 9.2 Architecture
+
+```text
+Kalshi REST markets and batch books
+              |
+              v
+ProviderBackedMarketDataFetcher -> normalized prediction candidates
+              |                              |
+              v                              v
+       Scanner and Brain ------------> Strategy Consensus
+                                              |
+                                              v
+                                 Shared and Kalshi risk gates
+                                              |
+                         dry run -------------+------------- live
+                            |                                  |
+                            v                                  v
+                     simulated intent                Kalshi V2 adapter
+                                                               |
+                                      balance, positions, fills, settlements
+                                                               |
+                                                               v
+                                              venue portfolio and dashboard
+```
+
+### 9.3 Design Decisions
+
+| ID | Decision | Choice | Rationale |
+|----|----------|--------|-----------|
+| DD-058 | Client boundary | Direct documented REST integration with `httpx` and `cryptography` | Kalshi identifies the OpenAPI specification and REST documentation as the production source of truth; direct integration also matches existing provider patterns and makes non-retry behavior explicit. |
+| DD-059 | Market scope | Standard binary markets only, with multivariate markets excluded | The domain represents one market with YES and NO outcomes; excluding multivariate contracts prevents ambiguous instrument mapping. |
+| DD-060 | Numeric representation | Use field-specific unit conversion and `Decimal`, including cents-to-USD balance conversion, dollar price strings, contract quantity strings, and six-decimal fee intermediates | Kalshi mixes integer cents with fixed-point dollar and quantity strings, so a generic conversion can produce 100x account errors. |
+| DD-061 | Environment routing | Local and development use only `external-api.demo.kalshi.co`; production uses only `external-api.kalshi.com`; no dashboard host override | Demo and production credentials are not interchangeable, and an allowlisted host prevents endpoint crossover. |
+| DD-062 | Order safety | V2 YES-book orders, market-specific tick validation, stable client order ID, persisted unknown-submit state, no automatic POST retry, primary subaccount, and fresh exchange/account checks | This prevents duplicate exposure, invalid prices, and new risk based on stale or ambiguous state. |
+| DD-063 | Reconciliation | Read one live balance; paginate live positions, fills, settlements, and orders; and use only historical fills and orders behind cutoff checkpoints | Scheduled REST reconciliation matches the documented partition boundary without inventing historical position or settlement endpoints. |
+| DD-064 | Deployment | Kalshi is configurable and market-data capable after deploy, but live submission remains credential-gated and no live order is used as release evidence | Production availability can be proven without creating financial exposure. |
+| DD-065 | Provider isolation | OpenAI and Claude use distinct credentials; sorted authenticated `/api_keys` membership sets are hashed into sanitized account fingerprints; read scope is required for reconciliation and write scope for live orders | Separate verified accounts prevent position netting, self-trade collisions, and unreliable provider-level risk attribution. |
+| DD-066 | Disablement and cancellation | Disablement blocks new exposure but preserves reconciliation, exits, and known-order cancellation | Operators must be able to reduce risk after disabling a venue or activating the kill switch. |
+
+### 9.4 Cross-Cutting Concerns
+
+- Security: RSA private keys are persisted only in the approved AWS secret store, injected into the process environment, parsed in memory, and excluded from application persistence, logs, API responses, fixtures, and screenshots. Requests use RSA-PSS SHA-256 over `<millisecond timestamp><UPPERCASE METHOD><full query-free path>`; credential or clock-skew rejection fails closed.
+- Reliability: safe GET requests use at most three total attempts for network, 429, and retryable 5xx failures. A POST is never retried. A later cancel attempt occurs only after reconciliation confirms the same known order remains open. Scheduled execution rereads the persisted config and kill switch after scoring and immediately before execution. Disabled-venue quote reads target the exact confirmed open-position tickers and bypass scanning and reasoning.
+- Data integrity: candidates, orders, positions, fills, fees, and settlements use field-specific `Decimal` unit conversions and stable venue identifiers. Failed refresh data is marked degraded and cannot authorize new exposure.
+- Observability: venue calls emit sanitized provider, operation, status, duration, attempt, and error-code fields without tickers in high-cardinality metric names or any credential material.
+- Performance: open markets use cursor pagination and batch order books capped at 100 tickers per request, then the configured scan limit bounds downstream candidates.
+
+### 9.5 Module Additions
+
+| Module | File | Responsibility | Dependencies |
+|--------|------|----------------|--------------|
+| Kalshi adapter | `backend/app/venues/kalshi.py` | RSA signing, authenticated REST calls, V2 orders, status, cancel, balance, positions, fills, and settlements | `httpx`, `cryptography`, venue result contract |
+| Kalshi market data | `backend/app/services/market_data_provider.py` | Public market pagination, batch order books, candidate normalization | Kalshi REST API, scanner config |
+| Kalshi orchestration | `backend/app/services/runtime_status_service.py`, `lifecycle_service.py` | Venue enablement, credentials, submitter routing, risk, and reconciliation | config, adapter, repositories |
+| Kalshi portfolio | `backend/app/services/venue_portfolio_service.py` | Account, position, fill, settlement, and P&L normalization | Kalshi adapter, shared portfolio tables |
+| Kalshi dashboard | `frontend/components/dashboard/`, `frontend/lib/` | Venue controls, labels, credential readiness, market activity, and performance | dashboard API |
+| Kalshi deployment | `infra/cloudformation.yml`, environment examples, release scripts and docs | Endpoint flags and Secrets Manager injection | GitHub Actions, AWS ECS |
+| Domain and config | `backend/app/domain/models.py`, `backend/app/main.py`, `backend/app/bootstrap.py`, `backend/app/services/config_service.py` | Venue enum, prediction-market classification, safe defaults, validation | shared domain and config contracts |
+| Execution and risk | `backend/app/services/execution_service.py`, `backend/app/services/risk_engine.py` | YES-book translation, IOC limits, fresh-state and provider-isolation gates | lifecycle, adapter, repositories |
+| Persistence and API | `backend/app/db/`, `backend/app/api/`, `backend/app/services/dashboard_service.py` | unknown-submit state, checkpoints, sanitized read models | Postgres, dashboard auth |
+| Scheduler and tests | `backend/app/main.py`, `backend/tests/spec/`, frontend behavior scripts | polling cadence, reconciliation, full trace evidence | runtime wiring, CI |
+
+### 9.6 Order Translation and State Safety
+
+Kalshi V2 quotes only the YES book. The shared decision is translated as follows. Every submitted `price` is a YES-book price and is checked against the selected interval in `market.price_ranges`.
+
+| Normalized outcome | Intent | V2 `side` | YES-book price source | `reduce_only` |
+|--------------------|--------|-----------|-----------------------|---------------|
+| YES | Enter or add long | `bid` | Slippage-capped YES ask | `false` |
+| YES | Exit or reduce long | `ask` | Slippage-floored YES bid | `true` |
+| NO | Enter or add long | `ask` | `1 -` slippage-capped NO ask | `false` |
+| NO | Exit or reduce long | `bid` | `1 -` slippage-floored NO bid | `true` |
+
+The lifecycle persists `SUBMITTING` before dispatch. A pre-dispatch validation or signing failure becomes `REFUSED`. A timeout, 429, or 5xx after dispatch begins becomes `UNKNOWN_SUBMIT`; the client order ID remains reserved and replacement exposure is blocked. Reconciliation reads current and historical orders and fills, live and archived positions, and live settlements until the intent resolves or an operator records review. Disablement and the kill switch still permit reconciliation, exits, and cancellation of known orders.
+
+Authenticated batch order-book bids, including complementary asks derived from the opposite book, are authoritative for execution. Public summary prices are informational only. Empty book liquidity cannot be marked fresh or live eligible. Before sizing an entry, the service reads the event fee override and parent series fee configuration. Supported quadratic fees use the current multiplier, the taker formula, conservative centicent fragmentation overhead, and an order-level rounding accumulator reserve. Unsupported or missing fee configuration blocks the order.
+
+### 9.7 Unit Contract
+
+| Source field family | Source unit | Internal unit | Conversion and precision |
+|---------------------|-------------|---------------|--------------------------|
+| `balance`, `portfolio_value` | Integer cents | USD Decimal | Divide by 100; two-decimal display, exact Decimal storage |
+| `*_dollars`, V2 `price` | Fixed-point dollars | USD or probability-price Decimal | Preserve up to four decimal places; validate by `price_ranges` |
+| `*_fp`, V2 `count` | Fixed-point contracts | Contract Decimal | Preserve two decimal places; minimum 0.01 |
+| Fees, costs, settlement revenue | Endpoint-specific cents or fixed-point dollars | USD Decimal | Convert by documented field, keep six-decimal intermediates, round final currency half-even |
+| P&L | Derived USD | USD Decimal | Revenue minus cost minus fees, with stable fill and settlement deduplication; per-position unrealized P&L remains unavailable until a confirmed venue mark exists |
+
+### 9.8 Live Gates and Release Evidence
+
+Exposure-increasing orders require venue enablement, an active market and exchange, market and account snapshots no older than 60 seconds, distinct provider accounts, no unknown or conflicting entry or exit, valid market price ranges, current supported fee configuration, RSA credentials, and shared risk approval. Scheduled execution receives the persisted kill-switch state. Exit and cancel flows remain available when the venue is disabled or the kill switch is active, and scheduled market-data reads continue for confirmed open Kalshi positions.
+
+Development and production release evidence records commit SHA, workflow URL and conclusion, stack ID and status, ECS task definition and image digest, effective sanitized host and secret references, credential-readiness state, HTTPS health and OAuth boundary results, a public market GET, missing-secret live refusal, and a time-bounded audit or CloudWatch query showing zero Kalshi POST or DELETE operations during the release window. When all six credential secrets are configured, evidence also includes a successful authenticated batch order-book read, each provider's authenticated balance converted from cents to USD, and unchanged order and fill counts. When none are configured, evidence records an explicit not-configured mode and blocked runtime readiness. A partial secret set fails the release. Rollback triggers include failed mandatory CI, unstable ECS services, failed health or auth checks, environment crossover, incomplete configuration, or any unexpected Kalshi mutation.
+
+### 9.9 Requirements Coverage
+
+| Requirement IDs | Covered By HLD Sections |
+|-----------------|-------------------------|
+| REQ-KAL-001 through REQ-KAL-003 | DD-059, DD-060; market-data and orchestration modules |
+| REQ-KAL-004 through REQ-KAL-007 | DD-058, DD-061, DD-062; adapter, credentials, and lifecycle modules |
+| REQ-KAL-008, REQ-KAL-009 | DD-063, DD-065; portfolio and dashboard modules |
+| REQ-KAL-010 | DD-061, DD-064; deployment module and production release evidence |
+| REQ-KAL-011, REQ-KAL-012 | DD-065, DD-066; lifecycle and cancellation modules |
+| REQ-KAL-013, REQ-KAL-014 | DD-060, DD-063; normalization and historical reconciliation modules |

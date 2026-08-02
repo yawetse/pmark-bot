@@ -314,6 +314,7 @@ const CONFIG_GLOSSARY: Array<GlossaryTerm & { matches: string[] }> = [
 const VENUE_OPTIONS = [
   { label: "Polymarket US", value: "polymarket_us" },
   { label: "Polymarket International", value: "polymarket_international" },
+  { label: "Kalshi", value: "kalshi" },
   { label: "Alpaca", value: "alpaca" },
 ];
 
@@ -345,6 +346,7 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
       },
       { path: "venues.polymarket_us.enabled", kind: "switch", fallback: true, stage: "Scan" },
       { path: "venues.polymarket_international.enabled", kind: "switch", fallback: false, stage: "Scan" },
+      { path: "venues.kalshi.enabled", kind: "switch", fallback: false, stage: "Scan" },
       { path: "venues.alpaca.enabled", kind: "switch", fallback: false, stage: "Scan" },
       {
         path: "alpaca.account_mode",
@@ -445,6 +447,32 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         unit: "hours",
         stage: "Market filter",
       },
+      {
+        path: "scanner.kalshi.market_data_limit",
+        kind: "range",
+        fallback: 100,
+        min: 1,
+        max: 250,
+        step: 1,
+        unit: "count",
+        stage: "Kalshi market data",
+      },
+      { path: "scanner.kalshi.min_depth", kind: "number", fallback: 5, min: 0, step: 1, unit: "count", stage: "Kalshi filter" },
+      { path: "scanner.kalshi.min_liquidity", kind: "number", fallback: 10, min: 0, step: 1, unit: "usd", stage: "Kalshi filter" },
+      {
+        path: "scanner.kalshi.max_spread",
+        kind: "range",
+        fallback: 5,
+        min: 0,
+        max: 20,
+        step: 0.1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Kalshi filter",
+      },
+      { path: "scanner.kalshi.min_volume", kind: "number", fallback: 0, min: 0, step: 10, unit: "count", stage: "Kalshi filter" },
+      { path: "scanner.kalshi.min_hours_to_resolution", kind: "range", fallback: 4, min: 0, max: 168, step: 1, unit: "hours", stage: "Kalshi filter" },
+      { path: "scanner.kalshi.max_hours_to_resolution", kind: "range", fallback: 168, min: 1, max: 720, step: 1, unit: "hours", stage: "Kalshi filter" },
       {
         path: "scanner.alpaca.min_quote_liquidity",
         kind: "number",
@@ -581,6 +609,20 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
         unit: "percent",
         displayMultiplier: 100,
         stage: "Execution gate",
+      },
+      { path: "risk.kalshi.max_position_usd", kind: "number", fallback: 25, min: 0, step: 1, unit: "usd", stage: "Kalshi risk" },
+      { path: "risk.kalshi.max_daily_loss_usd", kind: "number", fallback: 50, min: 0, step: 1, unit: "usd", stage: "Kalshi risk" },
+      { path: "risk.kalshi.max_open_positions", kind: "range", fallback: 5, min: 1, max: 100, step: 1, unit: "count", stage: "Kalshi risk" },
+      {
+        path: "risk.kalshi.market_order_slippage_threshold",
+        kind: "range",
+        fallback: 2,
+        min: 0,
+        max: 10,
+        step: 0.1,
+        unit: "percent",
+        displayMultiplier: 100,
+        stage: "Kalshi execution",
       },
       { path: "risk.alpaca.max_position_usd", kind: "number", fallback: 100, min: 0, step: 1, unit: "usd", stage: "Risk gate" },
       { path: "risk.alpaca.max_daily_loss_usd", kind: "number", fallback: 250, min: 0, step: 1, unit: "usd", stage: "Risk gate" },
@@ -1810,13 +1852,15 @@ function settingForPath(path: AllowedConfigPath): SettingDefinition | null {
 
 function commonSettingsForVenue(venue: string): SettingDefinition[] {
   const alpaca = venue === "alpaca";
+  const kalshi = venue === "kalshi";
   const paths: AllowedConfigPath[] = [
     alpaca ? "reasoning.alpaca.min_confidence" : "reasoning.polymarket.min_confidence",
-    alpaca ? "scanner.alpaca.max_spread" : "scanner.polymarket.max_spread",
+    alpaca ? "scanner.alpaca.max_spread" : kalshi ? "scanner.kalshi.max_spread" : "scanner.polymarket.max_spread",
     "live_enabled",
     "notifications.email_on_trade_placed",
     "venues.polymarket_us.enabled",
     "venues.polymarket_international.enabled",
+    "venues.kalshi.enabled",
     "venues.alpaca.enabled",
   ];
   return paths.map(settingForPath).filter((setting): setting is SettingDefinition => setting !== null);

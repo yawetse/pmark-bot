@@ -3794,3 +3794,117 @@ Production deploy verification confirms database migration success, `GET /health
 | 2 | Four business days is the missing-deposit window and `0.01 USD` is the amount tolerance. | Different settlement terms require config expansion. | APPROVED ASSUMPTION |
 | 3 | Alpaca Broker API entitlement and approved ACH relationships are provisioned outside the app. | Direct mode remains safely blocked until provisioned. | OPERATIONAL ASSUMPTION |
 | 4 | Polymarket US exposes read-only funding activity but no entitled direct funding write in scope. | A documented write API would need a new adapter and safety review. | CURRENT API BOUNDARY |
+
+## 29. Kalshi Venue Integration
+
+### 29.1 Domain and Configuration
+
+**Files:** `backend/app/domain/models.py`, `backend/app/bootstrap.py`, `backend/app/main.py`, `backend/app/services/config_service.py`, `frontend/lib/config-paths.ts`, `frontend/components/dashboard/config-controls.tsx`
+
+**Requirements:** REQ-KAL-001, REQ-KAL-004, REQ-KAL-007, REQ-KAL-009, REQ-KAL-010, REQ-KAL-012
+
+Add `Venue.KALSHI = "kalshi"`. Treat every non-Alpaca venue as a prediction market only through an explicit `is_prediction_market_venue()` helper rather than implicit fallthrough. Safe defaults include `KALSHI_ENABLED=false`, scan limit 100, max position 25 USD, max daily loss 50 USD, max open positions 5, and slippage threshold 0.02. The dashboard validates `venues.kalshi.enabled`, `scanner.kalshi.market_data_limit`, Kalshi scanner thresholds, and `risk.kalshi.*`. Deployment-owned `KALSHI_ENVIRONMENT` is not dashboard editable.
+
+Invalid or missing configuration fails closed. Local and development are pinned to `https://external-api.demo.kalshi.co/trade-api/v2`; production is pinned to `https://external-api.kalshi.com/trade-api/v2`. Arbitrary host overrides are not accepted. OpenAI and Claude require distinct key IDs and verified account identities before either can increase live exposure.
+
+### 29.2 Kalshi REST Adapter
+
+**File:** `backend/app/venues/kalshi.py`
+
+**Requirements:** REQ-KAL-003 through REQ-KAL-008, REQ-KAL-011 through REQ-KAL-014
+
+#### Public Interface
+
+- `KalshiCredentials.from_env(environ) -> KalshiCredentials` reads key ID and PEM private key without logging either value.
+- `KalshiAuthSigner.headers(method, path, timestamp_ms=None) -> dict[str, str]` signs `timestamp + method + path_without_query` with RSA-PSS SHA-256 and base64 encodes the result.
+- `KalshiLiveOrderRequest` carries ticker, V2 YES-book `side` (`bid` or `ask`), fixed-point count and price, the market `price_ranges`, time in force, stable client order ID, `reduce_only`, and risk context.
+- `KalshiLiveOrderAdapter.submit_order(request) -> KalshiOrderResult` checks exchange status; validates price, quantity, V2 `exchange_index=0`, supported self-trade prevention, `cancel_order_on_pause=true`, primary subaccount, IOC for market-style requests, post-only compatibility, and `reduce_only`; signs one V2 POST; and returns a typed sanitized outcome. The adapter does not retry POST.
+- `KalshiLiveOrderAdapter.get_order(order_id) -> VenueCallResult` and `cancel_order(order_id) -> VenueCallResult` support reconciliation and cancellation. GET may retry safely; one DELETE attempt follows a fresh order read. A later cancellation cycle may issue a new DELETE for the same order ID only after another read confirms it is still open.
+- `KalshiLiveOrderAdapter.find_order_by_client_order_id(client_order_id, ticker=None) -> VenueCallResult` pages current orders and then historical orders, applies an exact client ID and optional ticker match, and succeeds only for one unique order ID.
+- `KalshiAccountClient` exposes one singleton live `balance` read; paginated live `positions`, `fills`, `settlements`, and `orders`; plus `/historical/cutoff` and paginated historical fills and orders for the primary subaccount.
+- `kalshi_live_order_adapter_from_env(environ) -> KalshiLiveOrderAdapter` resolves demo or production endpoints and rejects incomplete credentials.
+
+#### Invariants and Edge Cases
+
+| Scenario | Expected Behavior | Trace |
+|----------|-------------------|-------|
+| Invalid PEM, missing key ID, or mismatched key | Refuse before network I/O with sanitized credential error | REQ-KAL-004, REQ-KAL-007 |
+| Query parameters are present | Sign only the URL path, excluding the query string | REQ-KAL-004 |
+| Price is outside 0 through 1 or not aligned to the applicable `price_ranges[].step` | Refuse before POST | REQ-KAL-005 |
+| Quantity is zero, negative, or has unsupported precision | Refuse before POST | REQ-KAL-005 |
+| Exchange or trading is inactive | Refuse before POST and expose resume time when supplied | REQ-KAL-007 |
+| POST times out, returns 409 or 429, returns malformed 2xx, or returns ambiguous 5xx | Do not retry; preserve client order ID and return unknown outcome for reconciliation | REQ-KAL-006 |
+| IOC returns no fill or a partial fill | Record terminal unfilled-canceled or partially-filled state and never replace it automatically | REQ-KAL-006 |
+| 429 occurs on GET | Apply at most two retries, three total attempts, with bounded exponential backoff without relying on `Retry-After` | REQ-KAL-003 |
+| Error body contains request or credential details | Persist and display only status, stable error code, operation, and safe message | REQ-KAL-003, REQ-KAL-004 |
+| Credential or account identity matches the other provider | Block new exposure; allow reconciliation, exit, and known-order cancellation | REQ-KAL-012 |
+| Live cutoff advances past a checkpoint | Continue from the stored checkpoint through the corresponding historical endpoint and deduplicate by venue ID | REQ-KAL-014 |
+
+### 29.3 Market Data and Candidate Normalization
+
+**Files:** `backend/app/services/market_data_provider.py`, `backend/app/services/scanner_service.py`
+
+**Requirements:** REQ-KAL-001 through REQ-KAL-003, REQ-KAL-007
+
+`ProviderBackedMarketDataFetcher` reads `/markets` with `status=open`, `mve_filter=exclude`, cursor pagination, and a configurable bounded source limit. It selects active standard binary markets, retains `price_ranges`, and uses a dedicated read credential to request authenticated `/markets/orderbooks` ticker arrays in batches no larger than 100. Every requested ticker must have a book row. Authenticated YES and NO bid arrays are authoritative; complementary asks come from the opposite bid arrays, and public summary quotes never authorize execution. Empty bid arrays cannot produce a live-eligible candidate. The fetcher also resolves `/events/{event_ticker}` fee overrides and `/series/{series_ticker}` fee type and multiplier before emitting one normalized candidate per outcome. Candidate money, quantity, depth, midpoint, spread, liquidity, volume, fee, and resolution-window fields use `Decimal` strings. Kalshi candidates route through the prediction-market scanner while keeping the venue-specific configuration namespace. Without the dedicated read credential, public market summaries may be checked but no candidate is emitted or marked live eligible.
+
+Read retries are limited to two retries, three total attempts. A repeated cursor, 100-page truncation, malformed response, or missing batch row fails closed. Candidate `pulledAt` records successful completion time. Partial batch failure produces a partial result; total failure produces failed or rate-limited status and no live-eligible candidates.
+
+### 29.4 Execution and Lifecycle
+
+**Files:** `backend/app/services/execution_service.py`, `backend/app/services/lifecycle_service.py`, `backend/app/services/risk_engine.py`, `backend/app/services/runtime_status_service.py`
+
+**Requirements:** REQ-KAL-001, REQ-KAL-005 through REQ-KAL-007, REQ-KAL-011, REQ-KAL-012
+
+Add a Kalshi submitter map per model provider and an explicit Kalshi execution request. Dry-run stores a simulated order and makes zero signer or transport calls. Market-style execution uses immediate-or-cancel at a slippage-bounded limit because V2 requires a fixed price. Stable account-scoped idempotency keys become `client_order_id` values. Entry count is derived from approved notional after reserving the current quadratic fee multiplier, conservative per-contract centicent fragmentation overhead, and the maximum order rounding accumulator, then rounded down to 0.01 contracts. Missing or unsupported fee configuration fails closed. The scheduler rereads persisted config and kill-switch state after scoring and immediately before execution. When disabled Kalshi exposure exists, the quote pull requests the exact confirmed position tickers; those candidates remain available to the exit lifecycle but are excluded from scanner and reasoning inputs.
+
+| Candidate outcome | Position intent | V2 side | V2 YES-book price | `reduce_only` |
+|-------------------|-----------------|----------|-------------------|---------------|
+| YES | Enter or add | `bid` | Slippage-capped YES ask | `false` |
+| YES | Exit or reduce | `ask` | Slippage-floored YES bid | `true` |
+| NO | Enter or add | `ask` | `1 -` slippage-capped NO ask | `false` |
+| NO | Exit or reduce | `bid` | `1 -` slippage-floored NO bid | `true` |
+
+The lifecycle persists `SUBMITTING` before calling the adapter. Validation and signing failures before dispatch become `REFUSED`. Timeout, 429, malformed 2xx, or 5xx after dispatch begins becomes `UNKNOWN_SUBMIT`; no replacement order or client-ID reuse is permitted until orders, fills, and positions reconcile to a terminal state or an operator records review. Entry and exit intents both retain model provider and sanitized account fingerprint, reconcile from venue orders and fills, and participate in known-order cancellation. Reservations use the account fingerprint rather than provider name. Disablement blocks new scans, scores, and entries but preserves market reads for open positions, reconciliation, exits, and cancellation of known orders. The persisted kill switch reaches scheduled lifecycle calls and does not block risk-reducing Kalshi exits.
+
+Risk evaluation uses a dedicated `risk.kalshi` configuration while reusing shared prediction-market position, loss, count, freshness, and slippage gates. Exposure-increasing live orders require enabled configuration, active market and exchange, valid `price_ranges`, market and account state no older than 60 seconds, no unknown or conflicting order, provider-distinct credentials and account identity, and shared risk approval.
+
+### 29.5 Portfolio Reconciliation
+
+**File:** `backend/app/services/venue_portfolio_service.py`
+
+**Requirements:** REQ-KAL-008, REQ-KAL-009, REQ-KAL-012, REQ-KAL-013, REQ-KAL-014
+
+For each configured model-provider credential, call authenticated `/api_keys`, sort the returned membership key IDs, and hash the set into a sanitized account fingerprint. Live readiness requires different fingerprints, read scope for reconciliation, and write scope for live order mutations. Reconciliation reads one singleton balance snapshot and cursor-paginates live positions, fills, settlements, and open orders. It reads `/historical/cutoff`, continues older fills and terminal orders through historical endpoints, persists per-provider cursors, and deduplicates by fill ID and order ID. Live positions and settlements remain the sources for current holdings and settlement evidence.
+
+`balance` and `portfolio_value` integer cents are divided by 100 into USD. `*_dollars` and V2 price strings remain dollar Decimal values with up to four places. `*_fp` and V2 count strings remain contract Decimal values with two places. Fees, costs, and settlement revenue are converted according to their documented field units, calculated to six decimal places, and rounded half-even only at the final currency boundary. Signed position quantity retains YES-positive and NO-negative direction. Realized P&L is venue-reported realized P&L minus recorded fees plus settlement revenue minus settlement cost and fees. The positions response does not provide a confirmed per-position mark, so per-position unrealized P&L remains unavailable rather than being inferred from `market_exposure_dollars`. Failed refreshes record degraded status without replacing last confirmed values, and degraded state cannot authorize new exposure.
+
+### 29.6 Dashboard and API
+
+**Files:** `backend/app/services/runtime_status_service.py`, `frontend/components/dashboard/config-controls.tsx`, `frontend/components/dashboard/venue-portfolio-panel.tsx`, dashboard view models and behavior checkers
+
+**Requirements:** REQ-KAL-001, REQ-KAL-009
+
+Add Kalshi to enabled venue ordering, credential rows, readiness gates, active-market labels, settings controls, activity labels, performance aggregates, portfolio history series, position and fill tables, and help text where supported venues are enumerated. Missing credentials show a blocked live-order state while public market data can remain available. UI types retain generic venue strings and expose a dedicated `kalshiPnlUsd` history value.
+
+### 29.7 Deployment and Operations
+
+**Files:** `.env.example`, `backend/.env.example`, `infra/cloudformation.yml`, `docs/wallets-and-accounts.md`, `docs/live-trading-checklist.md`, `docs/deployment.md`, smoke scripts, CI specification tests
+
+**Requirements:** REQ-KAL-004, REQ-KAL-010
+
+Add `KALSHI_ENABLED`, `KALSHI_ENVIRONMENT`, scan, freshness, and retry settings. Inject a dedicated read key ID and RSA private key plus per-provider key IDs and RSA private keys from environment-scoped AWS Secrets Manager paths. Local and development use the recommended demo host; production uses the recommended production host. If the read secret is absent, public market summaries remain available but no order-book candidate is emitted. If a provider secret is absent, live submitter creation and that provider's account reconciliation fail closed.
+
+Deployment evidence records commit SHA, workflow URL and conclusion, stack ID and status, ECS task definition and image digest, sanitized runtime host, effective secret references without values, credential readiness, public Kalshi GET responses, HTTPS health, OAuth denial and authenticated access, and missing-secret live refusal. When all six credential secrets exist, the verifier also requires an authenticated batch order-book read, both provider balances normalized from cents to USD, and unchanged order and fill counts. When no Kalshi secrets exist, it records not-configured for those authenticated checks and requires blocked runtime readiness. Any partial secret set fails verification. A time-bounded CloudWatch or audit query for the release window must show zero Kalshi POST and DELETE operations in development and production. Rollback is required for failed CI, migration failure, ECS instability, health or auth failure, host crossover, incomplete configuration, or any unexpected mutation.
+
+### 29.8 Test Contract
+
+Unit tests block external network egress, mock every authenticated HTTP operation, and use generated test-only RSA keys. Public smoke tests call only GET endpoints. Contract tests verify signatures against the documented message, host allowlists, clock skew, field-specific unit conversion, market price ranges, all four outcome-intent mappings, pagination, historical cutoffs, batch limits, rate limiting, every live gate, exchange pause, dry-run isolation, persisted submit states, stable client IDs, no POST retry, reconcile-before-cancel, distinct provider accounts, frontend authorization and controls, repository secret scanning, CloudFormation secret references, and sanitized errors. No fixture may contain a real key, account response, or live order.
+
+### 29.9 Assumptions
+
+| # | Assumption | Impact if Wrong | Status |
+|---|------------|-----------------|--------|
+| 1 | Standard binary markets and the primary subaccount cover the initial product need. | Multivariate or subaccount support requires new domain and routing requirements. | USER-AUTHORIZED ASSUMPTION |
+| 2 | REST polling at the existing market and portfolio cadences is sufficient for this release. | Lower-latency fills require a later authenticated WebSocket worker. | USER-AUTHORIZED ASSUMPTION |
+| 3 | No live-money order is required to prove deployment. | Operational certification can later add a separately authorized minimal order. | SAFETY ASSUMPTION |

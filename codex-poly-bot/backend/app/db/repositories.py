@@ -2536,8 +2536,14 @@ class SharedRepositories:
                         "exit_run_id": exit_run_id,
                         "pipeline_run_id": pipeline_run_id,
                         "position_id": position_id,
+                        "model_provider": (
+                            model_provider.value
+                            if model_provider is not None
+                            else row.get("model_provider")
+                        ),
                         "trigger_type": trigger_type,
                         "status": status,
+                        "side": side,
                         "quantity": None if quantity is None else Decimal(str(quantity)),
                         "notional_usd": Decimal(str(notional_usd)),
                         "threshold": None if threshold is None else Decimal(str(threshold)),

@@ -1283,6 +1283,7 @@ function enabledVenueLabels(settings: Record<string, unknown>): string[] {
   return [
     ["Polymarket US", "venues.polymarket_us.enabled"],
     ["Polymarket International", "venues.polymarket_international.enabled"],
+    ["Kalshi", "venues.kalshi.enabled"],
     ["Alpaca", "venues.alpaca.enabled"],
   ]
     .filter(([, path]) => booleanConfigValue(valueAtPath(settings, path)))
@@ -1748,6 +1749,11 @@ function scannerFilterAction(
     topVenue?.toLowerCase().includes("alpaca") ||
     (candidates.some((candidate) => candidate.venue.toLowerCase().includes("alpaca")) &&
       !candidates.some((candidate) => candidate.venue.toLowerCase().includes("polymarket")));
+  const mostlyKalshi =
+    topVenue?.toLowerCase().includes("kalshi") ||
+    (candidates.some((candidate) => candidate.venue.toLowerCase().includes("kalshi")) &&
+      !candidates.some((candidate) => candidate.venue.toLowerCase().includes("alpaca")) &&
+      !candidates.some((candidate) => candidate.venue.toLowerCase().includes("polymarket")));
 
   if (mostlyAlpaca || lowerReason.includes("quote")) {
     return patchFunnelAction(
@@ -1757,6 +1763,21 @@ function scannerFilterAction(
       "Widen stock spread",
       "Stock spread updated",
       "Allow wider stock quotes to reach model scoring.",
+    );
+  }
+  if (mostlyKalshi) {
+    const path: AllowedConfigPath = lowerReason.includes("liquidity")
+      ? "scanner.kalshi.min_liquidity"
+      : "scanner.kalshi.max_spread";
+    return patchFunnelAction(
+      settings,
+      path,
+      lowerReason.includes("liquidity")
+        ? lowerPositiveSetting(settings, path, 10, 0.8, 0)
+        : higherRatioSetting(settings, path, 0.05, 0.01, 0.2),
+      lowerReason.includes("liquidity") ? "Lower Kalshi liquidity" : "Widen Kalshi spread",
+      "Kalshi scanner updated",
+      "Adjust the Kalshi filter used before model scoring.",
     );
   }
   if (lowerReason.includes("liquidity")) {
@@ -1873,6 +1894,9 @@ function marketDataVenueLabel(venue: string): string {
   }
   if (normalized === "alpaca") {
     return "Alpaca";
+  }
+  if (normalized === "kalshi") {
+    return "Kalshi";
   }
   return venue;
 }
@@ -2371,6 +2395,8 @@ function rejectionCounts(candidates: ScannerCandidateView[]): Map<string, number
     }
     const venue = isVenue(candidate, "alpaca")
       ? "Alpaca"
+      : isVenue(candidate, "kalshi")
+        ? "Kalshi"
       : isVenue(candidate, "polymarket")
         ? "Polymarket"
         : "Scanner";
@@ -2394,7 +2420,7 @@ function normalizedReason(candidate: ScannerCandidateView): string {
   return String(candidate.refusalReason ?? "").trim().toLowerCase();
 }
 
-function isVenue(candidate: ScannerCandidateView, venue: "alpaca" | "polymarket"): boolean {
+function isVenue(candidate: ScannerCandidateView, venue: "alpaca" | "kalshi" | "polymarket"): boolean {
   return String(candidate.venue ?? "").toLowerCase().includes(venue);
 }
 

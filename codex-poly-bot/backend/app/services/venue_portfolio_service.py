@@ -27,6 +27,7 @@ from app.venues.polymarket import (
     POLYMARKET_US_API_BASE_URL,
     POLYMARKET_US_GATEWAY_BASE_URL,
 )
+from app.venues.kalshi import kalshi_live_order_adapter_from_env
 
 
 PORTFOLIO_SNAPSHOTS_TABLE = f"{SHARED_SCHEMA}.venue_portfolio_snapshots"
@@ -37,13 +38,30 @@ PORTFOLIO_FILL_ROW_LIMIT = 2_000
 PORTFOLIO_RECENT_FILL_LIMIT = 50
 PORTFOLIO_HISTORY_BUCKET_LIMIT = 60
 PORTFOLIO_PAGE_SIZE = 100
-TERMINAL_LOCAL_ORDER_STATUSES = {"refused", "simulated", "filled", "canceled", "failed"}
+TERMINAL_LOCAL_ORDER_STATUSES = {
+    "refused",
+    "simulated",
+    "filled",
+    "partially_filled",
+    "unfilled_canceled",
+    "canceled",
+    "failed",
+}
 ALPACA_TERMINAL_ORDER_STATUS_MAP = {
     "filled": "filled",
     "canceled": "canceled",
     "cancelled": "canceled",
     "expired": "canceled",
     "replaced": "canceled",
+    "rejected": "failed",
+}
+KALSHI_ORDER_STATUS_MAP = {
+    "resting": "submitted",
+    "pending": "submitted",
+    "executed": "filled",
+    "filled": "filled",
+    "canceled": "canceled",
+    "cancelled": "canceled",
     "rejected": "failed",
 }
 
@@ -75,22 +93,236 @@ class ProviderBackedVenuePortfolioSource:
         *,
         polymarket_client_factory: Callable[[dict[str, str]], Any] | None = None,
         alpaca_transport: httpx.BaseTransport | None = None,
+        kalshi_transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 10.0,
         registry: RepositoryRegistry | None = None,
     ) -> None:
         self.runtime_env = dict(runtime_env)
         self.polymarket_client_factory = polymarket_client_factory
         self.alpaca_transport = alpaca_transport
+        self.kalshi_transport = kalshi_transport
         self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.funding_repository = FundingRepository(registry) if registry is not None else None
         self._funding_sync_metadata: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._kalshi_readiness: dict[tuple[str, str], dict[str, Any]] = {}
 
     def fetch_accounts(self, environment: Environment) -> list[dict[str, Any]]:
         accounts: list[dict[str, Any]] = []
         for provider in (ModelProvider.OPENAI, ModelProvider.CLAUDE):
             accounts.append(self._polymarket_account(environment, provider))
             accounts.append(self._alpaca_account(environment, provider))
+            accounts.append(self._kalshi_account(environment, provider))
+        ready_kalshi = [
+            account
+            for account in accounts
+            if account.get("venue") == Venue.KALSHI.value
+            and account.get("status") == "ready"
+        ]
+        refs = [str(account.get("accountRef") or "") for account in ready_kalshi]
+        duplicate_refs = {account_ref for account_ref in refs if refs.count(account_ref) > 1}
+        for account in ready_kalshi:
+            distinct = str(account.get("accountRef") or "") not in duplicate_refs
+            account["_providerAccountDistinct"] = distinct
+            if not distinct:
+                account["status"] = "error"
+                account["message"] = (
+                    "Kalshi account identity matches another model provider; live exposure is blocked."
+                )
+        for account in accounts:
+            if account.get("venue") != Venue.KALSHI.value:
+                continue
+            provider = str(account.get("provider") or "")
+            self._kalshi_readiness[(environment.value, provider)] = {
+                "account_fresh": bool(account.get("_accountReadReady", False)),
+                "account_distinct": bool(account.get("_providerAccountDistinct", False)),
+                "write_scope": bool(account.get("_writeScopeReady", False)),
+                "observed_at": account.get("observedAt"),
+            }
         return accounts
+
+    def kalshi_readiness(
+        self,
+        environment: Environment,
+        provider: ModelProvider,
+    ) -> dict[str, bool]:
+        """Return the latest authenticated readiness without exposing identity material."""
+
+        readiness = dict(
+            self._kalshi_readiness.get((environment.value, provider.value), {})
+        )
+        observed_at = _datetime_or_none(readiness.pop("observed_at", None))
+        readiness["account_fresh"] = bool(
+            readiness.get("account_fresh", False)
+            and observed_at is not None
+            and 0 <= (datetime.now(UTC) - observed_at).total_seconds() <= 60
+        )
+        return {key: bool(value) for key, value in readiness.items()}
+
+    def _kalshi_account(
+        self,
+        environment: Environment,
+        provider: ModelProvider,
+    ) -> dict[str, Any]:
+        """Read and normalize one provider's primary Kalshi account.
+
+        REQ: REQ-KAL-008, REQ-KAL-012, REQ-KAL-013, REQ-KAL-014
+        """
+
+        provider_env = _provider_env(self.runtime_env, Venue.KALSHI, provider)
+        key_id = provider_env.get("KALSHI_KEY_ID", "").strip()
+        private_key = provider_env.get("KALSHI_PRIVATE_KEY", "").strip()
+        fallback_ref = _account_ref(Venue.KALSHI, key_id or provider.value)
+        account_mode = str(provider_env.get("KALSHI_ENVIRONMENT") or "demo").strip().lower()
+        started_at = datetime.now(UTC)
+        if not key_id or not private_key:
+            return _unavailable_account(
+                venue=Venue.KALSHI,
+                provider=provider,
+                account_ref=fallback_ref,
+                account_mode=account_mode,
+                observed_at=started_at,
+                message="Kalshi credentials are not configured for this model provider.",
+            )
+
+        try:
+            adapter = kalshi_live_order_adapter_from_env(
+                provider_env,
+                transport=self.kalshi_transport,
+            )
+            api_keys = _require_venue_result(adapter.api_keys(), "Kalshi API keys")["api_keys"]
+            membership = sorted(
+                {
+                    str(row.get("api_key_id") or "").strip()
+                    for row in api_keys
+                    if isinstance(row, dict) and str(row.get("api_key_id") or "").strip()
+                }
+            )
+            if not membership or key_id not in membership:
+                raise ValueError("Kalshi authenticated key membership is unavailable")
+            active_key = next(
+                row
+                for row in api_keys
+                if isinstance(row, dict) and str(row.get("api_key_id") or "").strip() == key_id
+            )
+            raw_scopes = active_key.get("scopes")
+            if not isinstance(raw_scopes, list):
+                raise ValueError("Kalshi credential scopes are unavailable")
+            scopes = {
+                str(value).strip().lower() for value in raw_scopes if str(value).strip()
+            }
+            if "read" not in scopes:
+                raise ValueError("Kalshi credential lacks read scope")
+            write_scope_ready = bool(scopes & {"write", "write::trade"})
+
+            balance = _require_venue_result(adapter.balance(), "Kalshi balance")
+            raw_positions = _require_venue_result(adapter.positions(), "Kalshi positions")[
+                "market_positions"
+            ]
+            live_fills = _require_venue_result(adapter.fills(), "Kalshi fills")["fills"]
+            settlements = _require_venue_result(adapter.settlements(), "Kalshi settlements")[
+                "settlements"
+            ]
+            live_orders = _require_venue_result(adapter.orders(), "Kalshi orders")["orders"]
+            cutoff = _require_venue_result(
+                adapter.historical_cutoff(),
+                "Kalshi historical cutoff",
+            )
+            historical_fills = _require_venue_result(
+                adapter.historical_fills(),
+                "Kalshi historical fills",
+            )["fills"]
+            historical_orders = _require_venue_result(
+                adapter.historical_orders(),
+                "Kalshi historical orders",
+            )["orders"]
+
+            completed_at = datetime.now(UTC)
+            positions = [_normalize_kalshi_position(row, completed_at) for row in raw_positions]
+            fills_by_id: dict[str, dict[str, Any]] = {}
+            for row in [*live_fills, *historical_fills]:
+                normalized = _normalize_kalshi_fill(row, completed_at)
+                source_id = str(normalized.get("sourceTradeId") or "")
+                if source_id:
+                    fills_by_id[source_id] = normalized
+            fills = list(fills_by_id.values())
+            position_realized = sum(
+                (
+                    _decimal_or_zero(row.get("realizedPnlUsd"))
+                    for row in positions
+                    if row.get("state") == "open"
+                ),
+                Decimal("0"),
+            )
+            settlement_realized = sum(
+                (_kalshi_settlement_pnl(row) for row in settlements),
+                Decimal("0"),
+            )
+            realized_pnl = position_realized + settlement_realized
+            unrealized_pnl: Decimal | None = None if positions else Decimal("0")
+            cash = _required_cents_to_usd(balance.get("balance"), "Kalshi balance")
+            account_value = _required_cents_to_usd(
+                balance.get("portfolio_value"),
+                "Kalshi portfolio value",
+            )
+            account_ref = _account_ref(Venue.KALSHI, "|".join(membership))
+            order_rows = [*live_orders, *historical_orders]
+            order_states = {
+                identifier: str(row.get("status") or "").strip().lower()
+                for row in order_rows
+                if isinstance(row, dict)
+                for identifier in (
+                    str(row.get("order_id") or "").strip(),
+                    str(row.get("client_order_id") or "").strip(),
+                )
+                if identifier
+            }
+            open_order_ids = [
+                str(row.get("order_id") or row.get("client_order_id") or "").strip()
+                for row in live_orders
+                if isinstance(row, dict)
+                and str(row.get("status") or "").strip().lower() in {"resting", "pending"}
+                and str(row.get("order_id") or row.get("client_order_id") or "").strip()
+            ]
+            return {
+                "status": "ready",
+                "venue": Venue.KALSHI.value,
+                "provider": provider.value,
+                "accountRef": account_ref,
+                "accountMode": account_mode,
+                "cashUsd": cash,
+                "buyingPowerUsd": cash,
+                "accountValueUsd": account_value,
+                "realizedPnlUsd": realized_pnl,
+                "unrealizedPnlUsd": unrealized_pnl,
+                "totalPnlUsd": (
+                    realized_pnl + unrealized_pnl
+                    if unrealized_pnl is not None
+                    else None
+                ),
+                "positions": positions,
+                "fills": fills,
+                "cashFlows": [],
+                "fundingStatus": "unavailable",
+                "observedAt": completed_at,
+                "message": "Confirmed from the Kalshi primary-account API.",
+                "_credentialScopes": sorted(scopes),
+                "_writeScopeReady": write_scope_ready,
+                "_providerAccountDistinct": True,
+                "_accountReadReady": True,
+                "_openOrderIds": open_order_ids,
+                "_orderStates": order_states,
+                "_historicalCutoff": cutoff,
+            }
+        except Exception as exc:
+            return _unavailable_account(
+                venue=Venue.KALSHI,
+                provider=provider,
+                account_ref=fallback_ref,
+                account_mode=account_mode,
+                observed_at=datetime.now(UTC),
+                message=f"Kalshi portfolio refresh failed: {type(exc).__name__}.",
+                status="error",
+            )
 
     def _polymarket_account(
         self,
@@ -983,7 +1215,7 @@ class VenuePortfolioService:
                 [account for account in accounts if account["venue"] == venue.value],
                 venue=venue.value,
             )
-            for venue in (Venue.POLYMARKET_US, Venue.ALPACA)
+            for venue in (Venue.POLYMARKET_US, Venue.KALSHI, Venue.ALPACA)
         ]
         overall = _aggregate_accounts(accounts)
         selected_account_refs = {account["accountRef"] for account in accounts}
@@ -1147,6 +1379,45 @@ class VenuePortfolioService:
                 observed_at=observed_at,
                 now=now,
             )
+        if venue == Venue.KALSHI.value:
+            self._reconcile_kalshi_order_intents(
+                environment=environment,
+                model_provider=ModelProvider(provider),
+                fills=[dict(fill) for fill in account.get("fills") or []],
+                order_states=(
+                    account.get("_orderStates")
+                    if isinstance(account.get("_orderStates"), dict)
+                    else {}
+                ),
+                open_order_ids={
+                    str(value)
+                    for value in account.get("_openOrderIds") or []
+                    if str(value)
+                },
+                now=now,
+            )
+            cutoff = account.get("_historicalCutoff")
+            if isinstance(cutoff, dict):
+                for source_name, cutoff_field in (
+                    ("historical_fills", "trades_created_ts"),
+                    ("historical_orders", "orders_updated_ts"),
+                ):
+                    cursor_value = str(cutoff.get(cutoff_field) or "").strip()
+                    if not cursor_value:
+                        raise ValueError("Kalshi historical cutoff is unavailable")
+                    self.registry.shared().upsert_historical_import_checkpoint(
+                        environment=environment,
+                        source=f"kalshi:{provider}:{source_name}",
+                        cursor_type="venue_cutoff",
+                        cursor_value=cursor_value,
+                        status="completed",
+                        metadata={
+                            "accountRef": account_ref,
+                            "cutoffField": cutoff_field,
+                        },
+                        last_success_at=observed_at,
+                        updated_at=now,
+                    )
         account_fills = self._account_fills(environment, venue, account_ref)
         if venue == Venue.ALPACA.value:
             realized = _decimal_or_none(account.get("realizedPnlUsd"))
@@ -1157,30 +1428,53 @@ class VenuePortfolioService:
                     (_decimal_or_zero(row.get("realized_pnl_usd")) for row in account_fills),
                     Decimal("0"),
                 )
-        cost_basis = sum(
-            (_decimal_or_zero(position.get("costBasisUsd")) for position in positions),
-            Decimal("0"),
+        cost_basis_values = [
+            value
+            for position in positions
+            for value in [_decimal_or_none(position.get("costBasisUsd"))]
+            if value is not None
+        ]
+        market_value_values = [
+            value
+            for position in positions
+            for value in [_decimal_or_none(position.get("marketValueUsd"))]
+            if value is not None
+        ]
+        cost_basis = sum(cost_basis_values, Decimal("0"))
+        market_value = (
+            sum(market_value_values, Decimal("0"))
+            if market_value_values or not positions
+            else None
         )
-        market_value = sum(
-            (_decimal_or_zero(position.get("marketValueUsd")) for position in positions),
-            Decimal("0"),
-        )
-        unrealized = sum(
-            (
-                _decimal_or_zero(
-                    position.get("unrealizedPnlUsd"),
-                    default=(
-                        _decimal_or_zero(position.get("marketValueUsd"))
-                        - _decimal_or_zero(position.get("costBasisUsd"))
-                    ),
-                )
+        if venue == Venue.KALSHI.value:
+            unrealized_values = [
+                value
                 for position in positions
-            ),
-            Decimal("0"),
-        )
+                for value in [_decimal_or_none(position.get("unrealizedPnlUsd"))]
+                if value is not None
+            ]
+            unrealized = (
+                sum(unrealized_values, Decimal("0"))
+                if unrealized_values or not positions
+                else None
+            )
+        else:
+            unrealized = sum(
+                (
+                    _decimal_or_zero(
+                        position.get("unrealizedPnlUsd"),
+                        default=(
+                            _decimal_or_zero(position.get("marketValueUsd"))
+                            - _decimal_or_zero(position.get("costBasisUsd"))
+                        ),
+                    )
+                    for position in positions
+                ),
+                Decimal("0"),
+            )
         supplied_total = _decimal_or_none(account.get("totalPnlUsd"))
         total_pnl = supplied_total
-        if total_pnl is None and realized is not None:
+        if total_pnl is None and realized is not None and unrealized is not None:
             total_pnl = realized + unrealized
         snapshot_id = str(uuid4())
         self.registry.state.insert(
@@ -1236,6 +1530,8 @@ class VenuePortfolioService:
                     "total_pnl_usd": (
                         _decimal_or_zero(position.get("realizedPnlUsd"))
                         + _decimal_or_zero(position.get("unrealizedPnlUsd"))
+                        if _decimal_or_none(position.get("unrealizedPnlUsd")) is not None
+                        else None
                     ),
                     "state": str(position.get("state") or "open"),
                     "observed_at": _datetime_or_now(position.get("updatedAt") or observed_at),
@@ -1532,6 +1828,99 @@ class VenuePortfolioService:
                 },
             )
 
+    def _reconcile_kalshi_order_intents(
+        self,
+        *,
+        environment: Environment,
+        model_provider: ModelProvider,
+        fills: list[dict[str, Any]],
+        order_states: dict[str, Any],
+        open_order_ids: set[str],
+        now: datetime,
+    ) -> None:
+        """Resolve ambiguous Kalshi intents only from exact account evidence.
+
+        REQ: REQ-KAL-006, REQ-KAL-014
+        """
+
+        filled_order_ids = {
+            str(fill.get("venueOrderId") or "").strip()
+            for fill in fills
+            if str(fill.get("venueOrderId") or "").strip()
+        }
+        terminal_local = {
+            "refused",
+            "simulated",
+            "filled",
+            "partially_filled",
+            "unfilled_canceled",
+            "canceled",
+            "failed",
+        }
+        for table_name in ("order_intents", "exit_intents"):
+            table = f"{SHARED_SCHEMA}.{table_name}"
+            for row in self.registry.state.rows(table):
+                prior_source = (
+                    row.get("source_payload")
+                    if isinstance(row.get("source_payload"), dict)
+                    else {}
+                )
+                row_provider = str(
+                    row.get("model_provider")
+                    or prior_source.get("modelProvider")
+                    or ""
+                )
+                if (
+                    row.get("environment") != environment.value
+                    or row.get("venue") != Venue.KALSHI.value
+                    or row_provider != model_provider.value
+                    or str(row.get("status") or "") in terminal_local
+                ):
+                    continue
+                venue_order_id = str(row.get("venue_order_id") or "").strip()
+                client_order_id = str(row.get("idempotency_key") or "").strip()
+                observed = str(
+                    order_states.get(venue_order_id)
+                    or order_states.get(client_order_id)
+                    or ""
+                ).strip().lower()
+                if venue_order_id in filled_order_ids and venue_order_id not in open_order_ids:
+                    observed = "filled"
+                local_status = KALSHI_ORDER_STATUS_MAP.get(observed)
+                if local_status is None:
+                    continue
+                prior_status = str(row.get("status") or "")
+                self.registry.state.update_by_id(
+                    table,
+                    str(row["id"]),
+                    {
+                        "status": local_status,
+                        "refusal_reason": None,
+                        "source_payload": {
+                            **prior_source,
+                            "kalshiReconciliation": {
+                                "source": "venue_portfolio_refresh",
+                                "status": observed,
+                            },
+                        },
+                        "updated_at": now,
+                    },
+                )
+                self.registry.shared().record_audit_event(
+                    event_type="kalshi_order_reconciled",
+                    actor="system",
+                    action="kalshi.order.reconciled",
+                    environment=environment,
+                    entity_id=str(row["id"]),
+                    metadata={
+                        "intent_type": "exit" if table_name == "exit_intents" else "entry",
+                        "model_provider": model_provider.value,
+                        "previous_status": prior_status,
+                        "venue_status": observed,
+                        "local_status": local_status,
+                    },
+                )
+
     def _upsert_fill(
         self,
         *,
@@ -1726,9 +2115,14 @@ def _aggregate_accounts(
             "filledTrades": sum(int(account["filledTrades"]) for account in available),
         }
     if venue is not None:
+        label = {
+            Venue.POLYMARKET_US.value: "Polymarket US",
+            Venue.KALSHI.value: "Kalshi",
+            Venue.ALPACA.value: "Alpaca",
+        }.get(venue, venue)
         payload = {
             "venue": venue,
-            "label": "Polymarket US" if venue == Venue.POLYMARKET_US.value else "Alpaca",
+            "label": label,
             **payload,
             "accounts": [{key: value for key, value in account.items() if key != "_positions"} for account in accounts],
         }
@@ -1753,6 +2147,7 @@ def _portfolio_history(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 latest_by_account[account_key] = row
         rows = list(latest_by_account.values())
         polymarket_rows = [row for row in rows if row.get("venue") == Venue.POLYMARKET_US.value]
+        kalshi_rows = [row for row in rows if row.get("venue") == Venue.KALSHI.value]
         alpaca_rows = [row for row in rows if row.get("venue") == Venue.ALPACA.value]
         history.append(
             {
@@ -1760,6 +2155,7 @@ def _portfolio_history(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "accountValueUsd": _sum_row_money(rows, "account_value_usd"),
                 "totalPnlUsd": _sum_row_money(rows, "total_pnl_usd"),
                 "polymarketUsPnlUsd": _sum_row_money(polymarket_rows, "total_pnl_usd"),
+                "kalshiPnlUsd": _sum_row_money(kalshi_rows, "total_pnl_usd"),
                 "alpacaPnlUsd": _sum_row_money(alpaca_rows, "total_pnl_usd"),
             }
         )
@@ -1768,6 +2164,8 @@ def _portfolio_history(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _position_payload(row: dict[str, Any], providers: list[str]) -> dict[str, Any]:
     quantity = _decimal_or_zero(row.get("quantity"))
+    venue = str(row.get("venue"))
+    outcome = row.get("outcome")
     return {
         "id": str(row.get("id")),
         "venue": str(row.get("venue")),
@@ -1775,9 +2173,12 @@ def _position_payload(row: dict[str, Any], providers: list[str]) -> dict[str, An
         "accountRef": str(row.get("account_ref")),
         "instrumentId": str(row.get("instrument_id")),
         "title": str(row.get("title")),
-        "outcome": row.get("outcome"),
+        "outcome": outcome,
+        "outcomeSide": outcome if venue == Venue.KALSHI.value else None,
         "quantity": _decimal_text(quantity),
-        "positionSide": "short" if quantity < 0 else "long",
+        "positionSide": (
+            "outcome" if venue == Venue.KALSHI.value else "short" if quantity < 0 else "long"
+        ),
         "averageEntryPrice": _money_or_none(row.get("average_entry_price")),
         "currentPrice": _money_or_none(row.get("current_price")),
         "costBasisUsd": _money_or_none(row.get("cost_basis_usd")),
@@ -1809,6 +2210,120 @@ def _fill_payload(row: dict[str, Any]) -> dict[str, Any]:
         "state": "filled",
         "executedAt": _isoformat(row.get("executed_at")),
     }
+
+
+def _require_venue_result(result: Any, operation: str) -> dict[str, Any]:
+    if not bool(getattr(result, "ok", False)):
+        reason = str(getattr(result, "refusal_reason", None) or "venue_read_failed")
+        raise RuntimeError(f"{operation} failed: {reason}")
+    payload = getattr(result, "payload", None)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{operation} returned an invalid payload")
+    return payload
+
+
+def _required_cents_to_usd(value: Any, field_name: str) -> Decimal:
+    parsed = _decimal_or_none(value)
+    if parsed is None or parsed != parsed.to_integral_value():
+        raise ValueError(f"{field_name} must be integer cents")
+    return parsed / Decimal("100")
+
+
+def _normalize_kalshi_position(row: dict[str, Any], observed_at: datetime) -> dict[str, Any]:
+    ticker = str(row.get("ticker") or "").strip()
+    if not ticker:
+        raise ValueError("Kalshi position ticker is unavailable")
+    quantity = _decimal_or_none(row.get("position_fp"))
+    if quantity is None:
+        raise ValueError("Kalshi position count is unavailable")
+    outcome_side = "YES" if quantity >= 0 else "NO"
+    cost_basis = abs(_decimal_or_zero(row.get("market_exposure_dollars")))
+    # Kalshi's market-position response provides open-position exposure/cost,
+    # not a marked per-position market value. Preserve the confirmed cost and
+    # leave the mark and unrealized P&L unavailable instead of manufacturing them.
+    fee = abs(_decimal_or_zero(row.get("fees_paid_dollars")))
+    realized_pnl = _decimal_or_zero(row.get("realized_pnl_dollars")) - fee
+    return {
+        "instrumentId": ticker,
+        "title": ticker,
+        "outcome": outcome_side,
+        "outcomeSide": outcome_side,
+        "quantity": quantity,
+        "positionSide": "outcome",
+        "averageEntryPrice": (
+            cost_basis / abs(quantity)
+            if quantity != 0
+            else None
+        ),
+        "currentPrice": None,
+        "costBasisUsd": cost_basis,
+        "marketValueUsd": None,
+        "realizedPnlUsd": realized_pnl,
+        "unrealizedPnlUsd": None,
+        "feeUsd": fee,
+        "state": "open" if quantity != 0 else "closed",
+        "updatedAt": _datetime_or_now(row.get("last_updated_ts") or observed_at),
+    }
+
+
+def _kalshi_outcome_side(row: dict[str, Any]) -> str:
+    explicit = str(row.get("outcome_side") or "").strip().lower()
+    if explicit in {"yes", "no"}:
+        return explicit.upper()
+    book_side = str(row.get("book_side") or "").strip().lower()
+    if book_side in {"bid", "ask"}:
+        return "YES" if book_side == "bid" else "NO"
+    action = str(row.get("action") or "").strip().lower()
+    side = str(row.get("side") or "").strip().lower()
+    truth_table = {
+        ("buy", "yes"): "YES",
+        ("sell", "no"): "YES",
+        ("buy", "no"): "NO",
+        ("sell", "yes"): "NO",
+    }
+    outcome = truth_table.get((action, side))
+    if outcome is None:
+        raise ValueError("Kalshi fill outcome side is unavailable")
+    return outcome
+
+
+def _normalize_kalshi_fill(row: dict[str, Any], observed_at: datetime) -> dict[str, Any]:
+    fill_id = str(row.get("fill_id") or row.get("trade_id") or "").strip()
+    ticker = str(row.get("ticker") or row.get("market_ticker") or "").strip()
+    quantity = _decimal_or_none(row.get("count_fp"))
+    if not fill_id or not ticker or quantity is None or quantity <= 0:
+        raise ValueError("Kalshi fill identity or quantity is unavailable")
+    outcome_side = _kalshi_outcome_side(row)
+    price_field = "yes_price_dollars" if outcome_side == "YES" else "no_price_dollars"
+    price = _decimal_or_none(row.get(price_field))
+    if price is None:
+        raise ValueError("Kalshi fill price is unavailable")
+    fee = abs(_decimal_or_zero(row.get("fee_cost")))
+    return {
+        "sourceTradeId": fill_id,
+        "venueOrderId": _text_or_none(row.get("order_id")),
+        "instrumentId": ticker,
+        "title": ticker,
+        "side": outcome_side.lower(),
+        "outcomeSide": outcome_side,
+        "quantity": quantity,
+        "price": price,
+        "notionalUsd": quantity * price,
+        "realizedPnlUsd": None,
+        "feeUsd": fee,
+        "state": "filled",
+        "executedAt": _datetime_or_now(
+            row.get("created_time") or row.get("ts") or observed_at
+        ),
+    }
+
+
+def _kalshi_settlement_pnl(row: dict[str, Any]) -> Decimal:
+    revenue = _required_cents_to_usd(row.get("revenue"), "Kalshi settlement revenue")
+    yes_cost = abs(_decimal_or_zero(row.get("yes_total_cost_dollars")))
+    no_cost = abs(_decimal_or_zero(row.get("no_total_cost_dollars")))
+    fee = abs(_decimal_or_zero(row.get("fee_cost")))
+    return revenue - yes_cost - no_cost - fee
 
 
 def _normalize_alpaca_position(row: dict[str, Any], observed_at: datetime) -> dict[str, Any]:
@@ -1915,6 +2430,13 @@ def _provider_env(
             runtime_env.get(f"POLYMARKET_{provider_key}_ACCOUNT_ID", "").strip()
             or runtime_env.get("POLYMARKET_ACCOUNT_ID", "").strip()
         )
+    elif venue == Venue.KALSHI:
+        result["KALSHI_KEY_ID"] = runtime_env.get(
+            f"KALSHI_{provider_key}_KEY_ID", ""
+        ).strip()
+        result["KALSHI_PRIVATE_KEY"] = runtime_env.get(
+            f"KALSHI_{provider_key}_PRIVATE_KEY", ""
+        ).strip()
     else:
         result["ALPACA_KEY_ID"] = runtime_env.get(f"ALPACA_{provider_key}_KEY_ID", "").strip()
         result["ALPACA_SECRET_KEY"] = runtime_env.get(
@@ -1954,6 +2476,7 @@ def _empty_summary(environment: Environment, now: datetime, message: str) -> dic
         "overall": empty,
         "venues": [
             _aggregate_accounts([], venue=Venue.POLYMARKET_US.value),
+            _aggregate_accounts([], venue=Venue.KALSHI.value),
             _aggregate_accounts([], venue=Venue.ALPACA.value),
         ],
         "accounts": [],

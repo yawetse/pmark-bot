@@ -2,7 +2,7 @@
 
 REQ: REQ-UI-004, REQ-UI-009, REQ-NOT-006, REQ-DAT-008,
 REQ-WAL-005, REQ-WAL-006, REQ-OBS-005, REQ-DB-008, REQ-UI-013,
-REQ-UI-014, REQ-CMP-005
+REQ-UI-014, REQ-CMP-005, REQ-KAL-001, REQ-KAL-004, REQ-KAL-009
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -92,6 +92,7 @@ from app.services.venue_portfolio_service import (
 )
 from app.venues import (
     alpaca_live_order_adapter_from_env,
+    kalshi_live_order_adapter_from_env,
     polymarket_us_live_adapter_from_env,
 )
 
@@ -374,6 +375,7 @@ class RuntimeStatusService:
         venue_portfolio_source: VenuePortfolioSource | None = None,
         alpaca_submitter: Any | None = None,
         polymarket_submitter: Any | None = None,
+        kalshi_submitter: Any | None = None,
     ) -> None:
         self.settings = settings
         self.registry = registry or RepositoryRegistry()
@@ -399,6 +401,11 @@ class RuntimeStatusService:
             if polymarket_submitter is not None
             else _polymarket_submitters_from_settings(settings)
         )
+        resolved_kalshi_submitters = (
+            {provider: kalshi_submitter for provider in TRADING_MODEL_PROVIDERS}
+            if kalshi_submitter is not None
+            else _kalshi_submitters_from_settings(settings)
+        )
         resolved_alpaca_submitter = _first_submitter(resolved_alpaca_submitters)
         resolved_polymarket_submitter = _first_submitter(resolved_polymarket_submitters)
         self.notification_ledger = NotificationDeliveryLedger()
@@ -410,6 +417,7 @@ class RuntimeStatusService:
             polymarket_submitter=resolved_polymarket_submitter,
             polymarket_submitters=resolved_polymarket_submitters,
             polymarket_position_closer=resolved_polymarket_submitter,
+            kalshi_submitters=resolved_kalshi_submitters,
             notification_adapter=ses_adapter_from_env(
                 getattr(settings, "runtime_env", {}),
                 source=getattr(settings, "ses_identity_email", ""),
@@ -487,6 +495,7 @@ class RuntimeStatusService:
                     "enabled": self.settings.polymarket_international_enabled
                 },
                 Venue.ALPACA.value: {"enabled": self.settings.alpaca_enabled},
+                Venue.KALSHI.value: {"enabled": self.settings.kalshi_enabled},
             },
             "trading_loop_interval_seconds": 900,
             "strategies": {
@@ -517,6 +526,12 @@ class RuntimeStatusService:
                     "max_open_positions": 5,
                     "max_portfolio_allocation_per_symbol": "0.10",
                     "market_order_slippage_threshold": self.settings.alpaca_slippage_threshold,
+                },
+                Venue.KALSHI.value: {
+                    "max_position_usd": "25.00",
+                    "max_daily_loss_usd": "50.00",
+                    "max_open_positions": 5,
+                    "market_order_slippage_threshold": self.settings.kalshi_slippage_threshold,
                 },
             },
             "scanner": DEFAULT_SCANNER_CONFIG,
@@ -717,7 +732,10 @@ class RuntimeStatusService:
                 created_at=now,
                 run_id=run_id,
             )
-            for venue in self._market_data_venues(config_payload)
+            for venue in self._market_data_venues_with_open_kalshi(
+                config_payload,
+                environment=environment,
+            )
         ]
         market_data_pull = self.market_data_pull(
             environment=environment,
@@ -1104,6 +1122,8 @@ class RuntimeStatusService:
         *,
         environment: Environment,
         config_payload: dict[str, Any],
+        kill_switch_active: bool = False,
+        execution_context_reader: Callable[[], tuple[dict[str, Any], bool]] | None = None,
     ) -> dict[str, Any]:
         """Run scheduled provider market-data ingestion and record the heartbeat."""
 
@@ -1120,7 +1140,10 @@ class RuntimeStatusService:
             config_payload=config_payload,
         )
         market_data_pulls = []
-        for venue in self._scheduled_market_data_fetch_order(config_payload):
+        for venue in self._scheduled_market_data_fetch_order(
+            config_payload,
+            environment=environment,
+        ):
             market_data_pulls.append(
                 self._fetch_and_record_market_data_pull(
                     environment=environment,
@@ -1162,6 +1185,10 @@ class RuntimeStatusService:
             started_at=strategy_started_at,
             completed_at=strategy_started_at,
         )
+        execution_config_payload = config_payload
+        execution_kill_switch_active = kill_switch_active
+        if execution_context_reader is not None:
+            execution_config_payload, execution_kill_switch_active = execution_context_reader()
         execution_started_at = datetime.now(UTC)
         execution_run = self.lifecycle.run_execution(
             environment=environment,
@@ -1169,8 +1196,9 @@ class RuntimeStatusService:
             trigger="scheduled",
             strategy_run=strategy_run.payload,
             market_data_pulls=market_data_pulls,
-            config_payload=config_payload,
+            config_payload=execution_config_payload,
             credential_status=self._venue_credential_status(environment),
+            kill_switch_active=execution_kill_switch_active,
             started_at=execution_started_at,
             completed_at=execution_started_at,
         )
@@ -1180,7 +1208,8 @@ class RuntimeStatusService:
             pipeline_run_id=run_id,
             trigger="scheduled",
             market_data_pulls=market_data_pulls,
-            config_payload=config_payload,
+            config_payload=execution_config_payload,
+            kill_switch_active=execution_kill_switch_active,
             started_at=exit_started_at,
             completed_at=exit_started_at,
         )
@@ -1320,6 +1349,20 @@ class RuntimeStatusService:
         """
 
         rows = [
+            self._credential_row(
+                credential_id=f"{Venue.KALSHI.value}-market-data-read",
+                label="Kalshi / market data read",
+                venue=Venue.KALSHI.value,
+                provider="market_data",
+                reference=f"/codex-poly-bot/{environment.value}/kalshi/market-data/rsa-key",
+                required_names=(
+                    "KALSHI_MARKET_DATA_KEY_ID",
+                    "KALSHI_MARKET_DATA_PRIVATE_KEY",
+                ),
+                public_identifier=f"kalshi-market-data-{environment.value}",
+                enabled=self.settings.kalshi_enabled,
+                purpose="authenticated Kalshi batch order-book reads",
+            ),
             *(
                 self._credential_row(
                     credential_id=f"{Venue.POLYMARKET_US.value}-{provider.value}-wallet",
@@ -1342,6 +1385,26 @@ class RuntimeStatusService:
                     public_identifier=f"pm-{provider.value}-{environment.value}",
                     enabled=self.settings.polymarket_us_enabled,
                     purpose="live Polymarket US orders for model performance comparison",
+                )
+                for provider in TRADING_MODEL_PROVIDERS
+            ),
+            *(
+                self._credential_row(
+                    credential_id=f"{Venue.KALSHI.value}-{provider.value}-account",
+                    label=f"Kalshi / {_provider_label(provider)}",
+                    venue=Venue.KALSHI.value,
+                    provider=provider.value,
+                    reference=resolve_credential_ref(
+                        CredentialTarget(environment, Venue.KALSHI, provider, "rsa-key")
+                    ),
+                    required_names=(
+                        f"KALSHI_{provider.value.upper()}_KEY_ID",
+                        f"KALSHI_{provider.value.upper()}_PRIVATE_KEY",
+                    ),
+                    alternative_required_names=(),
+                    public_identifier=f"kalshi-{provider.value}-{environment.value}",
+                    enabled=self.settings.kalshi_enabled,
+                    purpose="Kalshi account reconciliation and live orders for model comparison",
                 )
                 for provider in TRADING_MODEL_PROVIDERS
             ),
@@ -1401,7 +1464,8 @@ class RuntimeStatusService:
 
         worker = self.worker_status()
         credentials = self.credential_rows(environment)
-        missing_required = [item for item in credentials if item["requiredForLive"] and not item["present"]]
+        enabled_venues = self._enabled_config_venues(config_payload)
+        missing_required = self._loop_credential_blockers(credentials, enabled_venues)
         notifications = self.notification_summary(config_payload)
         live_enabled = bool(config_payload.get("live_enabled", False))
         selected_venue = str(config_payload.get("default_selected_venue", "unknown"))
@@ -3240,7 +3304,12 @@ class RuntimeStatusService:
     def _venue_credential_status(self, environment: Environment) -> dict[str, bool]:
         credentials = self.credential_rows(environment)
         status: dict[str, bool] = {}
-        for venue in (Venue.POLYMARKET_US.value, Venue.POLYMARKET_INTERNATIONAL.value, Venue.ALPACA.value):
+        for venue in (
+            Venue.POLYMARKET_US.value,
+            Venue.POLYMARKET_INTERNATIONAL.value,
+            Venue.KALSHI.value,
+            Venue.ALPACA.value,
+        ):
             required = [
                 credential
                 for credential in credentials
@@ -3249,6 +3318,19 @@ class RuntimeStatusService:
             status[venue] = bool(required) and all(credential["present"] for credential in required)
             for credential in required:
                 status[f"{venue}:{credential['provider']}"] = credential["present"]
+        readiness_reader = getattr(self.venue_portfolio.source, "kalshi_readiness", None)
+        for provider in TRADING_MODEL_PROVIDERS:
+            readiness = (
+                readiness_reader(environment, provider)
+                if callable(readiness_reader)
+                else {}
+            )
+            prefix = f"{Venue.KALSHI.value}:{provider.value}"
+            status[f"{prefix}:account_fresh"] = bool(readiness.get("account_fresh", False))
+            status[f"{prefix}:account_distinct"] = bool(
+                readiness.get("account_distinct", False)
+            )
+            status[f"{prefix}:write_scope"] = bool(readiness.get("write_scope", False))
         return status
 
     def _risk_value(self, risk_config: dict[str, Any], venue: str, field_name: str) -> str:
@@ -3795,9 +3877,23 @@ class RuntimeStatusService:
         created_at: datetime,
         run_id: str,
     ) -> dict[str, Any]:
+        fetch_config = config_payload
+        if venue == Venue.KALSHI.value:
+            required_tickers = sorted(
+                {
+                    str(position.get("ticker") or "").strip()
+                    for position in self.lifecycle._open_kalshi_positions(environment)  # noqa: SLF001
+                    if str(position.get("ticker") or "").strip()
+                }
+            )
+            if required_tickers:
+                fetch_config = {
+                    **config_payload,
+                    "_kalshi_required_tickers": required_tickers,
+                }
         result = self.market_data_fetcher.fetch(
             venue=venue,
-            config_payload=config_payload,
+            config_payload=fetch_config,
             pulled_at=created_at,
         )
         return self._record_market_data_pull(
@@ -3960,6 +4056,7 @@ class RuntimeStatusService:
             Venue.POLYMARKET_US.value,
             Venue.POLYMARKET_INTERNATIONAL.value,
             Venue.ALPACA.value,
+            Venue.KALSHI.value,
         ]
         enabled = [venue for venue in supported if self._venue_enabled(venue, config_payload)]
         if not enabled:
@@ -3970,8 +4067,16 @@ class RuntimeStatusService:
                 ordered.append(venue)
         return ordered
 
-    def _scheduled_market_data_fetch_order(self, config_payload: dict[str, Any]) -> list[str]:
-        venues = self._market_data_venues(config_payload)
+    def _scheduled_market_data_fetch_order(
+        self,
+        config_payload: dict[str, Any],
+        *,
+        environment: Environment | None = None,
+    ) -> list[str]:
+        venues = self._market_data_venues_with_open_kalshi(
+            config_payload,
+            environment=environment,
+        )
         selected_venue = str(
             config_payload.get("default_selected_venue")
             or self.settings.default_selected_venue.value
@@ -3980,10 +4085,26 @@ class RuntimeStatusService:
             return venues
         return [venue for venue in venues if venue != selected_venue] + [selected_venue]
 
+    def _market_data_venues_with_open_kalshi(
+        self,
+        config_payload: dict[str, Any],
+        *,
+        environment: Environment | None = None,
+    ) -> list[str]:
+        venues = self._market_data_venues(config_payload)
+        if (
+            environment is not None
+            and Venue.KALSHI.value not in venues
+            and self.lifecycle._open_kalshi_positions(environment)  # noqa: SLF001
+        ):
+            venues.append(Venue.KALSHI.value)
+        return venues
+
     def _enabled_config_venues(self, config_payload: dict[str, Any]) -> list[str]:
         supported = [
             Venue.POLYMARKET_US.value,
             Venue.POLYMARKET_INTERNATIONAL.value,
+            Venue.KALSHI.value,
             Venue.ALPACA.value,
         ]
         return [venue for venue in supported if self._venue_enabled(venue, config_payload)]
@@ -4000,6 +4121,8 @@ class RuntimeStatusService:
             return bool(self.settings.polymarket_international_enabled)
         if venue == Venue.ALPACA.value:
             return bool(self.settings.alpaca_enabled)
+        if venue == Venue.KALSHI.value:
+            return bool(self.settings.kalshi_enabled)
         return False
 
     def _market_data_summary_payload(
@@ -4683,6 +4806,31 @@ def _polymarket_submitters_from_settings(settings: Any) -> dict[ModelProvider, A
     return submitters
 
 
+def _kalshi_submitters_from_settings(settings: Any) -> dict[ModelProvider, Any]:
+    """Build only complete provider-isolated Kalshi live submitters.
+
+    REQ: REQ-KAL-004, REQ-KAL-007, REQ-KAL-012
+    """
+
+    runtime_env = getattr(settings, "runtime_env", {})
+    if not bool(getattr(settings, "live_enabled", False)):
+        return {}
+    if not bool(getattr(settings, "kalshi_enabled", False)):
+        return {}
+    submitters: dict[ModelProvider, Any] = {}
+    for provider in TRADING_MODEL_PROVIDERS:
+        provider_env = _provider_runtime_env(runtime_env, venue=Venue.KALSHI, provider=provider)
+        if not _configured(provider_env.get("KALSHI_KEY_ID")):
+            continue
+        if not _configured(provider_env.get("KALSHI_PRIVATE_KEY")):
+            continue
+        try:
+            submitters[provider] = kalshi_live_order_adapter_from_env(provider_env)
+        except ValueError:
+            continue
+    return submitters
+
+
 def _provider_runtime_env(
     runtime_env: dict[str, str],
     *,
@@ -4713,6 +4861,16 @@ def _provider_runtime_env(
                 "wallet",
             )
         )
+        return provider_env
+    if venue == Venue.KALSHI:
+        provider_env["KALSHI_KEY_ID"] = runtime_env.get(
+            f"KALSHI_{provider_key}_KEY_ID",
+            "",
+        ).strip()
+        provider_env["KALSHI_PRIVATE_KEY"] = runtime_env.get(
+            f"KALSHI_{provider_key}_PRIVATE_KEY",
+            "",
+        ).strip()
     return provider_env
 
 

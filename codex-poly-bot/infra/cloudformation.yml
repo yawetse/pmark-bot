@@ -1,6 +1,7 @@
 # REQ: REQ-DEP-002, REQ-DEP-006, REQ-DEP-010, REQ-DEP-011, REQ-WAL-003,
 # REQ-DAT-003, REQ-DAT-006, REQ-DAT-007, REQ-NOT-001,
-# REQ-OBS-002, REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006
+# REQ-OBS-002, REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006,
+# REQ-KAL-004, REQ-KAL-010
 AWSTemplateFormatVersion: "2010-09-09"
 Description: codex-poly-bot AWS deployment contract
 Metadata:
@@ -44,6 +45,7 @@ Parameters:
     AllowedValues:
       - polymarket_us
       - polymarket_international
+      - kalshi
       - alpaca
   PolymarketUsEnabled:
     Type: String
@@ -57,6 +59,30 @@ Parameters:
     AllowedValues:
       - "true"
       - "false"
+  KalshiEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+  KalshiEnvironment:
+    Type: String
+    Default: demo
+    AllowedValues:
+      - demo
+      - production
+  KalshiMarketDataLimit:
+    Type: String
+    Default: "100"
+  KalshiMarketPageSize:
+    Type: String
+    Default: "100"
+  KalshiReadRetries:
+    Type: String
+    Default: "2"
+  KalshiRetryBackoffSeconds:
+    Type: String
+    Default: "0.25"
   AlpacaEnabled:
     Type: String
     Default: "false"
@@ -64,6 +90,9 @@ Parameters:
       - "true"
       - "false"
   PolymarketMarketOrderSlippage:
+    Type: String
+    Default: "0.02"
+  KalshiMarketOrderSlippage:
     Type: String
     Default: "0.02"
   AlpacaMarketOrderSlippage:
@@ -202,6 +231,24 @@ Parameters:
   PolymarketClaudePrivateKeySecretArn:
     Type: String
     Default: ""
+  KalshiMarketDataKeyIdSecretArn:
+    Type: String
+    Default: ""
+  KalshiMarketDataPrivateKeySecretArn:
+    Type: String
+    Default: ""
+  KalshiOpenAiKeyIdSecretArn:
+    Type: String
+    Default: ""
+  KalshiOpenAiPrivateKeySecretArn:
+    Type: String
+    Default: ""
+  KalshiClaudeKeyIdSecretArn:
+    Type: String
+    Default: ""
+  KalshiClaudePrivateKeySecretArn:
+    Type: String
+    Default: ""
   AlpacaKeyIdSecretArn:
     Type: String
     Default: ""
@@ -313,6 +360,12 @@ Conditions:
   UsePolymarketClaudeKeyIdSecret: !Not [!Equals [!Ref PolymarketClaudeKeyIdSecretArn, ""]]
   UsePolymarketClaudeSecretKeySecret: !Not [!Equals [!Ref PolymarketClaudeSecretKeySecretArn, ""]]
   UsePolymarketClaudePrivateKeySecret: !Not [!Equals [!Ref PolymarketClaudePrivateKeySecretArn, ""]]
+  UseKalshiMarketDataKeyIdSecret: !Not [!Equals [!Ref KalshiMarketDataKeyIdSecretArn, ""]]
+  UseKalshiMarketDataPrivateKeySecret: !Not [!Equals [!Ref KalshiMarketDataPrivateKeySecretArn, ""]]
+  UseKalshiOpenAiKeyIdSecret: !Not [!Equals [!Ref KalshiOpenAiKeyIdSecretArn, ""]]
+  UseKalshiOpenAiPrivateKeySecret: !Not [!Equals [!Ref KalshiOpenAiPrivateKeySecretArn, ""]]
+  UseKalshiClaudeKeyIdSecret: !Not [!Equals [!Ref KalshiClaudeKeyIdSecretArn, ""]]
+  UseKalshiClaudePrivateKeySecret: !Not [!Equals [!Ref KalshiClaudePrivateKeySecretArn, ""]]
   UseAlpacaKeyIdSecret: !Not [!Equals [!Ref AlpacaKeyIdSecretArn, ""]]
   UseAlpacaSecretKeySecret: !Not [!Equals [!Ref AlpacaSecretKeySecretArn, ""]]
   UseAlpacaOpenAiKeyIdSecret: !Not [!Equals [!Ref AlpacaOpenAiKeyIdSecretArn, ""]]
@@ -755,10 +808,24 @@ Resources:
               Value: !Ref PolymarketUsEnabled
             - Name: POLYMARKET_INTERNATIONAL_ENABLED
               Value: !Ref PolymarketInternationalEnabled
+            - Name: KALSHI_ENABLED
+              Value: !Ref KalshiEnabled
+            - Name: KALSHI_ENVIRONMENT
+              Value: !Ref KalshiEnvironment
+            - Name: KALSHI_MARKET_DATA_LIMIT
+              Value: !Ref KalshiMarketDataLimit
+            - Name: KALSHI_MARKET_PAGE_SIZE
+              Value: !Ref KalshiMarketPageSize
+            - Name: KALSHI_READ_RETRIES
+              Value: !Ref KalshiReadRetries
+            - Name: KALSHI_RETRY_BACKOFF_SECONDS
+              Value: !Ref KalshiRetryBackoffSeconds
             - Name: ALPACA_ENABLED
               Value: !Ref AlpacaEnabled
             - Name: POLYMARKET_MARKET_ORDER_SLIPPAGE
               Value: !Ref PolymarketMarketOrderSlippage
+            - Name: KALSHI_MARKET_ORDER_SLIPPAGE
+              Value: !Ref KalshiMarketOrderSlippage
             - Name: ALPACA_MARKET_ORDER_SLIPPAGE
               Value: !Ref AlpacaMarketOrderSlippage
             - Name: ALPACA_BASE_URL
@@ -877,6 +944,36 @@ Resources:
               - UsePolymarketClaudePrivateKeySecret
               - Name: POLYMARKET_CLAUDE_PRIVATE_KEY
                 ValueFrom: !Ref PolymarketClaudePrivateKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseKalshiMarketDataKeyIdSecret
+              - Name: KALSHI_MARKET_DATA_KEY_ID
+                ValueFrom: !Ref KalshiMarketDataKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseKalshiMarketDataPrivateKeySecret
+              - Name: KALSHI_MARKET_DATA_PRIVATE_KEY
+                ValueFrom: !Ref KalshiMarketDataPrivateKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseKalshiOpenAiKeyIdSecret
+              - Name: KALSHI_OPENAI_KEY_ID
+                ValueFrom: !Ref KalshiOpenAiKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseKalshiOpenAiPrivateKeySecret
+              - Name: KALSHI_OPENAI_PRIVATE_KEY
+                ValueFrom: !Ref KalshiOpenAiPrivateKeySecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseKalshiClaudeKeyIdSecret
+              - Name: KALSHI_CLAUDE_KEY_ID
+                ValueFrom: !Ref KalshiClaudeKeyIdSecretArn
+              - !Ref AWS::NoValue
+            - !If
+              - UseKalshiClaudePrivateKeySecret
+              - Name: KALSHI_CLAUDE_PRIVATE_KEY
+                ValueFrom: !Ref KalshiClaudePrivateKeySecretArn
               - !Ref AWS::NoValue
             - !If
               - UseAlpacaKeyIdSecret

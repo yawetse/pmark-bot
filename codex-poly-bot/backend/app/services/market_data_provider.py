@@ -1,6 +1,7 @@
 """Provider-backed market data ingestion helpers.
 
-REQ: REQ-DAT-001, REQ-DAT-002, REQ-DAT-008, REQ-OBS-005
+REQ: REQ-DAT-001, REQ-DAT-002, REQ-DAT-008, REQ-OBS-005,
+REQ-KAL-001, REQ-KAL-002, REQ-KAL-003
 """
 
 from __future__ import annotations
@@ -14,11 +15,18 @@ import json
 import logging
 import threading
 import time
-from typing import Any, Iterator, Protocol, Sequence
+from typing import Any, Iterator, Mapping, Protocol, Sequence
+from urllib.parse import quote
 
 import httpx
 
 from app.domain import Venue
+from app.venues.kalshi import (
+    KALSHI_DEMO_API_BASE_URL,
+    KALSHI_PRODUCTION_API_BASE_URL,
+    KalshiAuthSigner,
+    KalshiCredentials,
+)
 from app.services.scanner_service import (
     DEFAULT_POLYMARKET_MARKET_DATA_LIMIT,
     MAX_POLYMARKET_MARKET_DATA_LIMIT,
@@ -39,6 +47,10 @@ DEFAULT_POLYMARKET_ORDER_BOOK_RETRIES = 2
 DEFAULT_POLYMARKET_ORDER_BOOK_RETRY_BACKOFF_SECONDS = 0.25
 DEFAULT_POLYMARKET_ORDER_BOOK_CONCURRENCY = 4
 DEFAULT_POLYMARKET_ORDER_BOOK_CACHE_TTL_SECONDS = 300.0
+DEFAULT_KALSHI_MARKET_DATA_LIMIT = 100
+MAX_KALSHI_MARKET_DATA_LIMIT = 250
+DEFAULT_KALSHI_MARKET_PAGE_SIZE = 100
+DEFAULT_KALSHI_READ_RETRIES = 2
 LOGGER = logging.getLogger(__name__)
 
 
@@ -123,7 +135,7 @@ class ProviderHttpError(RuntimeError):
 
 
 class ProviderBackedMarketDataFetcher:
-    """Fetch dashboard market data from Alpaca and Polymarket providers."""
+    """Fetch dashboard market data from Alpaca, Polymarket, and Kalshi providers."""
 
     def __init__(
         self,
@@ -224,6 +236,42 @@ class ProviderBackedMarketDataFetcher:
             minimum=0.0,
             maximum=3600.0,
         )
+        app_environment = source.get("APP_ENV", source.get("ENVIRONMENT", "local")).strip().lower()
+        self.kalshi_environment = source.get("KALSHI_ENVIRONMENT", "demo").strip().lower()
+        self.kalshi_environment_valid = (
+            self.kalshi_environment in {"demo", "production"}
+            and (app_environment == "production") == (self.kalshi_environment == "production")
+        )
+        self.kalshi_base_url = (
+            KALSHI_PRODUCTION_API_BASE_URL
+            if self.kalshi_environment == "production"
+            else KALSHI_DEMO_API_BASE_URL
+        )
+        self.kalshi_market_limit = _int_setting(
+            source.get("KALSHI_MARKET_DATA_LIMIT"),
+            DEFAULT_KALSHI_MARKET_DATA_LIMIT,
+            minimum=1,
+            maximum=MAX_KALSHI_MARKET_DATA_LIMIT,
+        )
+        self.kalshi_market_page_size = _int_setting(
+            source.get("KALSHI_MARKET_PAGE_SIZE"),
+            DEFAULT_KALSHI_MARKET_PAGE_SIZE,
+            minimum=1,
+            maximum=1000,
+        )
+        self.kalshi_read_retries = _int_setting(
+            source.get("KALSHI_READ_RETRIES"),
+            DEFAULT_KALSHI_READ_RETRIES,
+            minimum=0,
+            maximum=2,
+        )
+        self.kalshi_retry_backoff_seconds = _float_setting(
+            source.get("KALSHI_RETRY_BACKOFF_SECONDS"),
+            0.25,
+            minimum=0.0,
+            maximum=5.0,
+        )
+        self._kalshi_market_data_signer = _kalshi_market_data_signer(source)
 
     def fetch(
         self,
@@ -240,6 +288,8 @@ class ProviderBackedMarketDataFetcher:
                 config_payload=config_payload,
                 pulled_at=pulled_at,
             )
+        if venue == Venue.KALSHI.value:
+            return self._fetch_kalshi(config_payload=config_payload, pulled_at=pulled_at)
         return MarketDataProviderResult(
             venue=venue,
             status="failed",
@@ -248,6 +298,360 @@ class ProviderBackedMarketDataFetcher:
             candidates=[],
             error_code="unsupported_venue",
         )
+
+    def _fetch_kalshi(
+        self,
+        *,
+        config_payload: dict[str, Any],
+        pulled_at: datetime,
+    ) -> MarketDataProviderResult:
+        """Fetch active binary Kalshi markets and fixed-point order books.
+
+        REQ: REQ-KAL-001, REQ-KAL-002, REQ-KAL-003
+        """
+
+        market_limit = _kalshi_market_data_limit(
+            config_payload=config_payload,
+            default=self.kalshi_market_limit,
+        )
+        required_tickers = _kalshi_required_tickers(config_payload)
+        kalshi_enabled = _kalshi_enabled(config_payload)
+        if not self.kalshi_environment_valid:
+            return MarketDataProviderResult(
+                venue=Venue.KALSHI.value,
+                status="failed",
+                source="kalshi trade api",
+                message="Kalshi environment routing is invalid for this deployment.",
+                candidates=[],
+                error_code="kalshi_environment_invalid",
+            )
+        markets: list[dict[str, Any]] = []
+        cursor = ""
+        exchange_active = False
+        exchange_resume_time: str | None = None
+        try:
+            with self._client() as client:
+                exchange_payload = self._kalshi_get_json(
+                    client,
+                    f"{self.kalshi_base_url}/exchange/status",
+                    operation="kalshi exchange status",
+                )
+                if not isinstance(exchange_payload, dict) or not all(
+                    isinstance(exchange_payload.get(field), bool)
+                    for field in ("exchange_active", "trading_active")
+                ):
+                    raise ProviderHttpError(
+                        status="failed",
+                        error_code="provider_invalid_payload",
+                        message="Kalshi exchange status returned an invalid payload.",
+                    )
+                exchange_active = bool(exchange_payload["exchange_active"]) and bool(
+                    exchange_payload["trading_active"]
+                )
+                exchange_resume_time = _first_string(
+                    exchange_payload.get("exchange_estimated_resume_time")
+                )
+                if kalshi_enabled or not required_tickers:
+                    for page_index in range(100):
+                        params = {
+                            "limit": str(min(self.kalshi_market_page_size, market_limit)),
+                            "status": "open",
+                            "mve_filter": "exclude",
+                        }
+                        if cursor:
+                            params["cursor"] = cursor
+                        payload = self._kalshi_get_json(
+                            client,
+                            f"{self.kalshi_base_url}/markets",
+                            params=params,
+                            operation="kalshi active markets",
+                        )
+                        page = payload.get("markets") if isinstance(payload, dict) else None
+                        if not isinstance(page, list):
+                            raise ProviderHttpError(
+                                status="failed",
+                                error_code="provider_invalid_payload",
+                                message="kalshi active markets returned an invalid payload.",
+                            )
+                        markets.extend(
+                            market
+                            for market in page
+                            if isinstance(market, dict) and _kalshi_market_tradable(market)
+                        )
+                        next_cursor = str(payload.get("cursor") or "").strip()
+                        if next_cursor and next_cursor == cursor:
+                            raise ProviderHttpError(
+                                status="failed",
+                                error_code="kalshi_repeated_cursor",
+                                message="Kalshi active market pagination repeated a cursor.",
+                            )
+                        if not next_cursor or len(markets) >= market_limit:
+                            break
+                        if page_index == 99:
+                            raise ProviderHttpError(
+                                status="failed",
+                                error_code="kalshi_pagination_limit",
+                                message="Kalshi active market pagination exceeded 100 pages.",
+                            )
+                        cursor = next_cursor
+                    markets = markets[:market_limit]
+                fetched_tickers = {
+                    str(market.get("ticker") or "").strip()
+                    for market in markets
+                }
+                for ticker in required_tickers:
+                    if ticker in fetched_tickers:
+                        continue
+                    payload = self._kalshi_get_json(
+                        client,
+                        f"{self.kalshi_base_url}/markets/{quote(ticker, safe='')}",
+                        operation="kalshi required position market",
+                    )
+                    market = payload.get("market") if isinstance(payload, dict) else None
+                    if isinstance(market, dict) and _kalshi_market_tradable(market):
+                        markets.append(market)
+                        fetched_tickers.add(ticker)
+                if not markets:
+                    return MarketDataProviderResult(
+                        venue=Venue.KALSHI.value,
+                        status="empty",
+                        source="kalshi trade api",
+                        message="Kalshi returned no required active binary markets.",
+                        candidates=[],
+                        error_code="kalshi_required_market_data_empty",
+                    )
+                if markets and self._kalshi_market_data_signer is None:
+                    return MarketDataProviderResult(
+                        venue=Venue.KALSHI.value,
+                        status="partial",
+                        source="kalshi trade api",
+                        message=(
+                            "Fetched Kalshi market summaries, but authenticated order-book "
+                            "credentials are missing. No candidates are live eligible."
+                        ),
+                        candidates=[],
+                        error_code="kalshi_market_data_credentials_missing",
+                    )
+                books = self._kalshi_order_books(client, markets) if markets else {}
+                fee_configs = self._kalshi_fee_configs(client, markets) if markets else {}
+        except ProviderHttpError as exc:
+            return MarketDataProviderResult(
+                venue=Venue.KALSHI.value,
+                status=exc.status,
+                source="kalshi trade api",
+                message=exc.message,
+                candidates=[],
+                error_code=exc.error_code,
+            )
+
+        completed_at = datetime.now(UTC)
+        candidates = [
+            candidate
+            for market in markets
+            for outcome in ("YES", "NO")
+            for candidate in [
+                _kalshi_candidate(
+                    market,
+                    books.get(str(market.get("ticker"))),
+                    fee_configs.get(str(market.get("ticker"))),
+                    outcome,
+                    completed_at,
+                    exchange_active=exchange_active,
+                    exchange_resume_time=exchange_resume_time,
+                )
+            ]
+            if candidate is not None
+        ]
+        if not candidates:
+            return MarketDataProviderResult(
+                venue=Venue.KALSHI.value,
+                status="empty",
+                source="kalshi trade api",
+                message="Kalshi returned no required priced order-book candidates.",
+                candidates=[],
+                error_code="kalshi_required_order_book_empty",
+            )
+        return _venue_result(
+            venue=Venue.KALSHI.value,
+            provider_label="Kalshi",
+            source="kalshi trade api",
+            candidates=candidates,
+            errors=[],
+            empty_message="No live-eligible priced Kalshi candidates were found.",
+        )
+
+    def _kalshi_order_books(
+        self,
+        client: httpx.Client,
+        markets: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Read authenticated batch order books for every requested market.
+
+        REQ: REQ-KAL-002, REQ-KAL-003
+        """
+
+        tickers = [str(market.get("ticker") or "").strip() for market in markets]
+        tickers = [ticker for ticker in tickers if ticker]
+        books: dict[str, dict[str, Any]] = {}
+        signer = self._kalshi_market_data_signer
+        if signer is None:
+            raise ProviderHttpError(
+                status="failed",
+                error_code="kalshi_market_data_credentials_missing",
+                message="Kalshi authenticated order-book credentials are missing.",
+            )
+        for chunk in _chunks(tickers, 100):
+            path = "/trade-api/v2/markets/orderbooks"
+            payload = self._kalshi_get_json(
+                client,
+                f"{self.kalshi_base_url}/markets/orderbooks",
+                params=[("tickers", ticker) for ticker in chunk],
+                headers=signer.headers("GET", path),
+                operation="kalshi batch order books",
+            )
+            rows = payload.get("orderbooks") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                raise ProviderHttpError(
+                    status="failed",
+                    error_code="provider_invalid_payload",
+                    message="Kalshi batch order books returned an invalid payload.",
+                )
+            for row in rows:
+                if isinstance(row, dict) and row.get("ticker"):
+                    books[str(row["ticker"])] = row
+            missing = sorted(set(chunk) - books.keys())
+            if missing:
+                raise ProviderHttpError(
+                    status="failed",
+                    error_code="provider_invalid_payload",
+                    message="Kalshi batch order books omitted one or more requested markets.",
+                )
+        return books
+
+    def _kalshi_fee_configs(
+        self,
+        client: httpx.Client,
+        markets: list[dict[str, Any]],
+    ) -> dict[str, dict[str, str]]:
+        """Resolve current event overrides and series fee settings for each market."""
+
+        event_tickers = sorted(
+            {
+                str(market.get("event_ticker") or "").strip()
+                for market in markets
+                if str(market.get("event_ticker") or "").strip()
+            }
+        )
+        if not event_tickers or any(
+            not str(market.get("event_ticker") or "").strip() for market in markets
+        ):
+            raise ProviderHttpError(
+                status="failed",
+                error_code="kalshi_fee_config_unavailable",
+                message="Kalshi market fee identity is unavailable.",
+            )
+        events: dict[str, dict[str, Any]] = {}
+        series_tickers: set[str] = set()
+        for event_ticker in event_tickers:
+            payload = self._kalshi_get_json(
+                client,
+                f"{self.kalshi_base_url}/events/{event_ticker}",
+                operation="kalshi event fee configuration",
+            )
+            event = payload.get("event") if isinstance(payload, dict) else None
+            series_ticker = (
+                str(event.get("series_ticker") or "").strip()
+                if isinstance(event, dict)
+                else ""
+            )
+            if not series_ticker:
+                raise ProviderHttpError(
+                    status="failed",
+                    error_code="kalshi_fee_config_unavailable",
+                    message="Kalshi event fee configuration is unavailable.",
+                )
+            events[event_ticker] = event
+            series_tickers.add(series_ticker)
+        series_by_ticker: dict[str, dict[str, Any]] = {}
+        for series_ticker in sorted(series_tickers):
+            payload = self._kalshi_get_json(
+                client,
+                f"{self.kalshi_base_url}/series/{series_ticker}",
+                operation="kalshi series fee configuration",
+            )
+            series = payload.get("series") if isinstance(payload, dict) else None
+            if not isinstance(series, dict):
+                raise ProviderHttpError(
+                    status="failed",
+                    error_code="kalshi_fee_config_unavailable",
+                    message="Kalshi series fee configuration is unavailable.",
+                )
+            series_by_ticker[series_ticker] = series
+        resolved: dict[str, dict[str, str]] = {}
+        for market in markets:
+            ticker = str(market.get("ticker") or "").strip()
+            event = events[str(market.get("event_ticker") or "").strip()]
+            series = series_by_ticker[str(event.get("series_ticker") or "").strip()]
+            override_type = event.get("fee_type_override")
+            override_multiplier = event.get("fee_multiplier_override")
+            fee_type = str(
+                override_type if override_type is not None else series.get("fee_type") or ""
+            ).strip().lower()
+            fee_multiplier = _decimal_or_none(
+                override_multiplier
+                if override_multiplier is not None
+                else series.get("fee_multiplier")
+            )
+            if (
+                fee_type not in {"quadratic", "quadratic_with_maker_fees"}
+                or fee_multiplier is None
+                or fee_multiplier < 0
+            ):
+                raise ProviderHttpError(
+                    status="failed",
+                    error_code="kalshi_fee_config_unsupported",
+                    message="Kalshi market fee configuration is unsupported.",
+                )
+            resolved[ticker] = {
+                "feeType": fee_type,
+                "feeMultiplier": format(fee_multiplier, "f"),
+            }
+        return resolved
+
+    def _kalshi_get_json(
+        self,
+        client: httpx.Client,
+        url: str,
+        *,
+        operation: str,
+        params: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        """Retry only a Kalshi GET with a bounded exponential delay.
+
+        REQ: REQ-KAL-003
+        """
+
+        error: ProviderHttpError | None = None
+        for attempt in range(self.kalshi_read_retries + 1):
+            try:
+                return self._get_json(
+                    client,
+                    url,
+                    params=params,
+                    headers=headers,
+                    operation=operation,
+                    provider="kalshi",
+                    attempt=attempt + 1,
+                    retry_count=self.kalshi_read_retries,
+                )
+            except ProviderHttpError as exc:
+                error = exc
+                if attempt >= self.kalshi_read_retries or not _retryable_provider_error(exc):
+                    raise
+                time.sleep(self.kalshi_retry_backoff_seconds * (2**attempt))
+        assert error is not None
+        raise error
 
     def _fetch_alpaca(
         self,
@@ -755,7 +1159,7 @@ class ProviderBackedMarketDataFetcher:
         *,
         operation: str,
         headers: dict[str, str] | None = None,
-        params: dict[str, str] | None = None,
+        params: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
         provider: str | None = None,
         log_context: dict[str, Any] | None = None,
         attempt: int = 1,
@@ -909,6 +1313,165 @@ def _polymarket_market_data_limit(
     )
 
 
+def _kalshi_market_data_limit(*, config_payload: dict[str, Any], default: int) -> int:
+    scanner = config_payload.get("scanner") if isinstance(config_payload, dict) else {}
+    kalshi = scanner.get(Venue.KALSHI.value) if isinstance(scanner, dict) else {}
+    configured = kalshi.get("market_data_limit") if isinstance(kalshi, dict) else None
+    return _int_setting(
+        configured,
+        default,
+        minimum=1,
+        maximum=MAX_KALSHI_MARKET_DATA_LIMIT,
+    )
+
+
+def _kalshi_required_tickers(config_payload: dict[str, Any]) -> tuple[str, ...]:
+    values = config_payload.get("_kalshi_required_tickers")
+    if not isinstance(values, (list, tuple, set)):
+        return ()
+    return tuple(
+        sorted(
+            {
+                str(value).strip()
+                for value in values
+                if str(value).strip()
+            }
+        )
+    )
+
+
+def _kalshi_enabled(config_payload: dict[str, Any]) -> bool:
+    venues = config_payload.get("venues") if isinstance(config_payload, dict) else None
+    kalshi = venues.get(Venue.KALSHI.value) if isinstance(venues, dict) else None
+    return bool(kalshi.get("enabled", False)) if isinstance(kalshi, dict) else False
+
+
+def _kalshi_market_data_signer(source: dict[str, str]) -> KalshiAuthSigner | None:
+    key_id = source.get("KALSHI_MARKET_DATA_KEY_ID", "").strip()
+    private_key = source.get("KALSHI_MARKET_DATA_PRIVATE_KEY", "").strip().replace("\\n", "\n")
+    if not key_id or not private_key:
+        return None
+    try:
+        return KalshiAuthSigner(KalshiCredentials(key_id=key_id, private_key_pem=private_key))
+    except ValueError:
+        return None
+
+
+def _kalshi_market_tradable(market: dict[str, Any]) -> bool:
+    status = str(market.get("status") or "").strip().lower()
+    if status not in {"active", "open"}:
+        return False
+    market_type = str(market.get("market_type") or "binary").strip().lower()
+    return market_type == "binary" and not _boolish(market.get("is_multivariate"), default=False)
+
+
+def _kalshi_candidate(
+    market: dict[str, Any],
+    book: dict[str, Any] | None,
+    fee_config: dict[str, str] | None,
+    outcome: str,
+    pulled_at: datetime,
+    *,
+    exchange_active: bool,
+    exchange_resume_time: str | None,
+) -> dict[str, Any] | None:
+    ticker = str(market.get("ticker") or "").strip()
+    if not ticker or not isinstance(book, dict) or not isinstance(fee_config, dict):
+        return None
+    yes_levels = _kalshi_book_levels(book, "yes_dollars")
+    no_levels = _kalshi_book_levels(book, "no_dollars")
+    yes_bid = max((price for price, _ in yes_levels), default=None)
+    no_bid = max((price for price, _ in no_levels), default=None)
+    yes_ask = Decimal("1") - no_bid if no_bid is not None else None
+    no_ask = Decimal("1") - yes_bid if yes_bid is not None else None
+    if outcome == "YES":
+        best_bid, best_ask = yes_bid, yes_ask
+        bid_levels = _kalshi_book_levels(book, "yes_dollars")
+        ask_levels = _kalshi_book_levels(book, "no_dollars", complement=True)
+    else:
+        best_bid, best_ask = no_bid, no_ask
+        bid_levels = _kalshi_book_levels(book, "no_dollars")
+        ask_levels = _kalshi_book_levels(book, "yes_dollars", complement=True)
+    if best_bid is not None and best_ask is not None and best_ask < best_bid:
+        return None
+    price = _midpoint(best_bid, best_ask) or best_ask or best_bid
+    if price is None:
+        return None
+    spread = best_ask - best_bid if best_ask is not None and best_bid is not None else None
+    bid_depth = _kalshi_notional_depth(bid_levels)
+    ask_depth = _kalshi_notional_depth(ask_levels)
+    title = str(market.get("title") or ticker).strip()
+    return {
+        "id": f"kalshi:{ticker}:{outcome}",
+        "venue": Venue.KALSHI.value,
+        "market": f"{title} - {outcome}",
+        "marketId": ticker,
+        "marketSlug": ticker,
+        "outcomeId": outcome,
+        "outcome": outcome,
+        "ticker": ticker,
+        "price": _fixed_decimal(price),
+        "midpoint": _fixed_decimal(price),
+        "bestBid": _fixed_decimal(best_bid),
+        "bestAsk": _fixed_decimal(best_ask),
+        "bidDepth": _fixed_decimal(bid_depth),
+        "askDepth": _fixed_decimal(ask_depth),
+        "liquidity": _fixed_decimal(bid_depth + ask_depth),
+        "spread": _fixed_decimal(spread),
+        "volume": _fixed_decimal(_decimal_or_none(market.get("volume_fp"))),
+        "openInterest": _fixed_decimal(_decimal_or_none(market.get("open_interest_fp"))),
+        "endDate": _first_string(market.get("close_time"), market.get("expected_expiration_time")),
+        "active": True,
+        "exchangeActive": exchange_active,
+        "exchangeResumeTime": exchange_resume_time,
+        "closed": False,
+        "state": "priced",
+        "pulledAt": pulled_at.isoformat(),
+        "priceRanges": market.get("price_ranges") if isinstance(market.get("price_ranges"), list) else [],
+        "feeType": fee_config["feeType"],
+        "feeMultiplier": fee_config["feeMultiplier"],
+        "orderBookStatus": "fresh",
+        "liveEligible": exchange_active and best_bid is not None and best_ask is not None,
+        "dataSource": "kalshi_trade_api",
+    }
+
+
+def _kalshi_book_levels(
+    book: dict[str, Any],
+    key: str,
+    *,
+    complement: bool = False,
+) -> list[tuple[Decimal, Decimal]]:
+    container = book.get("orderbook_fp") if isinstance(book.get("orderbook_fp"), dict) else book
+    raw_levels = container.get(key) if isinstance(container, dict) else None
+    levels: list[tuple[Decimal, Decimal]] = []
+    if not isinstance(raw_levels, list):
+        return levels
+    for level in raw_levels:
+        if not isinstance(level, (list, tuple)) or len(level) < 2:
+            continue
+        price = _decimal_or_none(level[0])
+        count = _decimal_or_none(level[1])
+        if (
+            price is None
+            or count is None
+            or price <= 0
+            or price >= 1
+            or count <= 0
+        ):
+            continue
+        levels.append((Decimal("1") - price if complement else price, count))
+    return levels
+
+
+def _kalshi_notional_depth(levels: list[tuple[Decimal, Decimal]]) -> Decimal:
+    return sum((price * count for price, count in levels), Decimal("0"))
+
+
+def _fixed_decimal(value: Decimal | None) -> str | None:
+    return format(value, "f") if value is not None else None
+
+
 def _dominant_error(errors: Sequence[ProviderHttpError]) -> ProviderHttpError:
     for error in errors:
         if error.status == "rate_limited":
@@ -917,6 +1480,8 @@ def _dominant_error(errors: Sequence[ProviderHttpError]) -> ProviderHttpError:
 
 
 def _retryable_provider_error(error: ProviderHttpError) -> bool:
+    if error.error_code == "provider_rate_limited":
+        return True
     if error.error_code in {"provider_http_error", "provider_invalid_json"}:
         return True
     return error.error_code in {

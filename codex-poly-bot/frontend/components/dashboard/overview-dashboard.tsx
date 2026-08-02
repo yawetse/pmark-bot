@@ -583,6 +583,7 @@ function enabledVenueLabels(settings: Record<string, unknown>): string[] {
   return [
     ["Polymarket US", "venues.polymarket_us.enabled"],
     ["Polymarket International", "venues.polymarket_international.enabled"],
+    ["Kalshi", "venues.kalshi.enabled"],
     ["Alpaca", "venues.alpaca.enabled"],
   ].filter(([, path]) => booleanValue(valueAtPath(settings, path))).map(([label]) => label);
 }

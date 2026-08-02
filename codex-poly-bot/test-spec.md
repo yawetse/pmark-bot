@@ -1,8 +1,8 @@
 # codex-poly-bot Test Specification
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.2
-**Date:** 2026-07-31
+**Version:** 1.3
+**Date:** 2026-08-02
 **Status:** DRAFT  
 
 ## Test Strategy
@@ -18,9 +18,9 @@
 
 | Priority | Requirements | Planned Tests |
 |----------|--------------|---------------|
-| P0 | 143 | 373 |
+| P0 | 165 | 425 |
 | P1 | 20 | 34 |
-| Total | 163 | 407 |
+| Total | 185 | 459 |
 
 ## Test Cases
 
@@ -703,3 +703,62 @@
 | REQ-OBS-004 | TST-REQ-OBS-004-01, TST-REQ-OBS-004-02 |
 | REQ-OBS-005 | TST-REQ-OBS-005-01, TST-REQ-OBS-005-02 |
 | REQ-OBS-006 | TST-REQ-OBS-006-01, TST-REQ-OBS-006-02, TST-REQ-OBS-006-03, TST-REQ-OBS-006-04 |
+
+### Kalshi Venue Integration
+
+| Test ID | Type | Validates | Given / When / Then |
+|---------|------|-----------|---------------------|
+| TST-REQ-KAL-001-01 | Happy | REQ-KAL-001 | Given Kalshi is enabled, When dry-run and live-routing cases plus protected dashboard reads run, Then market pull, scan, score, simulation, execution routing, runtime status, portfolio, and performance all retain venue `kalshi`. |
+| TST-REQ-KAL-001-02 | Operation Matrix | REQ-KAL-001 | Given Kalshi is disabled or the persisted kill switch is active with confirmed exposure, When a scheduled loop runs, Then scans, scores, and new entries are refused while authenticated quotes for the open position, read-only reconciliation, exits, and known-order cancellation remain allowed. |
+| TST-REQ-KAL-002-01 | Happy | REQ-KAL-002 | Given multiple mocked market pages and generated read credentials with blocked external egress, When ingestion runs, Then cursors advance, `mve_filter=exclude` is sent, price ranges remain attached, and each authenticated book batch contains at most 100 tickers. |
+| TST-REQ-KAL-002-02 | Precision | REQ-KAL-002 | Given public summaries that disagree with mocked authenticated sub-cent YES and NO bids with fractional counts, When candidates normalize, Then the authenticated book determines complementary asks, midpoint, spread, side-correct quantities, notional depth, liquidity, freshness, and live eligibility as exact Decimal strings. |
+| TST-REQ-KAL-002-03 | Read Boundary | REQ-KAL-002 | Given no read-scoped credential, When market ingestion runs, Then public market summaries may be read but no unsigned order-book request or live-eligible candidate is produced. |
+| TST-REQ-KAL-003-01 | Recovery | REQ-KAL-003 | Given separate mocked GET cases for 429, timeout, and retryable 5xx, When reads run, Then each makes at most three total attempts with new signatures and configured exponential delays. |
+| TST-REQ-KAL-003-02 | Edge | REQ-KAL-003 | Given separate malformed, required-market empty, exhausted-read, and valid empty positions, fills, settlements, and orders cases, When reads complete, Then invalid ingestion emits no live-eligible candidate and a safe code while every valid empty account collection succeeds. |
+| TST-REQ-KAL-003-03 | Staleness | REQ-KAL-003 | Given candidate data older than 60 seconds, When an exposure-increasing order is evaluated, Then the exact `kalshi_market_data_stale` refusal persists and signer and mutation call counts remain zero. |
+| TST-REQ-KAL-004-01 | Security | REQ-KAL-004 | Given a generated test RSA key, When headers are built, Then the public key verifies RSA-PSS SHA-256 over millisecond timestamp, uppercase method, and full query-free path. |
+| TST-REQ-KAL-004-02 | Boundary | REQ-KAL-004 | Given local, development, and production settings, When factories run, Then only the recommended matching demo or production host is accepted and provider credential namespaces remain separate. |
+| TST-REQ-KAL-004-03 | Security | REQ-KAL-004 | Given missing or malformed generated credential material, When adapter creation, repr, logging, persistence, API serialization, and a repository secret scan run, Then the operation fails closed and no private material appears. |
+| TST-REQ-KAL-004-04 | Credential Read | REQ-KAL-004 | Given separate well-formed mismatched-key and timestamp-skew cases, When mocked signed reads return 401, Then readiness is blocked with `kalshi_credentials_rejected`, zero mutation calls occur, and no credential or venue detail is retained. |
+| TST-REQ-KAL-005-01 | Mapping | REQ-KAL-005 | Given generated keys, mocked HTTP, blocked egress, and separate YES-entry, YES-exit, NO-entry, and NO-exit cases, When translation runs, Then each creates one mock V2 POST with the specified `bid` or `ask`, YES-book price, `reduce_only`, and stable client ID. |
+| TST-REQ-KAL-005-02 | Boundary | REQ-KAL-005 | Given separate invalid range, step, count precision, zero-rounded count, TIF, side, and subaccount cases, When validation runs, Then no signer or POST call occurs and the exact refusal code is returned. |
+| TST-REQ-KAL-005-03 | Order Type | REQ-KAL-005 | Given market and limit decisions plus mocked current event override and series fee configuration, When translation runs, Then market uses slippage-bounded IOC, limit uses GTC, prices round toward non-crossing range steps, principal plus source-backed quadratic, centicent, and accumulator fee reserves remain inside approved risk, unsupported fees fail closed, and every required V2 field is present. |
+| TST-REQ-KAL-006-01 | Durability | REQ-KAL-006 | Given an approved order, When the mocked transport is reached, Then a committed `SUBMITTING` intent with reserved client ID already exists. |
+| TST-REQ-KAL-006-02 | Safety | REQ-KAL-006 | Given separate mocked timeout, 429, 5xx, and malformed 2xx post-dispatch cases with blocked egress, When submit runs, Then exactly one mock POST occurs, `UNKNOWN_SUBMIT` persists, unknown cancel state emits no DELETE, and replacement plus client-ID reuse are blocked. |
+| TST-REQ-KAL-006-03 | Reconciliation | REQ-KAL-006 | Given an unknown entry or exit client ID or mocked 409 duplicate response, When live and historical orders, fills, and positions reconcile, Then the intent reaches a terminal or review state without another POST and a known resting exit remains cancelable. |
+| TST-REQ-KAL-007-01 | Gate Matrix | REQ-KAL-007 | Given parameterized missing enablement, RSA, binary semantics, active market, active exchange, market freshness, account freshness, unknown-order, provider identity, and risk approval, When entry runs, Then each exact refusal code persists with zero signer and mutation calls. |
+| TST-REQ-KAL-007-02 | Dry Run | REQ-KAL-007 | Given an approved Kalshi decision in dry-run mode, When lifecycle execution runs, Then a simulation persists and signer plus venue transport call counts remain zero. |
+| TST-REQ-KAL-008-01 | Happy | REQ-KAL-008 | Given one mocked balance response and paginated positions, fills, settlements, and orders, When each provider refresh runs, Then records normalize into distinct shared portfolio accounts. |
+| TST-REQ-KAL-008-02 | Recovery | REQ-KAL-008 | Given a prior confirmed snapshot and failed refresh, When summary and entry gates run, Then confirmed values remain visible as degraded and cannot authorize new exposure. |
+| TST-REQ-KAL-009-01 | Authorized UI | REQ-KAL-009 | Given an authorized user, When Kalshi enablement, default venue, scan, and risk patches save, Then the next-loop snapshot and controls show the persisted values plus credential readiness, account values, activity, P&L, outcome positions, fills, and freshness. |
+| TST-REQ-KAL-009-02 | Unauthorized UI | REQ-KAL-009 | Given an unauthorized user, When protected Kalshi reads or writes are attempted, Then access is denied and no private account, key, or provider error detail is serialized. |
+| TST-REQ-KAL-010-01 | Infrastructure | REQ-KAL-010 | Given templates and environment examples, When deployment checks run, Then exact environment and provider secret references, read/write scopes, fail-closed defaults, IAM access, and rotation restart wiring exist without values. |
+| TST-REQ-KAL-010-02 | Release | REQ-KAL-010 | Given merged development and production releases, When evidence collection runs, Then commit, workflows, stacks, ECS task and digest, sanitized host and refs, health, OAuth, SES, ACM, screenshots, public exchange status, runtime missing-secret refusal, and rollback gates are recorded; complete credentials additionally require authenticated batch-order-book success and normalized OpenAI and Claude balances, while no credentials require an explicit not-configured result and blocked runtime readiness. |
+| TST-REQ-KAL-010-03 | Zero Mutation | REQ-KAL-010 | Given a recorded release window, When time-bounded development and production audit or CloudWatch queries run, Then zero Kalshi POST and DELETE operations are recorded; when authenticated credentials are configured, unchanged order and fill counts are also recorded. |
+| TST-REQ-KAL-011-01 | Cancellation | REQ-KAL-011 | Given generated keys, blocked egress, a known resting order, and mocked GET and DELETE, When cancellation runs, Then reconciliation precedes exactly one mock V2 DELETE and the result persists. |
+| TST-REQ-KAL-011-02 | Recovery | REQ-KAL-011 | Given a failed or ambiguous DELETE, When a later cancel cycle runs, Then a new DELETE is permitted only after another GET confirms the same order remains open; disablement does not block this path. |
+| TST-REQ-KAL-012-01 | Isolation | REQ-KAL-012 | Given distinct keys resolving to one mocked account identity, When live readiness runs, Then new exposure is blocked for both providers while reconciliation, exit, and cancellation remain available. |
+| TST-REQ-KAL-012-02 | Happy | REQ-KAL-012 | Given parameterized missing broad-read, missing write or `write::trade`, and complete-scope cases plus distinct mocked account identities, When readiness and concurrent reservations run, Then reconciliation and live readiness reflect the exact scope, each provider routes only to its account, and an account lock prevents double allocation. |
+| TST-REQ-KAL-013-01 | Units | REQ-KAL-013 | Given integer-cent balances, dollar strings, quantity strings, fee, cost, and settlement fields, When normalization runs, Then USD, contracts, net realized P&L, unavailable per-position unrealized P&L, and half-even rounding match the source-unit table exactly. |
+| TST-REQ-KAL-013-02 | Outcome | REQ-KAL-013 | Given YES and NO positions and fills, When shared payloads render, Then `outcomeSide` remains explicit and NO is not labeled as a stock short. |
+| TST-REQ-KAL-014-01 | Historical | REQ-KAL-014 | Given cutoff timestamps and multiple mocked historical pages, When reconciliation crosses a cutoff, Then checkpoints advance, live plus historical fills and orders deduplicate by stable venue IDs, and current positions and settlements remain live reads. |
+| TST-REQ-KAL-014-02 | Guard | REQ-KAL-014 | Given a repeated cursor or 100-page boundary, When historical reconciliation runs, Then it stops with a degraded error code and retains the prior checkpoint. |
+
+### Kalshi Traceability Matrix
+
+| Requirement | Tests |
+|-------------|-------|
+| REQ-KAL-001 | TST-REQ-KAL-001-01, TST-REQ-KAL-001-02 |
+| REQ-KAL-002 | TST-REQ-KAL-002-01, TST-REQ-KAL-002-02, TST-REQ-KAL-002-03 |
+| REQ-KAL-003 | TST-REQ-KAL-003-01, TST-REQ-KAL-003-02, TST-REQ-KAL-003-03 |
+| REQ-KAL-004 | TST-REQ-KAL-004-01, TST-REQ-KAL-004-02, TST-REQ-KAL-004-03, TST-REQ-KAL-004-04 |
+| REQ-KAL-005 | TST-REQ-KAL-005-01, TST-REQ-KAL-005-02, TST-REQ-KAL-005-03 |
+| REQ-KAL-006 | TST-REQ-KAL-006-01, TST-REQ-KAL-006-02, TST-REQ-KAL-006-03 |
+| REQ-KAL-007 | TST-REQ-KAL-007-01, TST-REQ-KAL-007-02 |
+| REQ-KAL-008 | TST-REQ-KAL-008-01, TST-REQ-KAL-008-02 |
+| REQ-KAL-009 | TST-REQ-KAL-009-01, TST-REQ-KAL-009-02 |
+| REQ-KAL-010 | TST-REQ-KAL-010-01, TST-REQ-KAL-010-02, TST-REQ-KAL-010-03 |
+| REQ-KAL-011 | TST-REQ-KAL-011-01, TST-REQ-KAL-011-02 |
+| REQ-KAL-012 | TST-REQ-KAL-012-01, TST-REQ-KAL-012-02 |
+| REQ-KAL-013 | TST-REQ-KAL-013-01, TST-REQ-KAL-013-02 |
+| REQ-KAL-014 | TST-REQ-KAL-014-01, TST-REQ-KAL-014-02 |

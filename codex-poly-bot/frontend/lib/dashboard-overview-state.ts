@@ -282,14 +282,24 @@ function recommendationPathForVenues(
   gate: "spread" | "confidence",
 ): AllowedConfigPath | undefined {
   const families = new Set(
-    venues.map((venue) => (venue.toLowerCase().includes("alpaca") ? "alpaca" : "polymarket")),
+    venues.map((venue) =>
+      venue.toLowerCase().includes("alpaca")
+        ? "alpaca"
+        : venue.toLowerCase().includes("kalshi")
+          ? "kalshi"
+          : "polymarket",
+    ),
   );
   if (families.size !== 1) {
     return undefined;
   }
   const family = [...families][0];
   if (gate === "spread") {
-    return family === "alpaca" ? "scanner.alpaca.max_spread" : "scanner.polymarket.max_spread";
+    return family === "alpaca"
+      ? "scanner.alpaca.max_spread"
+      : family === "kalshi"
+        ? "scanner.kalshi.max_spread"
+        : "scanner.polymarket.max_spread";
   }
   return family === "alpaca"
     ? "reasoning.alpaca.min_confidence"

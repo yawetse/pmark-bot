@@ -1,7 +1,7 @@
 """Execution service helpers for dry-run and live order paths.
 
 REQ: REQ-EXE-002, REQ-EXE-015, REQ-ALP-005, REQ-ALP-006,
-REQ-ALP-007
+REQ-ALP-007, REQ-KAL-005, REQ-KAL-006, REQ-KAL-007
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from app.domain import ModelProvider, Venue
 from app.venues.polymarket import PolymarketLiveOrderRequest, VenueCallResult
+from app.venues.kalshi import KalshiLiveOrderRequest, KalshiOrderOutcome, KalshiOrderResult
 
 
 class AlpacaVenueSubmitter(Protocol):
@@ -62,6 +63,16 @@ class PolymarketPositionCloser(Protocol):
         ...
 
 
+class KalshiVenueSubmitter(Protocol):
+    """Minimal typed Kalshi submitter boundary.
+
+    REQ: REQ-KAL-005, REQ-KAL-006
+    """
+
+    def submit_order(self, request: KalshiLiveOrderRequest) -> KalshiOrderResult:
+        ...
+
+
 @dataclass(frozen=True)
 class AlpacaExecutionRequest:
     """Alpaca execution request after risk evaluation.
@@ -95,6 +106,19 @@ class PolymarketExecutionRequest:
     global_execution_mode: str
     risk_approved: bool
     order: PolymarketLiveOrderRequest
+    risk_refusal_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class KalshiExecutionRequest:
+    """Kalshi execution request after all shared and venue risk gates.
+
+    REQ: REQ-KAL-005, REQ-KAL-006, REQ-KAL-007
+    """
+
+    global_execution_mode: str
+    risk_approved: bool
+    order: KalshiLiveOrderRequest
     risk_refusal_reason: str | None = None
 
 
@@ -332,6 +356,67 @@ def execute_polymarket_order(
         )
     return ExecutionResult(
         status="submitted",
+        order_recorded=True,
+        broker_submitted=True,
+        payload=venue_result.payload,
+    )
+
+
+def execute_kalshi_order(
+    request: KalshiExecutionRequest,
+    *,
+    submitter: KalshiVenueSubmitter,
+) -> ExecutionResult:
+    """Simulate or submit one already-approved Kalshi order.
+
+    REQ: REQ-KAL-005, REQ-KAL-006, REQ-KAL-007
+    """
+
+    if not request.risk_approved:
+        return ExecutionResult(
+            status="refused",
+            order_recorded=False,
+            broker_submitted=False,
+            refusal_reason=request.risk_refusal_reason or "RISK_CHECK_FAILED",
+        )
+    if request.global_execution_mode == "dry_run":
+        return ExecutionResult(
+            status="simulated",
+            order_recorded=True,
+            broker_submitted=False,
+            payload={
+                "client_order_id": request.order.client_order_id,
+                "side": request.order.side,
+                "ticker": request.order.ticker,
+                "venue": Venue.KALSHI.value,
+            },
+        )
+    if request.global_execution_mode != "live":
+        return ExecutionResult(
+            status="refused",
+            order_recorded=False,
+            broker_submitted=False,
+            refusal_reason="LIVE_DISABLED",
+        )
+    venue_result = submitter.submit_order(request.order)
+    if venue_result.outcome == KalshiOrderOutcome.UNKNOWN_SUBMIT:
+        return ExecutionResult(
+            status="unknown_submit",
+            order_recorded=True,
+            broker_submitted=True,
+            refusal_reason=venue_result.safe_error_code,
+            payload=venue_result.payload,
+        )
+    if not venue_result.ok:
+        return ExecutionResult(
+            status="refused",
+            order_recorded=True,
+            broker_submitted=venue_result.send_started,
+            refusal_reason=venue_result.safe_error_code,
+            payload=venue_result.payload,
+        )
+    return ExecutionResult(
+        status=venue_result.outcome.value,
         order_recorded=True,
         broker_submitted=True,
         payload=venue_result.payload,

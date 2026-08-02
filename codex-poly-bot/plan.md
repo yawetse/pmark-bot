@@ -156,7 +156,7 @@ Core services + API + Frontend
 |------|--------|------------|-----------------|
 | Live trading with incorrect config | High | Seed dry-run and disabled venues, resolve runtime config from the database by explicit or allowlisted owner, implement refusal matrix and audit before any live adapter submit | Phase 1 and Phase 3 |
 | Private key leakage | High | Secrets Manager in AWS, gitignored local `.env`, server-only auth token minting, no dashboard secret fields | Phase 1, Phase 2, Phase 4 |
-| Polymarket or Alpaca API/SDK changes | High | Adapter ports, contract tests, source references, official SDK/API wrappers | Phase 2 and Phase 5 |
+| Polymarket, Alpaca, or Kalshi API/SDK changes | High | Adapter ports, OpenAPI and contract drift tests, source references, official SDK/API wrappers | Phase 2, Phase 5, and Phase 11 |
 | Postgres outage or deployment driver mismatch during trading | High | Use the packaged `psycopg` SQLAlchemy driver, block live orders without persistence, and surface degraded health | Phase 1 and Phase 3 |
 | Dashboard auth bypass | High | GitHub OAuth, username allowlist, FastAPI token validation, CSRF/origin checks, Playwright auth tests | Phase 1 and Phase 4 |
 | Background loops slow API requests | Medium | Worker scheduler boundaries, job locks, bounded queues, dashboard read models, future ECS split path | Phase 3 and Phase 4 |
@@ -164,6 +164,10 @@ Core services + API + Frontend
 | Market orders exceed acceptable slippage | High | Slippage estimation contract, default thresholds, risk refusal tests | Phase 3 |
 | Ambiguous live submit causes duplicate order | High | Persist order intent before submit, use idempotency keys, reconcile unknown state before retry, refuse conflicting orders while unknown | Phase 3 and Phase 5 |
 | Alpaca live account misconfiguration | High | Separate account identifiers, reconciliation snapshot, duplicate account blocking, paper/live mode validation | Phase 2, Phase 3, Phase 5 |
+| Kalshi environment or credential crossover | High | Exact-host allowlists, runtime-derived environment, separate provider credentials, signed-read readiness checks | Phase 11.1, 11.2, and 11.5 |
+| Kalshi mixed cents and fixed-point units | High | Field-level unit table, Decimal-only normalization, balance and fee reconciliation tests | Phase 11.1 and 11.4 |
+| Kalshi ambiguous submit or cancel state | High | Durable pre-submit intent, reserved client ID, reconcile-before-replace or cancel, no automatic mutation retry | Phase 11.2, 11.4, and 11.6 |
+| Kalshi historical partition omits P&L records | High | Cutoff discovery, durable checkpoints, live plus historical reads, stable-ID deduplication | Phase 11.4 |
 | Stock orders outside market hours | Medium | Alpaca clock/calendar checks, stale data status, trading-hours refusal reasons | Phase 2, Phase 3, Phase 5 |
 | Cross-market comparison uses incomplete data | Medium | Unavailable metric state, central comparison formulas, dashboard caveats | Phase 3 and Phase 4 |
 | S3 ingestion costs or data growth | Medium | S3 lifecycle rules, partitioned keys, normalized/raw retention split | Phase 2 and Phase 6 |
@@ -269,3 +273,15 @@ Core services + API + Frontend
 | 10.4 | Add any required migration, preserve signed positions and position intent, and implement direction-aware P&L, opened-at state, trailing thresholds, exact provider-routed exits, audits, notifications, API, and portfolio output | 10.3 | Migration safety plus long regression, short snapshot, fill-ledger, trigger, daily-loss bypass, idempotency isolation, routing, and buy-to-close tests |
 | 10.5 | Complete traceability, full local validation, independent review, and paper verification | 10.1 through 10.4 | REQ matrix complete; backend, frontend, infrastructure, and paper evidence pass |
 | 10.6 | Merge to `develop`, verify development, promote to `main`, verify production fail-closed, and attach evidence to issue 245 | Successful 10.5 | CI, stack, ECS, HTTPS, dashboard, disabled short config, and read-only Alpaca account/asset evidence pass with no live short order; execution eligibility remains blocked until the live account has at least 2,000 USD equity and reports `shorting_enabled=true` |
+
+## Phase 11: Kalshi Production Venue
+
+| Step | Work | Depends On | Verification |
+|------|------|------------|--------------|
+| 11.1 | Add Kalshi requirements, design, test plan, tasks, and issue 252 traceability (`TASK-051` through `TASK-055`) | User production authorization | Independent review finds no P0 requirement, safety, security, or deployment gap |
+| 11.2 | Add Kalshi domain, config, exact-host RSA signing, typed outcomes, documented REST client, and mocked contract tests (`TASK-051`) | 11.1 | Signature verification, endpoint routing, credential rejection, price-range validation, exchange status, rate-limit, and no-POST-retry tests pass |
+| 11.3 | Add public market pagination, authenticated batch books, no-credential summary-only behavior, candidate normalization, scanner, reasoning, and dry-run execution (`TASK-052`) | 11.2 | Public GET smoke and deterministic candidate, scanner, reasoning, stale gate, risk, and dry-run tests pass |
+| 11.4 | Add durable V2 execution, unknown-state and cancel reconciliation, live plus historical portfolio, dashboard, and credential readiness (`TASK-053`, `TASK-054`) | 11.2 and 11.3 | Mocked create/get/cancel, four-case translation, unit conversion, historical, provider isolation, UI, and sanitization tests pass |
+| 11.5 | Add environment examples, AWS secret injection, docs, operational smoke, and release gates (`TASK-055`) | 11.4 | CloudFormation, deployment spec, shell, backend, frontend, and public plus authenticated read-only smoke checks pass |
+| 11.6 | Complete traceability and independent implementation review (`TASK-051` through `TASK-055`) | 11.2 through 11.5 | Every REQ-KAL has passing tests and annotated implementation; full regressions pass |
+| 11.7 | Merge to `develop`, verify development, promote to `main`, and verify production (`TASK-055`) | Successful 11.6 | PRs, CI, CloudFormation, ECS, HTTPS health, OAuth boundary, SES, ACM, screenshots, read-only Kalshi evidence, missing-secret refusal, and time-bounded zero-mutation queries are recorded on issue 252 |

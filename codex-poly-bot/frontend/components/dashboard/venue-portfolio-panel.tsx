@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
-// REQ: REQ-UI-013, REQ-CMP-005
+// REQ: REQ-UI-013, REQ-CMP-005, REQ-KAL-009, REQ-KAL-013
 
 type PortfolioTotals = {
   status: "ready" | "stale" | "unavailable";
@@ -50,8 +50,9 @@ type PortfolioPositionView = {
   instrumentId: string;
   title: string;
   outcome: string | null;
+  outcomeSide: string | null;
   quantity: string;
-  positionSide: "long" | "short";
+  positionSide: "long" | "short" | "outcome";
   averageEntryPrice: string | null;
   currentPrice: string | null;
   costBasisUsd: string | null;
@@ -87,6 +88,7 @@ type PortfolioHistoryView = {
   accountValueUsd: string | null;
   totalPnlUsd: string | null;
   polymarketUsPnlUsd: string | null;
+  kalshiPnlUsd: string | null;
   alpacaPnlUsd: string | null;
 };
 
@@ -113,6 +115,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
     label: formatChartTime(row.asOf),
     total: numberOrNull(row.totalPnlUsd),
     polymarket: numberOrNull(row.polymarketUsPnlUsd),
+    kalshi: numberOrNull(row.kalshiPnlUsd),
     alpaca: numberOrNull(row.alpacaPnlUsd),
   }));
   const statusTone = portfolio.overall.status === "ready"
@@ -163,6 +166,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
                   <Tooltip formatter={(value) => formatOptionalUsd(String(value))} />
                   <Line dataKey="total" dot={false} name="Total P&L" stroke="var(--foreground)" strokeWidth={2.5} />
                   <Line dataKey="polymarket" dot={false} name="Polymarket US" stroke="var(--accent)" strokeWidth={2} />
+                  <Line dataKey="kalshi" dot={false} name="Kalshi" stroke="var(--warning)" strokeWidth={2} />
                   <Line dataKey="alpaca" dot={false} name="Alpaca" stroke="var(--focus)" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
@@ -228,7 +232,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
             <td>{venueLabel(position.venue)}</td>
             <td>{providerLabel(position.providers)}</td>
             <td><strong>{position.title}</strong>{position.outcome ? <span>{position.outcome}</span> : null}</td>
-            <td>{position.quantity} <span className="status neutral">{position.positionSide}</span></td>
+            <td>{position.quantity} <span className="status neutral">{position.outcomeSide ?? position.positionSide}</span></td>
             <td>{formatOptionalUsd(position.costBasisUsd)}</td>
             <td>{formatOptionalUsd(position.marketValueUsd)}</td>
             <td className={pnlTone(position.unrealizedPnlUsd)}>{formatOptionalUsd(position.unrealizedPnlUsd)}</td>
@@ -330,7 +334,7 @@ function providerLabel(providers: string[]): string {
 }
 
 function venueLabel(venue: string): string {
-  return venue === "polymarket_us" ? "Polymarket US" : venue === "alpaca" ? "Alpaca" : venue;
+  return venue === "polymarket_us" ? "Polymarket US" : venue === "kalshi" ? "Kalshi" : venue === "alpaca" ? "Alpaca" : venue;
 }
 
 function pnlTone(value: string | null): string {

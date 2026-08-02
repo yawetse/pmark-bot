@@ -2358,6 +2358,53 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
     assert pipeline_rows[0]["completed_at"] >= pipeline_rows[0]["started_at"]
 
 
+def test_req_kal_007_01_scheduled_execution_rereads_kill_switch_and_config() -> None:
+    """TST-REQ-KAL-007-01: execution uses control state read after scoring."""
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        csrf_token="csrf-token",
+        environment=Environment.DEVELOPMENT,
+    )
+    app = create_app(settings)
+    runtime = app.state.services.runtime_status
+    runtime.market_data_fetcher = FakeMarketDataFetcher(
+        {
+            Venue.POLYMARKET_US.value: MarketDataProviderResult(
+                venue=Venue.POLYMARKET_US.value,
+                status="empty",
+                source="test",
+                message="No candidates.",
+                candidates=[],
+            )
+        }
+    )
+    captured: dict[str, object] = {}
+    original_run_execution = runtime.lifecycle.run_execution
+
+    def capture_execution(**kwargs):
+        captured["kill_switch_active"] = kwargs["kill_switch_active"]
+        captured["config_payload"] = kwargs["config_payload"]
+        return original_run_execution(**kwargs)
+
+    runtime.lifecycle.run_execution = capture_execution
+    initial_config = runtime.runtime_config_payload()
+    fresh_config = runtime.runtime_config_payload()
+    fresh_config["venues"][Venue.KALSHI.value]["enabled"] = False
+    fresh_config["risk"][Venue.KALSHI.value]["max_position_usd"] = "0.00"
+
+    runtime.trigger_scheduled_run(
+        environment=Environment.DEVELOPMENT,
+        config_payload=initial_config,
+        kill_switch_active=False,
+        execution_context_reader=lambda: (fresh_config, True),
+    )
+
+    assert captured["kill_switch_active"] is True
+    assert captured["config_payload"] is fresh_config
+
+
 def test_req_ui_010_02_dashboard_summary_shows_token_cost_and_profitability() -> None:
     """TST-REQ-UI-010-02: Validates REQ-UI-010, REQ-CMP-002, and REQ-OBS-005
 

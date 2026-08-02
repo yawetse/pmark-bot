@@ -156,3 +156,58 @@ Production release evidence is tracked on [GitHub issue #245](https://github.com
 | Authenticated short-setting readback | Release guardrail #248 fails unless `alpaca.allow_shorting` is exactly `false` | Release guardrail #248 fails unless `alpaca.allow_shorting` is exactly `false` |
 | Read-only Alpaca account and asset eligibility | Missing or rejected broker credentials fail closed before order POST; adapter eligibility checks are covered by the Alpaca integration suites | Missing or rejected broker credentials fail closed before order POST; no eligibility exception is used for production |
 | Order safety | No paper or live short order was placed | No live short order was placed; production release evidence reported zero broker POST events |
+
+---
+
+# Kalshi Venue Traceability
+
+## Scope
+
+- GitHub issue: `#252`
+- Requirements: `REQ-KAL-001` through `REQ-KAL-014`
+- HLD decisions: `DD-058` through `DD-066`
+- LLD authority: section 29
+- Plan: Phase 11, steps 11.1 through 11.7
+- Tasks: `TASK-051` through `TASK-055`
+- Date: 2026-08-02
+
+## Requirement Matrix
+
+| Requirement | Design | Task | Test IDs | Implementation Evidence | Status |
+|-------------|--------|------|----------|-------------------------|--------|
+| REQ-KAL-001 | DD-059; LLD 29.1, 29.3, 29.4, 29.6 | TASK-051, TASK-052 | TST-REQ-KAL-001-01, TST-REQ-KAL-001-02 | domain models; config service; scanner service; dashboard controls; specification tests | Implemented; locally verified |
+| REQ-KAL-002 | DD-059, DD-060; LLD 29.3 | TASK-052 | TST-REQ-KAL-002-01, TST-REQ-KAL-002-02, TST-REQ-KAL-002-03 | `market_data_provider.py`; `scanner_service.py`; specification tests | Implemented; locally verified |
+| REQ-KAL-003 | DD-058, DD-060; LLD 29.2, 29.3 | TASK-051, TASK-052 | TST-REQ-KAL-003-01, TST-REQ-KAL-003-02, TST-REQ-KAL-003-03 | bounded reads in `kalshi.py`; freshness gates; specification tests | Implemented; locally verified |
+| REQ-KAL-004 | DD-058, DD-061; LLD 29.1, 29.2, 29.7 | TASK-051, TASK-055 | TST-REQ-KAL-004-01, TST-REQ-KAL-004-02, TST-REQ-KAL-004-03, TST-REQ-KAL-004-04 | RSA signer and host factory in `kalshi.py`; environment examples; sanitized-auth tests | Implemented; locally verified |
+| REQ-KAL-005 | DD-060, DD-062; LLD 29.2, 29.4 | TASK-053 | TST-REQ-KAL-005-01, TST-REQ-KAL-005-02, TST-REQ-KAL-005-03 | V2 order adapter; execution service; lifecycle translation; specification tests | Implemented; locally verified |
+| REQ-KAL-006 | DD-058, DD-062; LLD 29.2, 29.4 | TASK-053 | TST-REQ-KAL-006-01, TST-REQ-KAL-006-02, TST-REQ-KAL-006-03 | durable lifecycle intents; client-ID reconciliation; specification tests | Implemented; locally verified |
+| REQ-KAL-007 | DD-061, DD-062; LLD 29.1 through 29.4 | TASK-051, TASK-052, TASK-053 | TST-REQ-KAL-007-01, TST-REQ-KAL-007-02 | runtime status; risk engine; execution and lifecycle services; specification tests | Implemented; locally verified |
+| REQ-KAL-008 | DD-060, DD-063; LLD 29.2, 29.5 | TASK-054 | TST-REQ-KAL-008-01, TST-REQ-KAL-008-02 | authenticated account reads and normalization in `venue_portfolio_service.py`; specification tests | Implemented; locally verified |
+| REQ-KAL-009 | DD-063; LLD 29.1, 29.5, 29.6 | TASK-054 | TST-REQ-KAL-009-01, TST-REQ-KAL-009-02 | dashboard config, overview, portfolio, and API authorization tests | Implemented; locally verified |
+| REQ-KAL-010 | DD-061, DD-064; LLD 29.7, 29.8 | TASK-055 | TST-REQ-KAL-010-01, TST-REQ-KAL-010-02, TST-REQ-KAL-010-03 | CloudFormation; CI workflows; deploy and sync scripts; deployment tests | Implemented; local gates passed; release pending |
+| REQ-KAL-011 | DD-062, DD-066; LLD 29.2, 29.4 | TASK-053 | TST-REQ-KAL-011-01, TST-REQ-KAL-011-02 | reconcile-before-cancel adapter and lifecycle path; specification tests | Implemented; locally verified |
+| REQ-KAL-012 | DD-065; LLD 29.1, 29.4, 29.5 | TASK-051, TASK-053 | TST-REQ-KAL-012-01, TST-REQ-KAL-012-02 | provider credential routing; scope and account-identity gates; advisory locking; specification tests | Implemented; locally verified |
+| REQ-KAL-013 | DD-060; LLD 29.5 | TASK-054 | TST-REQ-KAL-013-01, TST-REQ-KAL-013-02 | fixed-point portfolio normalization and outcome-side UI; specification tests | Implemented; locally verified |
+| REQ-KAL-014 | DD-063; LLD 29.2, 29.5 | TASK-054 | TST-REQ-KAL-014-01, TST-REQ-KAL-014-02 | historical cutoff, fills, orders, checkpoints, and deduplication; specification tests | Implemented; locally verified |
+
+## Release Evidence Checklist
+
+| Evidence | Development | Production |
+|----------|-------------|------------|
+| Tracking issue and pull requests | [Issue #252](https://github.com/yawetse/pmark-bot/issues/252); pending implementation PR | Pending promotion PR |
+| GitHub Actions | Pending | Pending |
+| Commit, workflow URL, and conclusion | Pending | Pending |
+| CloudFormation stack ID/status, ECS task definition/image digest | Pending | Pending |
+| HTTPS health and OAuth boundary | Pending | Pending |
+| Public exchange status and market summary GET | Pending | Pending |
+| Credential mode: authenticated when all six secrets exist, or explicitly not configured and blocked when none exist | Pending | Pending |
+| Authenticated Kalshi batch-order-book result, including requested and returned ticker counts, when configured | Pending | Pending |
+| OpenAI Kalshi balance normalized from integer cents to USD, when configured | Pending | Pending |
+| Claude Kalshi balance normalized from integer cents to USD, when configured | Pending | Pending |
+| Sanitized host, effective secret refs, and credential readiness | Pending | Pending |
+| Runtime missing-secret live refusal | Pending | Pending |
+| Rollback command or workflow, result, and recovered health | Pending | Pending |
+| Dashboard browser evidence | Pending | Pending |
+| SES identity and ACM certificate | Pending | Pending |
+| Time-bounded audit or CloudWatch query for Kalshi POST/DELETE | Required: zero, with query and UTC window | Required: zero, with query and UTC window |
+| Kalshi order and fill counts across release window | Required unchanged when authenticated; otherwise not applicable | Required unchanged when authenticated; otherwise not applicable |
