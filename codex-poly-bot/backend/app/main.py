@@ -462,7 +462,7 @@ async def _worker_heartbeat_loop(
             )
             tick_errors: list[Exception] = []
             try:
-                def execution_context() -> tuple[dict[str, object], bool]:
+                def runtime_context() -> tuple[dict[str, object], bool]:
                     latest = services.config.config_for_next_loop(
                         environment,
                         username=username,
@@ -481,7 +481,7 @@ async def _worker_heartbeat_loop(
                     environment=environment,
                     config_payload=config_payload,
                     kill_switch_active=services.kill_switch.state(environment).active,
-                    execution_context_reader=execution_context,
+                    runtime_context_reader=runtime_context,
                 )
             except Exception as exc:
                 tick_errors.append(exc)

@@ -84,6 +84,7 @@ class ScannerService:
         market_data_pulls: list[dict[str, Any]],
         config_payload: dict[str, Any],
         started_at: datetime,
+        kill_switch_active: bool = False,
         completed_at: datetime | None = None,
     ) -> ScannerRunResult:
         """Scan provider candidates and persist one scanner run."""
@@ -96,6 +97,7 @@ class ScannerService:
             market_data_pulls=market_data_pulls,
             config_payload=config_payload,
             scanner_config=scanner_config,
+            kill_switch_active=kill_switch_active,
             scanned_at=finished_at,
         )
         accepted_count = sum(1 for candidate in candidate_results if candidate["status"] == "accepted")
@@ -173,6 +175,7 @@ class ScannerService:
         market_data_pulls: list[dict[str, Any]],
         config_payload: dict[str, Any],
         scanner_config: dict[str, Any],
+        kill_switch_active: bool,
         scanned_at: datetime,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
@@ -186,8 +189,8 @@ class ScannerService:
                 if not isinstance(candidate, dict):
                     continue
                 venue = str(candidate.get("venue") or pull.get("venue") or "")
-                if venue == Venue.KALSHI.value and not _kalshi_scanning_enabled(
-                    config_payload
+                if venue == Venue.KALSHI.value and (
+                    kill_switch_active or not _kalshi_scanning_enabled(config_payload)
                 ):
                     continue
                 if venue == Venue.ALPACA.value:

@@ -1904,6 +1904,7 @@
 | AC-053-02 | If exchange trading is inactive or price, count, tick, credentials, freshness, or risk is invalid, then the system shall make zero order POSTs. |
 | AC-053-03 | If a mocked order mutation is rate limited, times out, or returns an ambiguous server response, then the system shall make one POST, persist `UNKNOWN_SUBMIT`, reserve the client ID, and reconcile before replacement. |
 | AC-053-04 | When a known order is canceled, the system shall reconcile first, make one mocked DELETE, persist the result, and require another confirming read before a later cancel attempt. |
+| AC-053-05 | When persisted configuration or kill-switch state changes during a scheduled tick, the runtime shall reread it at scanner, scoring, and execution stage boundaries, block new Kalshi scans, scores, and exposure, and keep exact-position quotes plus risk-reducing paths available. |
 
 **Definition of Done:** Durable intent, four-case entry and exit, gate matrix, ambiguous-state, client-ID reconciliation, known-order cancellation, and concurrency tests pass with blocked egress.
 
@@ -1947,7 +1948,7 @@
 |-------|----------------|
 | AC-055-01 | When infrastructure deploys, environment-specific Kalshi settings and Secrets Manager references shall be injected without printing or committing values. |
 | AC-055-02 | If credentials are absent, then public market data may run but live submission and account reconciliation shall remain blocked. |
-| AC-055-03 | When the release reaches development and production, commit and workflow, CloudFormation, ECS task and digest, HTTPS health, OAuth boundary, SES, ACM, dashboard screenshots, public Kalshi reads, runtime missing-secret refusal, and rollback gates shall pass; authenticated reads shall pass when all credential secrets are configured, and an explicit blocked not-configured result shall pass when none are configured. |
+| AC-055-03 | When the release reaches development and production, commit and workflow, CloudFormation, ECS task and digest, HTTPS health, OAuth boundary, SES, ACM, dashboard screenshots, public Kalshi reads, runtime missing-secret refusal, and rollback gates shall pass; authenticated reads and deployed runtime injection shall pass when all credential secrets are configured, an explicit blocked not-configured result shall pass when none are configured, and a partial secret set shall fail. |
 | AC-055-04 | When release evidence is complete, issue 252 shall contain commit, PR, test, deployment, runtime, and zero-mutation evidence and shall be closed. |
 | AC-055-05 | During each recorded release window, a time-bounded audit or CloudWatch query shall show zero Kalshi POST and DELETE operations; configured authenticated accounts shall also show unchanged order and fill counts. |
 

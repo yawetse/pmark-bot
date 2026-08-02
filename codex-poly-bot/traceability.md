@@ -181,7 +181,7 @@ Production release evidence is tracked on [GitHub issue #245](https://github.com
 | REQ-KAL-004 | DD-058, DD-061; LLD 29.1, 29.2, 29.7 | TASK-051, TASK-055 | TST-REQ-KAL-004-01, TST-REQ-KAL-004-02, TST-REQ-KAL-004-03, TST-REQ-KAL-004-04 | RSA signer and host factory in `kalshi.py`; environment examples; sanitized-auth tests | Implemented; locally verified |
 | REQ-KAL-005 | DD-060, DD-062; LLD 29.2, 29.4 | TASK-053 | TST-REQ-KAL-005-01, TST-REQ-KAL-005-02, TST-REQ-KAL-005-03 | V2 order adapter; execution service; lifecycle translation; specification tests | Implemented; locally verified |
 | REQ-KAL-006 | DD-058, DD-062; LLD 29.2, 29.4 | TASK-053 | TST-REQ-KAL-006-01, TST-REQ-KAL-006-02, TST-REQ-KAL-006-03 | durable lifecycle intents; client-ID reconciliation; specification tests | Implemented; locally verified |
-| REQ-KAL-007 | DD-061, DD-062; LLD 29.1 through 29.4 | TASK-051, TASK-052, TASK-053 | TST-REQ-KAL-007-01, TST-REQ-KAL-007-02 | runtime status; risk engine; execution and lifecycle services; specification tests | Implemented; locally verified |
+| REQ-KAL-007 | DD-061, DD-062; LLD 29.1 through 29.4 | TASK-051, TASK-052, TASK-053 | TST-REQ-KAL-007-01, TST-REQ-KAL-007-02, TST-REQ-KAL-007-03 | runtime status stage-boundary rereads; scanner kill-switch filter; risk engine; execution and lifecycle services; specification tests | Implemented; locally verified |
 | REQ-KAL-008 | DD-060, DD-063; LLD 29.2, 29.5 | TASK-054 | TST-REQ-KAL-008-01, TST-REQ-KAL-008-02 | authenticated account reads and normalization in `venue_portfolio_service.py`; specification tests | Implemented; locally verified |
 | REQ-KAL-009 | DD-063; LLD 29.1, 29.5, 29.6 | TASK-054 | TST-REQ-KAL-009-01, TST-REQ-KAL-009-02 | dashboard config, overview, portfolio, and API authorization tests | Implemented; locally verified |
 | REQ-KAL-010 | DD-061, DD-064; LLD 29.7, 29.8 | TASK-055 | TST-REQ-KAL-010-01, TST-REQ-KAL-010-02, TST-REQ-KAL-010-03 | CloudFormation; CI workflows; deploy and sync scripts; deployment tests | Implemented; local gates passed; release pending |
@@ -204,7 +204,7 @@ Production release evidence is tracked on [GitHub issue #245](https://github.com
 | Authenticated Kalshi batch-order-book result, including requested and returned ticker counts, when configured | Pending | Pending |
 | OpenAI Kalshi balance normalized from integer cents to USD, when configured | Pending | Pending |
 | Claude Kalshi balance normalized from integer cents to USD, when configured | Pending | Pending |
-| Sanitized host, effective secret refs, and credential readiness | Pending | Pending |
+| Sanitized host, effective secret refs, and deployed runtime credential readiness | Pending | Pending |
 | Runtime missing-secret live refusal | Pending | Pending |
 | Rollback command or workflow, result, and recovered health | Pending | Pending |
 | Dashboard browser evidence | Pending | Pending |

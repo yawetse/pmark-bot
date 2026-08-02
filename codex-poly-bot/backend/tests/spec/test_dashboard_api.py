@@ -2486,8 +2486,8 @@ def test_req_dat_008_03_scheduled_run_records_provider_statuses_separately() -> 
     assert pipeline_rows[0]["completed_at"] >= pipeline_rows[0]["started_at"]
 
 
-def test_req_kal_007_01_scheduled_execution_rereads_kill_switch_and_config() -> None:
-    """TST-REQ-KAL-007-01: execution uses control state read after scoring."""
+def test_req_kal_007_03_scheduled_execution_rereads_kill_switch_and_config() -> None:
+    """TST-REQ-KAL-007-03: scheduled stages reread current persisted controls."""
 
     settings = AppSettings(
         allowed_usernames=("yaw",),
@@ -2509,6 +2509,7 @@ def test_req_kal_007_01_scheduled_execution_rereads_kill_switch_and_config() -> 
         }
     )
     captured: dict[str, object] = {}
+    context_reads = 0
     original_run_execution = runtime.lifecycle.run_execution
 
     def capture_execution(**kwargs):
@@ -2522,13 +2523,21 @@ def test_req_kal_007_01_scheduled_execution_rereads_kill_switch_and_config() -> 
     fresh_config["venues"][Venue.KALSHI.value]["enabled"] = False
     fresh_config["risk"][Venue.KALSHI.value]["max_position_usd"] = "0.00"
 
-    runtime.trigger_scheduled_run(
+    def current_context():
+        nonlocal context_reads
+        context_reads += 1
+        return fresh_config, True
+
+    result = runtime.trigger_scheduled_run(
         environment=Environment.DEVELOPMENT,
         config_payload=initial_config,
         kill_switch_active=False,
-        execution_context_reader=lambda: (fresh_config, True),
+        runtime_context_reader=current_context,
     )
 
+    assert context_reads == 3
+    assert result["reasoningRun"]["status"] == "skipped"
+    assert result["strategyRun"]["status"] == "skipped"
     assert captured["kill_switch_active"] is True
     assert captured["config_payload"] is fresh_config
 

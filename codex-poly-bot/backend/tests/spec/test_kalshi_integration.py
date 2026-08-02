@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 import json
 from pathlib import Path
+import runpy
 from urllib.parse import parse_qs
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -102,7 +103,7 @@ def test_req_kal_001_01_domain_config_and_settings_expose_disabled_kalshi(monkey
 
 
 def test_req_kal_001_02_disabled_kalshi_quotes_do_not_reach_scoring() -> None:
-    """TST-REQ-KAL-001-02: exit quotes bypass scanning while Kalshi is disabled."""
+    """TST-REQ-KAL-001-02, TST-REQ-KAL-007-03: controls bypass new scanning."""
 
     now = datetime.now(UTC)
     registry = RepositoryRegistry()
@@ -144,6 +145,34 @@ def test_req_kal_001_02_disabled_kalshi_quotes_do_not_reach_scoring() -> None:
     assert result.payload["candidateCount"] == 0
     assert result.payload["acceptedCount"] == 0
     assert registry.state.rows("shared.scanner_candidates") == []
+
+    enabled_config = default_config_payload()
+    enabled_config["venues"][Venue.KALSHI.value]["enabled"] = True
+    killed = ScannerService(RepositoryRegistry()).run(
+        environment=Environment.DEVELOPMENT,
+        pipeline_run_id="killed-kalshi-scan",
+        trigger="scheduled",
+        market_data_pulls=[
+            {
+                "id": "killed-kalshi-pull",
+                "venue": Venue.KALSHI.value,
+                "status": "pulled",
+                "candidates": [
+                    {
+                        "id": "kalshi:HELD-26:YES",
+                        "venue": Venue.KALSHI.value,
+                        "marketId": "HELD-26",
+                        "outcomeId": "YES",
+                    }
+                ],
+            }
+        ],
+        config_payload=enabled_config,
+        kill_switch_active=True,
+        started_at=now,
+        completed_at=now,
+    )
+    assert killed.payload["candidateCount"] == 0
 
 
 def test_req_kal_004_01_signature_uses_timestamp_method_and_path_without_query() -> None:
@@ -808,6 +837,47 @@ def test_req_kal_001_02_disabled_position_pull_fetches_exact_held_ticker() -> No
     assert result.status == "pulled"
     assert {candidate["ticker"] for candidate in result.candidates} == {"HELD-26"}
     assert "/trade-api/v2/markets" not in paths
+
+
+def test_req_kal_003_02_required_position_ticker_must_match_exactly() -> None:
+    """TST-REQ-KAL-003-02: a mismatched held-market response fails closed."""
+
+    credentials, _ = _test_credentials()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/exchange/status"):
+            return httpx.Response(200, json={"exchange_active": True, "trading_active": True})
+        if request.url.path.endswith("/markets/HELD-26"):
+            return httpx.Response(
+                200,
+                json={
+                    "market": {
+                        "ticker": "OTHER-26",
+                        "market_type": "binary",
+                        "status": "active",
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url.path}")
+
+    config = default_config_payload()
+    config["_kalshi_required_tickers"] = ["HELD-26"]
+    result = ProviderBackedMarketDataFetcher(
+        environ={
+            "KALSHI_ENVIRONMENT": "demo",
+            "KALSHI_MARKET_DATA_KEY_ID": credentials.key_id,
+            "KALSHI_MARKET_DATA_PRIVATE_KEY": credentials.private_key_pem,
+        },
+        transport=httpx.MockTransport(handler),
+    ).fetch(
+        venue=Venue.KALSHI.value,
+        config_payload=config,
+        pulled_at=datetime.now(UTC),
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "kalshi_required_market_mismatch"
+    assert result.candidates == []
 
 
 def test_req_kal_003_02_empty_required_market_data_has_stable_code() -> None:
@@ -1928,3 +1998,47 @@ def test_req_kal_010_01_infrastructure_injects_environment_scoped_kalshi_secrets
     assert "kalshiMutationEvents" in release_verifier
     assert "realOrderSmokeTest" in release_verifier
     assert "KALSHI_ENABLED: ${{ vars.KALSHI_ENABLED }}" in workflow
+
+
+def test_req_kal_010_02_release_verifier_credential_modes_fail_closed() -> None:
+    """TST-REQ-KAL-010-02: zero, partial, and complete secret modes are explicit."""
+
+    module = runpy.run_path(str(PROJECT_ROOT / "scripts" / "verify-kalshi-release.py"))
+    inventory = module["_credential_inventory"]
+
+    inventory.__globals__["_optional_secret"] = lambda _: None
+    credentials, references = inventory("development")
+    assert credentials is None
+    assert len(references) == 6
+
+    inventory.__globals__["_optional_secret"] = lambda name: (
+        "configured" if name.endswith("/key-id") else None
+    )
+    with pytest.raises(RuntimeError, match="configuration is incomplete"):
+        inventory("development")
+
+    inventory.__globals__["_optional_secret"] = lambda name: (
+        "key-id" if name.endswith("/key-id") else "test-private-key"
+    )
+    credentials, references = inventory("development")
+    assert credentials is not None
+    assert set(credentials) == {"market-data", "openai", "claude"}
+    assert all(row["configured"] for row in references)
+
+    validate_rows = module["_validate_runtime_credential_rows"]
+    configured_rows = [
+        {
+            "venue": "kalshi",
+            "provider": provider,
+            "configured": True,
+            "present": False,
+            "status": "disabled",
+        }
+        for provider in ("market_data", "openai", "claude")
+    ]
+    validate_rows(configured_rows, authenticated=True)
+    with pytest.raises(RuntimeError, match="injection is incomplete"):
+        validate_rows(
+            [{**configured_rows[0], "configured": False}, *configured_rows[1:]],
+            authenticated=True,
+        )

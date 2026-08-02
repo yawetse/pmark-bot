@@ -408,9 +408,26 @@ class ProviderBackedMarketDataFetcher:
                         operation="kalshi required position market",
                     )
                     market = payload.get("market") if isinstance(payload, dict) else None
+                    returned_ticker = (
+                        str(market.get("ticker") or "").strip()
+                        if isinstance(market, dict)
+                        else ""
+                    )
+                    if returned_ticker != ticker:
+                        raise ProviderHttpError(
+                            status="failed",
+                            error_code="kalshi_required_market_mismatch",
+                            message="Kalshi returned a mismatched required position market.",
+                        )
                     if isinstance(market, dict) and _kalshi_market_tradable(market):
                         markets.append(market)
                         fetched_tickers.add(ticker)
+                if set(required_tickers) - fetched_tickers:
+                    raise ProviderHttpError(
+                        status="failed",
+                        error_code="kalshi_required_market_data_missing",
+                        message="Kalshi did not return every required position market.",
+                    )
                 if not markets:
                     return MarketDataProviderResult(
                         venue=Venue.KALSHI.value,

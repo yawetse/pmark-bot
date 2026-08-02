@@ -133,6 +133,22 @@ def _runtime_username() -> str:
     return allowed[0]
 
 
+def _validate_runtime_credential_rows(
+    rows: list[dict[str, Any]],
+    *,
+    authenticated: bool,
+) -> None:
+    if len(rows) != 3 or any("private" in json.dumps(row).lower() for row in rows):
+        raise RuntimeError("runtime Kalshi credential readiness is incomplete or unsafe")
+    if authenticated:
+        if any(not bool(row.get("configured")) for row in rows):
+            raise RuntimeError("runtime Kalshi credential injection is incomplete")
+        if any(str(row.get("status") or "") not in {"present", "disabled"} for row in rows):
+            raise RuntimeError("runtime Kalshi credential state is not ready")
+    elif any(bool(row.get("configured")) or bool(row.get("present")) for row in rows):
+        raise RuntimeError("runtime reports Kalshi credentials configured when secrets are absent")
+
+
 def _mutation_log_count(log_group: str, start_ms: str) -> int:
     payload = _aws_json(
         [
@@ -363,10 +379,10 @@ def main() -> int:
     kalshi_rows = [
         row for row in wallets.get("credentials") or [] if row.get("venue") == "kalshi"
     ]
-    if len(kalshi_rows) != 3 or any("private" in json.dumps(row).lower() for row in kalshi_rows):
-        raise RuntimeError("runtime Kalshi credential readiness is incomplete or unsafe")
-    if credentials is None and any(bool(row.get("present")) for row in kalshi_rows):
-        raise RuntimeError("runtime reports Kalshi credentials present when secrets are absent")
+    _validate_runtime_credential_rows(
+        kalshi_rows,
+        authenticated=credentials is not None,
+    )
 
     try:
         kalshi_live_order_adapter_from_env(

@@ -300,6 +300,7 @@ class RuntimeCredentialView:
     venue: str
     provider: str
     public_identifier: str
+    configured: bool
     present: bool
     reference: str
     status: str
@@ -318,6 +319,7 @@ class RuntimeCredentialView:
             "venue": self.venue,
             "provider": self.provider,
             "publicIdentifier": self.public_identifier,
+            "configured": self.configured,
             "present": self.present,
             "reference": self.reference,
             "status": self.status,
@@ -1017,12 +1019,13 @@ class RuntimeStatusService:
         scanner_run_id: str | None,
         started_at: datetime,
         reason: str,
+        trigger: str = "manual",
     ) -> ReasoningRunResult:
         row = self.registry.shared().record_reasoning_run(
             environment=environment,
             pipeline_run_id=pipeline_run_id,
             scanner_run_id=scanner_run_id,
-            trigger="manual",
+            trigger=trigger,
             status="skipped",
             config={"skip_reason": reason},
             provider_count=0,
@@ -1045,12 +1048,13 @@ class RuntimeStatusService:
         reasoning_run_id: str | None,
         started_at: datetime,
         reason: str,
+        trigger: str = "manual",
     ) -> StrategyConsensusRunResult:
         row = self.registry.shared().record_strategy_consensus_run(
             environment=environment,
             pipeline_run_id=pipeline_run_id,
             reasoning_run_id=reasoning_run_id,
-            trigger="manual",
+            trigger=trigger,
             status="skipped",
             config={"skip_reason": reason},
             vote_count=0,
@@ -1123,7 +1127,7 @@ class RuntimeStatusService:
         environment: Environment,
         config_payload: dict[str, Any],
         kill_switch_active: bool = False,
-        execution_context_reader: Callable[[], tuple[dict[str, Any], bool]] | None = None,
+        runtime_context_reader: Callable[[], tuple[dict[str, Any], bool]] | None = None,
     ) -> dict[str, Any]:
         """Run scheduled provider market-data ingestion and record the heartbeat."""
 
@@ -1154,41 +1158,68 @@ class RuntimeStatusService:
                     run_id=run_id,
                 )
             )
+        stage_config_payload = config_payload
+        stage_kill_switch_active = kill_switch_active
+        if runtime_context_reader is not None:
+            stage_config_payload, stage_kill_switch_active = runtime_context_reader()
         scanner_started_at = datetime.now(UTC)
         scanner_run = self.scanner.run(
             environment=environment,
             pipeline_run_id=run_id,
             trigger="scheduled",
             market_data_pulls=market_data_pulls,
-            config_payload=config_payload,
+            config_payload=stage_config_payload,
+            kill_switch_active=stage_kill_switch_active,
             started_at=scanner_started_at,
             completed_at=None,
         )
+        if runtime_context_reader is not None:
+            stage_config_payload, stage_kill_switch_active = runtime_context_reader()
         reasoning_started_at = datetime.now(UTC)
-        reasoning_run = self.brain.run(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="scheduled",
-            scanner_run=scanner_run.payload,
-            config_payload=config_payload,
-            started_at=reasoning_started_at,
-            completed_at=None,
-        )
+        if stage_kill_switch_active:
+            reasoning_run = self._skipped_reasoning_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                scanner_run_id=scanner_run.payload.get("id"),
+                started_at=reasoning_started_at,
+                reason="The persisted kill switch blocked scheduled Kalshi scoring.",
+                trigger="scheduled",
+            )
+        else:
+            reasoning_run = self.brain.run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                trigger="scheduled",
+                scanner_run=scanner_run.payload,
+                config_payload=stage_config_payload,
+                started_at=reasoning_started_at,
+                completed_at=None,
+            )
         strategy_started_at = datetime.now(UTC)
-        strategy_run = self.strategy_consensus.run(
-            environment=environment,
-            pipeline_run_id=run_id,
-            trigger="scheduled",
-            scanner_run=scanner_run.payload,
-            reasoning_run=reasoning_run.payload,
-            config_payload=config_payload,
-            started_at=strategy_started_at,
-            completed_at=strategy_started_at,
-        )
-        execution_config_payload = config_payload
-        execution_kill_switch_active = kill_switch_active
-        if execution_context_reader is not None:
-            execution_config_payload, execution_kill_switch_active = execution_context_reader()
+        if stage_kill_switch_active:
+            strategy_run = self._skipped_strategy_run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                reasoning_run_id=reasoning_run.payload.get("id"),
+                started_at=strategy_started_at,
+                reason="The persisted kill switch blocked scheduled strategy decisions.",
+                trigger="scheduled",
+            )
+        else:
+            strategy_run = self.strategy_consensus.run(
+                environment=environment,
+                pipeline_run_id=run_id,
+                trigger="scheduled",
+                scanner_run=scanner_run.payload,
+                reasoning_run=reasoning_run.payload,
+                config_payload=stage_config_payload,
+                started_at=strategy_started_at,
+                completed_at=strategy_started_at,
+            )
+        execution_config_payload = stage_config_payload
+        execution_kill_switch_active = stage_kill_switch_active
+        if runtime_context_reader is not None:
+            execution_config_payload, execution_kill_switch_active = runtime_context_reader()
         execution_started_at = datetime.now(UTC)
         execution_run = self.lifecycle.run_execution(
             environment=environment,
@@ -4732,7 +4763,8 @@ class RuntimeStatusService:
             if not alternative_required_names
             else any(_configured(self.settings.runtime_env.get(name, "")) for name in alternative_required_names)
         )
-        present = enabled and required_present and alternative_present
+        configured = required_present and alternative_present
+        present = enabled and configured
         if account_status in {"reviewing", "pending"}:
             present = False
         if not enabled:
@@ -4758,6 +4790,7 @@ class RuntimeStatusService:
             venue=venue,
             provider=provider,
             public_identifier=public_identifier,
+            configured=configured,
             present=present,
             reference=reference,
             status=status,
