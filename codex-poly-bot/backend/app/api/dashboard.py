@@ -981,23 +981,22 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
                     "message": str(exc),
                 },
             ) from exc
-        config_payload = _current_config(
-            context.environment,
-            context.actor.username,
-        )["settings"].get(
-            "funding", {}
-        )
-        funding_config = FundingConfig.model_validate(config_payload)
-        payload["directTransferReadiness"] = services.funding.direct_transfer_readiness(
-            environment=context.environment,
-            config=funding_config,
-            kill_switch_active=services.kill_switch.state(context.environment).active,
-        )
-        payload["directTransferReadiness"]["bankSetupMessage"] = (
-            "Bank setup is managed by Alpaca. Existing ACH relationships are provisioned "
-            "outside the dashboard, and Plaid is not required."
-        )
+        payload["directTransferReadiness"] = _funding_readiness(context)
         return payload
+
+    @router.get("/api/funding/readiness")
+    def funding_readiness(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return direct-transfer guardrails without loading funding history.
+
+        REQ: REQ-FND-014, REQ-FND-020, REQ-OBS-005
+        """
+
+        return {
+            "environment": context.environment.value,
+            "directTransferReadiness": _funding_readiness(context),
+        }
 
     @router.get("/api/economics/history")
     def economics_history(
@@ -1053,6 +1052,25 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
         """
 
         return {"environment": context.environment.value, "items": _audit_events()}
+
+    def _funding_readiness(
+        context: DashboardRequestContext,
+    ) -> dict[str, Any]:
+        config_payload = _current_config(
+            context.environment,
+            context.actor.username,
+        )["settings"].get("funding", {})
+        funding_config = FundingConfig.model_validate(config_payload)
+        readiness = services.funding.direct_transfer_readiness(
+            environment=context.environment,
+            config=funding_config,
+            kill_switch_active=services.kill_switch.state(context.environment).active,
+        )
+        readiness["bankSetupMessage"] = (
+            "Bank setup is managed by Alpaca. Existing ACH relationships are provisioned "
+            "outside the dashboard, and Plaid is not required."
+        )
+        return readiness
 
     def _current_config(environment: Environment, username: str | None = None) -> dict[str, Any]:
         reload_result = services.config.config_for_next_loop(environment, username=username)

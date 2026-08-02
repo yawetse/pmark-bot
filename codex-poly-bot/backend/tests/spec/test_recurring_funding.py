@@ -1320,6 +1320,37 @@ def test_req_fnd_010_01_authenticated_history_api_is_sanitized() -> None:
     assert "request_fingerprint" not in serialized
 
 
+def test_req_fnd_020_04_release_readiness_does_not_load_funding_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TST-REQ-FND-020-04: release safety readback stays bounded."""
+
+    app = create_app(
+        AppSettings(
+            environment=Environment.DEVELOPMENT,
+            allowed_usernames=("yaw",),
+            signing_secret="test-secret",
+        )
+    )
+    token = app.state.services.auth.create_session_token(username="yaw")
+
+    def fail_history(*_: object, **__: object) -> dict[str, object]:
+        raise AssertionError("release readiness must not load funding history")
+
+    monkeypatch.setattr(app.state.services.funding, "history_payload", fail_history)
+    response = TestClient(app).get(
+        "/api/funding/readiness",
+        headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["environment"] == "development"
+    assert payload["directTransferReadiness"]["enabled"] is False
+    assert payload["directTransferReadiness"]["maxTransferUsd"] == "0.00"
+    assert payload["directTransferReadiness"]["maxMonthlyTransferUsd"] == "0.00"
+
+
 def test_req_fnd_010_03_history_uses_independent_stable_cursors() -> None:
     """TST-REQ-FND-010-03: cash-flow pages are descending and non-overlapping."""
 
