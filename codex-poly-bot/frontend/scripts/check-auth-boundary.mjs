@@ -18,6 +18,7 @@ const files = {
   methodExplorer: "components/product-story/method-explorer.tsx",
   help: "components/dashboard/help-about-view.tsx",
   logout: "app/api/auth/logout/route.ts",
+  realtimeToken: "app/dashboard-realtime-token/route.ts",
 };
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -102,6 +103,11 @@ const logout = read(files.logout);
 assert.match(logout, /clearDashboardSession/);
 assert.match(logout, /\/login\?status=signed_out/);
 assert.match(logout, /NextResponse\.redirect/);
+
+const realtimeToken = read(files.realtimeToken);
+assert.match(realtimeToken, /getDashboardSession/);
+assert.match(realtimeToken, /mintBackendToken/);
+assert.doesNotMatch(files.realtimeToken, /^app\/api\//);
 
 const startRoute = read("app/api/auth/github/start/route.ts");
 assert.match(startRoute, /ALLOW_LOCAL_AUTH_BYPASS/);

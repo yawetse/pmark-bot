@@ -2582,8 +2582,10 @@ class RuntimeStatusService:
         self,
         environment: Environment,
         run_id: str,
+        *,
+        activity_stage: str | None = None,
     ) -> dict[str, Any] | None:
-        """Return one pipeline run and the records created by each step."""
+        """Return one pipeline run and full or activity-stage-scoped records."""
 
         try:
             run_rows = self.registry.state.rows(
@@ -2603,16 +2605,23 @@ class RuntimeStatusService:
         if not run_rows:
             return None
         step_rows.sort(key=lambda step: step.get("step_order", 0))
+        record_step_key, record_tables = self._activity_record_scope(activity_stage)
+        record_steps = (
+            step_rows
+            if record_step_key is None
+            else [step for step in step_rows if step.get("step_key") == record_step_key]
+        )
         record_ids = list(
             dict.fromkeys(
                 record_id
-                for step in step_rows
+                for step in record_steps
                 for record_id in step.get("record_ids", [])
             )
         )
         hydrated_records = self._pipeline_step_records(
             environment=environment,
             record_ids=record_ids,
+            tables=record_tables,
         )
         records_by_id: dict[str, list[dict[str, Any]]] = {}
         for record in hydrated_records:
@@ -3823,11 +3832,12 @@ class RuntimeStatusService:
         *,
         environment: Environment,
         record_ids: list[str],
+        tables: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         if not record_ids:
             return []
         wanted = set(record_ids)
-        tables = [
+        selected_tables = tables if tables is not None else (
             self.MARKET_DATA_PULLS_TABLE,
             self.SCANNER_RUNS_TABLE,
             self.SCANNER_CANDIDATES_TABLE,
@@ -3842,9 +3852,9 @@ class RuntimeStatusService:
             self.EXIT_INTENTS_TABLE,
             self.AI_USAGE_EVENTS_TABLE,
             self.ECONOMICS_SNAPSHOTS_TABLE,
-        ]
+        )
         records: list[dict[str, Any]] = []
-        for table in tables:
+        for table in selected_tables:
             try:
                 rows = self.registry.state.rows(
                     table,
@@ -3866,6 +3876,21 @@ class RuntimeStatusService:
                     )
         records.sort(key=lambda row: record_ids.index(row["id"]) if row["id"] in wanted else len(record_ids))
         return records
+
+    def _activity_record_scope(
+        self,
+        activity_stage: str | None,
+    ) -> tuple[str | None, tuple[str, ...] | None]:
+        if activity_stage is None:
+            return None, None
+        scopes = {
+            "scanned": ("data_fetch", (self.MARKET_DATA_PULLS_TABLE,)),
+            "promising": ("scanner", (self.SCANNER_CANDIDATES_TABLE,)),
+            "scored": ("brain", (self.REASONING_OUTPUTS_TABLE,)),
+            "approved": ("execution", (self.STRATEGY_CONSENSUS_OUTPUTS_TABLE,)),
+            "acted": ("execution", (self.ORDER_INTENTS_TABLE,)),
+        }
+        return scopes.get(activity_stage, (None, None))
 
     def _fetch_and_record_market_data_pull(
         self,

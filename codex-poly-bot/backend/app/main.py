@@ -13,12 +13,12 @@ from dataclasses import dataclass, field
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api import build_dashboard_router
 from app.db import (
-    DatabaseState,
     PersistenceConfigurationError,
     PersistenceUnavailableError,
     PersistentDatabaseState,
@@ -226,6 +226,28 @@ def create_app(
     resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
     configure_observability(app, settings=resolved_settings)
 
+    @app.exception_handler(PersistenceUnavailableError)
+    async def _persistence_unavailable(
+        request: Request,
+        exc: PersistenceUnavailableError,
+    ) -> JSONResponse:
+        LOGGER.warning(
+            "Request failed because Postgres persistence is unavailable: %s %s",
+            request.method,
+            request.url.path,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "5"},
+            content={
+                "detail": {
+                    "error_code": "persistence_unavailable",
+                    "message": "Dashboard data is temporarily unavailable.",
+                }
+            },
+        )
+
     @app.on_event("startup")
     async def _start_dashboard_events() -> None:
         await resolved_services.dashboard_events.start()
@@ -304,9 +326,10 @@ def _repository_registry_from_settings(settings: AppSettings) -> RepositoryRegis
         return RepositoryRegistry(PersistentDatabaseState(session_factory))
     except PersistenceConfigurationError:
         LOGGER.exception("Postgres persistence is misconfigured")
-    except Exception:
+        raise
+    except Exception as exc:
         LOGGER.exception("Postgres persistence is unavailable")
-    return RepositoryRegistry(DatabaseState(available=False))
+        raise PersistenceUnavailableError("Postgres persistence is unavailable") from exc
 
 
 def _scheduler_config_username(

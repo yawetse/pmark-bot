@@ -12,7 +12,7 @@ import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -212,6 +212,82 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
             ),
             "audit": {"items": _audit_events()},
             "degraded_sections": [],
+        }
+
+    @router.get("/api/dashboard/overview")
+    def dashboard_overview(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return the bounded data needed by the consumer overview.
+
+        The overview used to issue five concurrent requests that each reloaded
+        configuration and competed with the initial realtime snapshot. Keeping
+        the first render behind one bounded request prevents the small production
+        database pool from being exhausted during a page load.
+
+        REQ: REQ-UI-004, REQ-UI-017, REQ-OBS-005
+        """
+
+        config_snapshot = _current_config(context.environment, context.actor.username)
+        settings_payload = config_snapshot["settings"]
+        operations = services.runtime_status.operations_summary(
+            context.environment,
+            include_history=False,
+        )
+        kill_switch_active = services.kill_switch.state(context.environment).active
+        operations["killSwitch"] = "active" if kill_switch_active else "inactive"
+        market_data = services.runtime_status.market_data_pull(
+            environment=context.environment,
+            config_payload=settings_payload,
+        )
+        return {
+            "environment": context.environment.value,
+            "generatedAt": _now(),
+            "config": config_snapshot,
+            "operations": operations,
+            "marketData": market_data,
+            "tickSchedule": services.runtime_status.tick_schedule(
+                environment=context.environment,
+                config_payload=settings_payload,
+            ),
+            "notifications": services.runtime_status.notification_summary(
+                settings_payload
+            ),
+        }
+
+    @router.get("/api/dashboard/readiness")
+    def dashboard_readiness(
+        context: DashboardRequestContext = Depends(require_dashboard_access),
+    ) -> dict[str, Any]:
+        """Return only the system-readiness fields used by the health page.
+
+        REQ: REQ-UI-004, REQ-UI-009, REQ-OBS-005
+        """
+
+        config_snapshot = _current_config(context.environment, context.actor.username)
+        settings_payload = config_snapshot["settings"]
+        kill_switch_active = services.kill_switch.state(context.environment).active
+        return {
+            "environment": context.environment.value,
+            "generated_at": _now(),
+            "status": {
+                "health": "ok",
+                "kill_switch_active": kill_switch_active,
+                "items": services.runtime_status.status_items(
+                    environment=context.environment,
+                    config_payload=settings_payload,
+                ),
+                "worker": services.runtime_status.worker_status(),
+            },
+            "config": config_snapshot,
+            "wallet": {
+                "credentials": services.runtime_status.credential_rows(
+                    context.environment
+                )
+            },
+            "notifications": services.runtime_status.notification_summary(
+                settings_payload
+            ),
         }
 
     @router.get("/api/preferences")
@@ -729,14 +805,26 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     @router.get("/api/operations/runs/{run_id}")
     def operations_run_detail(
         run_id: str,
+        activity_stage: Literal[
+            "scanned",
+            "promising",
+            "scored",
+            "approved",
+            "acted",
+        ]
+        | None = None,
         context: DashboardRequestContext = Depends(require_dashboard_access),
     ) -> dict[str, Any]:
-        """Return one loop run with step-linked records.
+        """Return one loop run with optionally stage-scoped records.
 
         REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-005
         """
 
-        payload = services.runtime_status.pipeline_run_detail(context.environment, run_id)
+        payload = services.runtime_status.pipeline_run_detail(
+            context.environment,
+            run_id,
+            activity_stage=activity_stage,
+        )
         if payload is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

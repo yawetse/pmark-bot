@@ -5,9 +5,12 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.adapters.aws import AwsBillingCost, CostExplorerBillingAdapter, InMemorySesEmailAdapter
+from app.db import PersistenceUnavailableError
 from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
@@ -578,6 +581,26 @@ def test_req_ui_008_09_pipeline_detail_records_use_indexed_store_reads(monkeypat
         for table_name, kwargs in calls
     )
 
+    calls.clear()
+    scanned_detail = service.pipeline_run_detail(
+        Environment.DEVELOPMENT,
+        "run-1",
+        activity_stage="scanned",
+    )
+
+    assert scanned_detail is not None
+    assert scanned_detail["records"][0]["items"][0]["id"] == "pull-1"
+    assert scanned_detail["records"][1]["items"] == []
+    scoped_record_calls = [
+        (table_name, kwargs)
+        for table_name, kwargs in calls
+        if kwargs.get("ids") is not None
+    ]
+    assert [table_name for table_name, _ in scoped_record_calls] == [
+        service.MARKET_DATA_PULLS_TABLE
+    ]
+    assert scoped_record_calls[0][1]["ids"] == {"pull-1"}
+
 
 def test_req_ui_008_10_default_scenario_skips_record_hydration(monkeypatch) -> None:
     """TST-REQ-UI-008-10: Validates REQ-UI-008 and REQ-OBS-005
@@ -652,6 +675,111 @@ def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
     assert health.json()["status"] == "ok"
     assert dashboard.status_code == 200
     assert dashboard.json()["data_source"] == "fastapi"
+
+
+def test_req_ui_017_overview_returns_one_bounded_initial_payload() -> None:
+    """TST-REQ-UI-017-06: Validates REQ-UI-017 and REQ-OBS-005
+
+    Given: an authenticated consumer opens the overview
+    When: its bounded overview endpoint is requested
+    Then: the five initial panels are returned from one config snapshot
+    """
+    client, token = _client()
+
+    response = client.get(
+        "/api/dashboard/overview",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["environment"] == "development"
+    assert set(payload) == {
+        "environment",
+        "generatedAt",
+        "config",
+        "operations",
+        "marketData",
+        "tickSchedule",
+        "notifications",
+    }
+    assert payload["operations"]["killSwitch"] == "inactive"
+
+
+def test_req_ui_009_readiness_omits_expensive_dashboard_sections() -> None:
+    """TST-REQ-UI-009-03: Validates REQ-UI-009 and REQ-OBS-005
+
+    Given: an authenticated operator opens system health
+    When: the readiness endpoint is requested
+    Then: it returns readiness fields without model, economics, or history reads
+    """
+    client, token = _client()
+
+    response = client.get(
+        "/api/dashboard/readiness",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"]["health"] == "ok"
+    assert "credentials" in payload["wallet"]
+    assert "notifications" in payload
+    assert "economics" not in payload
+    assert "models" not in payload
+    assert "operations" not in payload
+
+
+def test_req_obs_006_postgres_startup_failure_is_not_hidden(monkeypatch) -> None:
+    """TST-REQ-OBS-006-02: Validates REQ-OBS-006
+
+    Given: a deployed runtime has a configured database that cannot be reached
+    When: the repository registry initializes
+    Then: startup fails so the task can retry instead of serving a false healthy state
+    """
+
+    def unavailable_session_factory(database_url: str):
+        del database_url
+        raise RuntimeError("connection timeout expired")
+
+    monkeypatch.setattr(main_module, "create_session_factory", unavailable_session_factory)
+
+    with pytest.raises(PersistenceUnavailableError, match="Postgres persistence is unavailable"):
+        main_module._repository_registry_from_settings(
+            AppSettings(database_url="postgresql+psycopg://configured-database")
+        )
+
+
+def test_req_obs_006_persistence_failure_returns_safe_503() -> None:
+    """TST-REQ-OBS-006-03: Validates REQ-OBS-006
+
+    Given: persistence becomes unavailable after the backend starts
+    When: an authenticated dashboard read needs stored data
+    Then: the API reports a safe retryable 503 response
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        environment=Environment.DEVELOPMENT,
+    )
+    app = create_app(settings)
+    token = app.state.services.auth.create_session_token(username="yaw")
+    app.state.services.registry.state.available = False
+
+    response = TestClient(app).get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert response.json() == {
+        "detail": {
+            "error_code": "persistence_unavailable",
+            "message": "Dashboard data is temporarily unavailable.",
+        }
+    }
 
 
 def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> None:
