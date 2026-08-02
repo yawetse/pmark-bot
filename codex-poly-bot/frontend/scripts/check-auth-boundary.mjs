@@ -72,6 +72,8 @@ assert.match(productLanding, /MethodExplorer/);
 assert.match(productLanding, /PublicProductLanding/);
 assert.match(productLanding, /LoginProductLanding/);
 assert.match(productLanding, /href="\/story"/);
+assert.match(productLanding, /Polymarket, Kalshi, and Alpaca/);
+assert.match(productLanding, /Kalshi supports standard binary markets on the primary subaccount/);
 assert.doesNotMatch(productLanding, /original post|source post|source method/i);
 
 const productStoryPage = read(files.productStoryPage);
