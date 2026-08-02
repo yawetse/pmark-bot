@@ -1127,9 +1127,12 @@ class RuntimeStatusService:
         environment: Environment,
         config_payload: dict[str, Any],
         kill_switch_active: bool = False,
-        runtime_context_reader: Callable[[], tuple[dict[str, Any], bool]] | None = None,
+        kill_switch_reader: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """Run scheduled provider market-data ingestion and record the heartbeat."""
+        """Run scheduled ingestion with immediate kill-switch stage checks.
+
+        REQ: REQ-KAL-007
+        """
 
         now = datetime.now(UTC)
         run_id = str(uuid4())
@@ -1158,23 +1161,22 @@ class RuntimeStatusService:
                     run_id=run_id,
                 )
             )
-        stage_config_payload = config_payload
         stage_kill_switch_active = kill_switch_active
-        if runtime_context_reader is not None:
-            stage_config_payload, stage_kill_switch_active = runtime_context_reader()
+        if kill_switch_reader is not None:
+            stage_kill_switch_active = kill_switch_reader()
         scanner_started_at = datetime.now(UTC)
         scanner_run = self.scanner.run(
             environment=environment,
             pipeline_run_id=run_id,
             trigger="scheduled",
             market_data_pulls=market_data_pulls,
-            config_payload=stage_config_payload,
+            config_payload=config_payload,
             kill_switch_active=stage_kill_switch_active,
             started_at=scanner_started_at,
             completed_at=None,
         )
-        if runtime_context_reader is not None:
-            stage_config_payload, stage_kill_switch_active = runtime_context_reader()
+        if kill_switch_reader is not None:
+            stage_kill_switch_active = kill_switch_reader()
         reasoning_started_at = datetime.now(UTC)
         if stage_kill_switch_active:
             reasoning_run = self._skipped_reasoning_run(
@@ -1191,11 +1193,13 @@ class RuntimeStatusService:
                 pipeline_run_id=run_id,
                 trigger="scheduled",
                 scanner_run=scanner_run.payload,
-                config_payload=stage_config_payload,
+                config_payload=config_payload,
                 started_at=reasoning_started_at,
                 completed_at=None,
             )
         strategy_started_at = datetime.now(UTC)
+        if kill_switch_reader is not None:
+            stage_kill_switch_active = kill_switch_reader()
         if stage_kill_switch_active:
             strategy_run = self._skipped_strategy_run(
                 environment=environment,
@@ -1212,14 +1216,13 @@ class RuntimeStatusService:
                 trigger="scheduled",
                 scanner_run=scanner_run.payload,
                 reasoning_run=reasoning_run.payload,
-                config_payload=stage_config_payload,
+                config_payload=config_payload,
                 started_at=strategy_started_at,
                 completed_at=strategy_started_at,
             )
-        execution_config_payload = stage_config_payload
         execution_kill_switch_active = stage_kill_switch_active
-        if runtime_context_reader is not None:
-            execution_config_payload, execution_kill_switch_active = runtime_context_reader()
+        if kill_switch_reader is not None:
+            execution_kill_switch_active = kill_switch_reader()
         execution_started_at = datetime.now(UTC)
         execution_run = self.lifecycle.run_execution(
             environment=environment,
@@ -1227,7 +1230,7 @@ class RuntimeStatusService:
             trigger="scheduled",
             strategy_run=strategy_run.payload,
             market_data_pulls=market_data_pulls,
-            config_payload=execution_config_payload,
+            config_payload=config_payload,
             credential_status=self._venue_credential_status(environment),
             kill_switch_active=execution_kill_switch_active,
             started_at=execution_started_at,
@@ -1239,7 +1242,7 @@ class RuntimeStatusService:
             pipeline_run_id=run_id,
             trigger="scheduled",
             market_data_pulls=market_data_pulls,
-            config_payload=execution_config_payload,
+            config_payload=config_payload,
             kill_switch_active=execution_kill_switch_active,
             started_at=exit_started_at,
             completed_at=exit_started_at,
@@ -3933,6 +3936,11 @@ class RuntimeStatusService:
         created_at: datetime,
         run_id: str,
     ) -> dict[str, Any]:
+        """Fetch venue data, including exact tickers needed for Kalshi exits.
+
+        REQ: REQ-KAL-001, REQ-KAL-003
+        """
+
         fetch_config = config_payload
         if venue == Venue.KALSHI.value:
             required_tickers = sorted(

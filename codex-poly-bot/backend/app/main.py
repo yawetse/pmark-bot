@@ -445,6 +445,11 @@ async def _worker_heartbeat_loop(
     environment: Environment,
     interval_seconds: int,
 ) -> None:
+    """Run one config snapshot per loop with immediate kill-switch reads.
+
+    REQ: REQ-KAL-007
+    """
+
     while True:
         loop_started_at = asyncio.get_running_loop().time()
         next_interval_seconds = interval_seconds
@@ -462,26 +467,12 @@ async def _worker_heartbeat_loop(
             )
             tick_errors: list[Exception] = []
             try:
-                def runtime_context() -> tuple[dict[str, object], bool]:
-                    latest = services.config.config_for_next_loop(
-                        environment,
-                        username=username,
-                    )
-                    latest_payload = (
-                        latest.snapshot.payload
-                        or services.runtime_status.runtime_config_payload()
-                    )
-                    return (
-                        latest_payload,
-                        services.kill_switch.state(environment).active,
-                    )
-
                 await asyncio.to_thread(
                     services.runtime_status.trigger_scheduled_run,
                     environment=environment,
                     config_payload=config_payload,
                     kill_switch_active=services.kill_switch.state(environment).active,
-                    runtime_context_reader=runtime_context,
+                    kill_switch_reader=lambda: services.kill_switch.state(environment).active,
                 )
             except Exception as exc:
                 tick_errors.append(exc)

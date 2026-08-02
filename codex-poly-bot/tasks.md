@@ -1904,7 +1904,7 @@
 | AC-053-02 | If exchange trading is inactive or price, count, tick, credentials, freshness, or risk is invalid, then the system shall make zero order POSTs. |
 | AC-053-03 | If a mocked order mutation is rate limited, times out, or returns an ambiguous server response, then the system shall make one POST, persist `UNKNOWN_SUBMIT`, reserve the client ID, and reconcile before replacement. |
 | AC-053-04 | When a known order is canceled, the system shall reconcile first, make one mocked DELETE, persist the result, and require another confirming read before a later cancel attempt. |
-| AC-053-05 | When persisted configuration or kill-switch state changes during a scheduled tick, the runtime shall reread it at scanner, scoring, and execution stage boundaries, block new Kalshi scans, scores, and exposure, and keep exact-position quotes plus risk-reducing paths available. |
+| AC-053-05 | When the persisted kill switch changes during a scheduled tick, the runtime shall keep the normal loop config snapshot, reread the kill switch at scanner, scoring, strategy, and execution stage boundaries, block new Kalshi scans, scores, strategy decisions, and exposure, and keep exact-position quotes plus risk-reducing paths available. |
 
 **Definition of Done:** Durable intent, four-case entry and exit, gate matrix, ambiguous-state, client-ID reconciliation, known-order cancellation, and concurrency tests pass with blocked egress.
 

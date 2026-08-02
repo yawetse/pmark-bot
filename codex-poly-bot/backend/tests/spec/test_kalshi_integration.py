@@ -2000,8 +2000,8 @@ def test_req_kal_010_01_infrastructure_injects_environment_scoped_kalshi_secrets
     assert "KALSHI_ENABLED: ${{ vars.KALSHI_ENABLED }}" in workflow
 
 
-def test_req_kal_010_02_release_verifier_credential_modes_fail_closed() -> None:
-    """TST-REQ-KAL-010-02: zero, partial, and complete secret modes are explicit."""
+def test_req_kal_010_04_release_verifier_credential_modes_fail_closed() -> None:
+    """TST-REQ-KAL-010-04: zero, partial, and complete secret modes are explicit."""
 
     module = runpy.run_path(str(PROJECT_ROOT / "scripts" / "verify-kalshi-release.py"))
     inventory = module["_credential_inventory"]

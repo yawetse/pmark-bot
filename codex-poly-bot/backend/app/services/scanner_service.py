@@ -87,7 +87,10 @@ class ScannerService:
         kill_switch_active: bool = False,
         completed_at: datetime | None = None,
     ) -> ScannerRunResult:
-        """Scan provider candidates and persist one scanner run."""
+        """Scan provider candidates and honor the immediate kill switch.
+
+        REQ: REQ-KAL-007
+        """
 
         finished_at = completed_at or datetime.now(UTC)
         scanner_config = scanner_config_from_payload(config_payload)

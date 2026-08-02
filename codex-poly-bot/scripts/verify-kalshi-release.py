@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Verify a deployed Kalshi release using read-only calls and safe evidence."""
+"""Verify a deployed Kalshi release using read-only calls and safe evidence.
+
+REQ: REQ-KAL-010
+"""
 
 from __future__ import annotations
 
@@ -138,6 +141,11 @@ def _validate_runtime_credential_rows(
     *,
     authenticated: bool,
 ) -> None:
+    """Require deployed runtime injection to match the AWS credential mode.
+
+    REQ: REQ-KAL-010
+    """
+
     if len(rows) != 3 or any("private" in json.dumps(row).lower() for row in rows):
         raise RuntimeError("runtime Kalshi credential readiness is incomplete or unsafe")
     if authenticated:
@@ -237,6 +245,10 @@ def _credentials(environment: str, provider: str) -> KalshiCredentials:
 def _credential_inventory(
     environment: str,
 ) -> tuple[dict[str, KalshiCredentials] | None, list[dict[str, Any]]]:
+    """Classify zero, partial, or complete release credential configuration.
+
+    REQ: REQ-KAL-010
+    """
     values: dict[str, dict[str, str | None]] = {}
     references: list[dict[str, Any]] = []
     for provider in ("market-data", "openai", "claude"):
