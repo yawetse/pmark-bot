@@ -581,6 +581,26 @@ def test_req_ui_008_09_pipeline_detail_records_use_indexed_store_reads(monkeypat
         for table_name, kwargs in calls
     )
 
+    calls.clear()
+    scanned_detail = service.pipeline_run_detail(
+        Environment.DEVELOPMENT,
+        "run-1",
+        activity_stage="scanned",
+    )
+
+    assert scanned_detail is not None
+    assert scanned_detail["records"][0]["items"][0]["id"] == "pull-1"
+    assert scanned_detail["records"][1]["items"] == []
+    scoped_record_calls = [
+        (table_name, kwargs)
+        for table_name, kwargs in calls
+        if kwargs.get("ids") is not None
+    ]
+    assert [table_name for table_name, _ in scoped_record_calls] == [
+        service.MARKET_DATA_PULLS_TABLE
+    ]
+    assert scoped_record_calls[0][1]["ids"] == {"pull-1"}
+
 
 def test_req_ui_008_10_default_scenario_skips_record_hydration(monkeypatch) -> None:
     """TST-REQ-UI-008-10: Validates REQ-UI-008 and REQ-OBS-005

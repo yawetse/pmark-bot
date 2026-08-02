@@ -51,6 +51,8 @@ const activity = read("components/dashboard/activity-view.tsx");
 for (const token of ["Recent checks", "/dashboard/data", "/dashboard/operations"]) {
   assert.match(activity, new RegExp(token));
 }
+assert.match(activity, /\?activity_stage=\$\{encodeURIComponent\(key\)\}/);
+assert.match(activity, /detailState\.stageKey === key/);
 
 const performance = read("components/dashboard/performance-view.tsx");
 for (const token of ["Equity", "Cash", "Available to trade", "buildPerformanceAccountBalances", "Realized P&L", "Unrealized P&L", "Open positions", "Win rate", "Trades", "By market", "Confirmed fills", "/dashboard/comparison", "/dashboard/models"]) {
