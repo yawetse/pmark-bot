@@ -12,7 +12,7 @@ import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -729,14 +729,26 @@ def build_dashboard_router(settings: Any, services: Any) -> APIRouter:
     @router.get("/api/operations/runs/{run_id}")
     def operations_run_detail(
         run_id: str,
+        activity_stage: Literal[
+            "scanned",
+            "promising",
+            "scored",
+            "approved",
+            "acted",
+        ]
+        | None = None,
         context: DashboardRequestContext = Depends(require_dashboard_access),
     ) -> dict[str, Any]:
-        """Return one loop run with step-linked records.
+        """Return one loop run with optionally stage-scoped records.
 
         REQ: REQ-UI-008, REQ-DAT-008, REQ-OBS-005
         """
 
-        payload = services.runtime_status.pipeline_run_detail(context.environment, run_id)
+        payload = services.runtime_status.pipeline_run_detail(
+            context.environment,
+            run_id,
+            activity_stage=activity_stage,
+        )
         if payload is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
