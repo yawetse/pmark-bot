@@ -36,6 +36,7 @@ from app.domain.models import (
     record_order_event,
     redact_metadata,
     supported_polymarket_venues,
+    supported_prediction_market_venues,
     supported_venues,
 )
 from app.domain.funding import (
@@ -94,5 +95,6 @@ __all__ = [
     "record_order_event",
     "redact_metadata",
     "supported_polymarket_venues",
+    "supported_prediction_market_venues",
     "supported_venues",
 ]

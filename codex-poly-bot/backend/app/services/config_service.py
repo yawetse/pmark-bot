@@ -1,6 +1,6 @@
 """Runtime configuration service.
 
-REQ: REQ-UI-006, REQ-UI-007, REQ-OBS-004, REQ-OBS-006
+REQ: REQ-UI-006, REQ-UI-007, REQ-OBS-004, REQ-OBS-006, REQ-KAL-001, REQ-KAL-009
 """
 
 from __future__ import annotations
@@ -544,18 +544,22 @@ class ConfigService:
         if patch.path in {
             "risk.polymarket.max_position_usd",
             "risk.polymarket.max_daily_loss_usd",
+            "risk.kalshi.max_position_usd",
+            "risk.kalshi.max_daily_loss_usd",
             "risk.alpaca.max_position_usd",
             "risk.alpaca.max_daily_loss_usd",
         }:
             return str(self._positive_decimal(value, patch.path))
         if patch.path in {
             "risk.polymarket.max_open_positions",
+            "risk.kalshi.max_open_positions",
             "risk.alpaca.max_open_positions",
             "notifications.cooldown_seconds",
         }:
             return self._positive_int(value, patch.path)
         if patch.path in {
             "risk.polymarket.market_order_slippage_threshold",
+            "risk.kalshi.market_order_slippage_threshold",
             "risk.alpaca.max_portfolio_allocation_per_symbol",
             "risk.alpaca.market_order_slippage_threshold",
         }:
@@ -609,7 +613,7 @@ class ConfigService:
         raise ConfigValidationError(f"unsupported config path: {patch.path}")
 
     def _validated_scanner_patch_value(self, parts: list[str], value: Any, path: str) -> Any:
-        if parts[1] not in {"polymarket", "alpaca"}:
+        if parts[1] not in {"polymarket", "alpaca", Venue.KALSHI.value}:
             raise ConfigValidationError("unsupported scanner venue")
         if len(parts) == 3 and parts[2] in {"allowed_categories", "blocked_categories"}:
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -632,7 +636,7 @@ class ConfigService:
             raise ConfigValidationError(f"unsupported config path: {path}")
         if parts[-1] in {"min_history_bars", "target_wallet_recent_hours"}:
             return self._positive_int(value, path)
-        if parts[1] == "polymarket" and parts[-1] == "market_data_limit":
+        if parts[1] in {"polymarket", Venue.KALSHI.value} and parts[-1] == "market_data_limit":
             limit = self._positive_int(value, path)
             if limit > MAX_POLYMARKET_MARKET_DATA_LIMIT:
                 raise ConfigValidationError(
@@ -842,7 +846,7 @@ DEFAULT_ALPACA_SYMBOL_UNIVERSE = tuple(
 def default_config_payload() -> dict[str, Any]:
     """Return safe runtime config defaults for dashboard editing.
 
-    REQ: REQ-UI-005, REQ-EXE-001, REQ-EXE-007, REQ-STR-002
+    REQ: REQ-UI-005, REQ-EXE-001, REQ-EXE-007, REQ-STR-002, REQ-KAL-001, REQ-KAL-009
     """
 
     payload = {
@@ -853,6 +857,7 @@ def default_config_payload() -> dict[str, Any]:
             Venue.POLYMARKET_US.value: {"enabled": False},
             Venue.POLYMARKET_INTERNATIONAL.value: {"enabled": False},
             Venue.ALPACA.value: {"enabled": True},
+            Venue.KALSHI.value: {"enabled": False},
         },
         "trading_loop_interval_seconds": 900,
         "strategies": {
@@ -892,6 +897,12 @@ def default_config_payload() -> dict[str, Any]:
                 "max_open_positions": 5,
                 "max_portfolio_allocation_per_symbol": "0.10",
                 "market_order_slippage_threshold": "0.005",
+            },
+            Venue.KALSHI.value: {
+                "max_position_usd": "25.00",
+                "max_daily_loss_usd": "50.00",
+                "max_open_positions": 5,
+                "market_order_slippage_threshold": "0.02",
             },
         },
         "scanner": DEFAULT_SCANNER_CONFIG,

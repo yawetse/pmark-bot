@@ -1838,3 +1838,122 @@
 - [x] Short adapter, execution, reconciliation, lifecycle, config, dashboard, and regression tests pass
 - [x] Paper-account order verification uses a documented test-only transport; no paper or live short order was placed
 - [x] Development and production deployments are verified and evidence is attached to issue 245
+
+### TASK-051: Add Kalshi Domain, Configuration, and Authenticated REST Boundary
+
+**Story:** As an operator, I want Kalshi represented as an explicit venue with environment-isolated RSA credentials so that unsupported or incomplete configuration fails before any live request.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** 11
+**Dependencies:** None
+
+**Requirements Covered:** REQ-KAL-001, REQ-KAL-003, REQ-KAL-004, REQ-KAL-007, REQ-KAL-012
+
+**Acceptance Criteria:**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-051-01 | When configuration loads, `kalshi` shall be a supported disabled-by-default prediction-market venue with validated scan and risk settings. |
+| AC-051-02 | While local, development, or production runs, the adapter shall allow only the matching recommended Kalshi host and environment-specific model-provider credentials. |
+| AC-051-03 | If RSA credentials are missing, malformed, or exposed through a serialized result, then the system shall fail closed and the security test shall fail. |
+| AC-051-04 | When an authenticated request is built, the signature shall cover timestamp, uppercase method, and path without query parameters using RSA-PSS SHA-256. |
+| AC-051-05 | If provider key or authenticated account identity collides, then new exposure shall fail closed while reconciliation and risk reduction remain available. |
+
+**Definition of Done:** Domain, config, host, signing, redaction, provider-isolation, and credential-read tests pass with generated keys and blocked external egress.
+
+### TASK-052: Add Kalshi Market Data, Scanning, and Dry-Run Execution
+
+**Story:** As an operator, I want Kalshi binary markets to enter the existing analysis loop so that both model providers can evaluate them without creating financial exposure in dry-run mode.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** 11
+**Dependencies:** TASK-051
+
+**Requirements Covered:** REQ-KAL-001, REQ-KAL-002, REQ-KAL-003, REQ-KAL-007
+
+**Acceptance Criteria:**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-052-01 | When a market-data pull runs, active non-multivariate binary markets shall be paginated with `mve_filter=exclude`, price ranges retained, and authenticated order-book batches capped at 100 tickers. |
+| AC-052-02 | When candidates are normalized, price, count, depth, spread, and liquidity shall retain fixed-point decimal precision for YES and NO outcomes. |
+| AC-052-03 | If a safe read is rate limited or fails transiently, then bounded retry shall run and the final result shall remain sanitized. |
+| AC-052-04 | While dry-run mode is active, approved Kalshi decisions shall persist simulations and shall make zero signed order requests. |
+| AC-052-05 | When a read-scoped credential is unavailable, public market summaries may be read but no unsigned order-book request or live-eligible candidate shall be produced. |
+
+**Definition of Done:** Public and authenticated mocked reads, precision, retry, stale refusal, scanner, reasoning, and zero-transport dry-run tests pass.
+
+### TASK-053: Add Kalshi V2 Order Execution and Reconciliation
+
+**Story:** As an operator, I want approved Kalshi orders submitted and reconciled safely so that duplicate exposure and ambiguous failures are controlled.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** 11
+**Dependencies:** TASK-051, TASK-052
+
+**Requirements Covered:** REQ-KAL-005, REQ-KAL-006, REQ-KAL-007, REQ-KAL-011, REQ-KAL-012
+
+**Acceptance Criteria:**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-053-01 | When every live gate passes, the system shall persist `SUBMITTING` and submit one mocked V2 fixed-point order using the four-case YES-book mapping, market price ranges, stable client ID, supported TIF, self-trade prevention, pause cancellation, reduce-only exit, and primary subaccount. |
+| AC-053-02 | If exchange trading is inactive or price, count, tick, credentials, freshness, or risk is invalid, then the system shall make zero order POSTs. |
+| AC-053-03 | If a mocked order mutation is rate limited, times out, or returns an ambiguous server response, then the system shall make one POST, persist `UNKNOWN_SUBMIT`, reserve the client ID, and reconcile before replacement. |
+| AC-053-04 | When a known order is canceled, the system shall reconcile first, make one mocked DELETE, persist the result, and require another confirming read before a later cancel attempt. |
+| AC-053-05 | When the persisted kill switch changes during a scheduled tick, the runtime shall keep the normal loop config snapshot, reread the kill switch at scanner, scoring, strategy, and execution stage boundaries, block new Kalshi scans, scores, strategy decisions, and exposure, and keep exact-position quotes plus risk-reducing paths available. |
+
+**Definition of Done:** Durable intent, four-case entry and exit, gate matrix, ambiguous-state, client-ID reconciliation, known-order cancellation, and concurrency tests pass with blocked egress.
+
+### TASK-054: Add Kalshi Portfolio and Dashboard Parity
+
+**Story:** As an authenticated dashboard user, I want Kalshi controls and confirmed performance so that I can operate and compare the venue without seeing private credential material.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** 11
+**Dependencies:** TASK-051, TASK-052, TASK-053
+
+**Requirements Covered:** REQ-KAL-008, REQ-KAL-009, REQ-KAL-013, REQ-KAL-014
+
+**Acceptance Criteria:**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-054-01 | When reconciliation runs, singleton balance; paginated live positions, fills, settlements, and orders; and historical fills and orders shall normalize into distinct provider portfolio records. |
+| AC-054-02 | When account values normalize, cents, dollar strings, contract strings, fees, settlements, and net realized P&L shall follow the field-unit contract, unavailable per-position unrealized P&L shall remain unavailable, and YES or NO outcome side shall remain explicit. |
+| AC-054-03 | If refresh fails after a confirmed snapshot, then the last confirmed values shall remain visible with stale or degraded status. |
+| AC-054-04 | When Settings, Activity, Performance, or credential status renders, Kalshi shall be labeled and configurable without exposing key IDs beyond sanitized identifiers or any private key. |
+| AC-054-05 | When historical cutoffs advance, reconciliation shall resume from durable checkpoints, deduplicate stable IDs, and stop safely on repeated cursors or the page cap. |
+
+**Definition of Done:** Mixed-unit, history, degraded-snapshot, authorization, settings persistence, outcome-side, portfolio, activity, and performance tests pass.
+
+### TASK-055: Deploy and Verify Kalshi in Development and Production
+
+**Story:** As the owner, I want the Kalshi integration promoted through the approved release path so that production contains the tested venue without a live-money smoke order.
+
+**Priority:** P0
+**Estimate:** L
+**Phase:** 11
+**Dependencies:** TASK-051 through TASK-054
+
+**Requirements Covered:** REQ-KAL-004, REQ-KAL-010
+
+**Acceptance Criteria:**
+
+| AC ID | EARS Criterion |
+|-------|----------------|
+| AC-055-01 | When infrastructure deploys, environment-specific Kalshi settings and Secrets Manager references shall be injected without printing or committing values. |
+| AC-055-02 | If credentials are absent, then public market data may run but live submission and account reconciliation shall remain blocked. |
+| AC-055-03 | When the release reaches development and production, commit and workflow, CloudFormation, ECS task and digest, HTTPS health, OAuth boundary, SES, ACM, dashboard screenshots, public Kalshi reads, runtime missing-secret refusal, and rollback gates shall pass; authenticated reads and deployed runtime injection shall pass when all credential secrets are configured, an explicit blocked not-configured result shall pass when none are configured, and a partial secret set shall fail. |
+| AC-055-04 | When release evidence is complete, issue 252 shall contain commit, PR, test, deployment, runtime, and zero-mutation evidence and shall be closed. |
+| AC-055-05 | During each recorded release window, a time-bounded audit or CloudWatch query shall show zero Kalshi POST and DELETE operations; configured authenticated accounts shall also show unchanged order and fill counts. |
+
+**Definition of Done:**
+- [ ] REQ-KAL-001 through REQ-KAL-014 have passing tests and annotated implementation
+- [ ] Full backend, frontend, infrastructure, and public-read smoke gates pass
+- [ ] Development and production deployments are verified
+- [ ] No real Kalshi order is placed and no credential material appears in git or logs

@@ -1,13 +1,13 @@
 # codex-poly-bot Requirements
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
-**Version:** 1.3
-**Date:** 2026-08-01
+**Version:** 1.4
+**Date:** 2026-08-02
 **Status:** APPROVED
 
 ## Product Intent
 
-`codex-poly-bot` is a standalone live-capable trading bot with a Python/FastAPI backend and a Next.js React dashboard. The bot supports Polymarket US, Polymarket International, and traditional stock-market trading through Alpaca for stocks and ETFs. The bot defaults to Polymarket US, disables every venue unless explicitly enabled by configuration, and runs OpenAI and Claude evaluators at the same time with separate budgets, Alpaca accounts, wallets, and Postgres schemas.
+`codex-poly-bot` is a standalone live-capable trading bot with a Python/FastAPI backend and a Next.js React dashboard. The bot supports Polymarket US, Polymarket International, Kalshi event markets, and traditional stock-market trading through Alpaca for stocks and ETFs. The bot defaults to Polymarket US, disables every venue unless explicitly enabled by configuration, and runs OpenAI and Claude evaluators at the same time with separate budgets, venue accounts or wallets, and Postgres schemas.
 
 The first version includes market scanning, daily full and incremental S3 data downloads, wallet target analysis, LLM thesis scoring, arbitrage, convergence, whale-copy strategies, Alpaca stock/ETF signal evaluation, Kelly sizing, configurable risk controls, limit and market order execution, exit monitoring, dashboard configuration, GitHub OAuth login, SES email notifications, model and venue comparison analytics, and AWS deployment. Dry-run mode exists from day one, live trading defaults to off, and configuration changes made in the dashboard apply on the next trading loop. The system runs locally with gitignored `.env` files and deploys through GitHub Actions to AWS `us-east-1` development and production environments.
 
@@ -33,6 +33,16 @@ The implementation shall not depend on the referenced repos at runtime unless la
 - `https://docs.alpaca.markets/us/reference/createtransferforaccount`
 - `https://docs.alpaca.markets/reference/createachrelationshipforaccount`
 - `https://docs.polymarket.us/api-reference/portfolio/get-activities`
+- `https://docs.kalshi.com/getting_started/api_environments`
+- `https://docs.kalshi.com/getting_started/quick_start_authenticated_requests`
+- `https://docs.kalshi.com/getting_started/fixed_point_migration`
+- `https://docs.kalshi.com/getting_started/rate_limits`
+- `https://docs.kalshi.com/getting_started/historical_data`
+- `https://docs.kalshi.com/api-reference/market/get-markets`
+- `https://docs.kalshi.com/api-reference/market/get-multiple-market-orderbooks`
+- `https://docs.kalshi.com/api-reference/orders/create-order-v2`
+- `https://docs.kalshi.com/api-reference/orders/cancel-order-v2`
+- `https://docs.kalshi.com/api-reference/portfolio/get-balance`
 
 ## Requirements
 
@@ -281,3 +291,24 @@ The implementation shall not depend on the referenced repos at runtime unless la
 | REQ-OBS-004 | P0 | When a dashboard user changes configuration, toggles live mode, or activates the kill switch, the system shall produce an audit event. |
 | REQ-OBS-005 | P1 | The dashboard shall expose recent audit events and system health indicators. |
 | REQ-OBS-006 | P1 | If a background worker fails, then the system shall record the failure and surface degraded status in the dashboard. |
+
+### Kalshi Venue Integration
+
+The following requirements use the current REST polling architecture and the user-approved production rollout. Items tagged `[ASSUMED]` record implementation choices that were not separately specified by the user and can be revised in a later release.
+
+| ID | Priority | EARS Requirement |
+|----|----------|------------------|
+| REQ-KAL-001 | P0 | When Kalshi is explicitly enabled, the system shall expose `kalshi` for market data, scoring, simulation, execution, runtime status, portfolio, and performance; when it is disabled, the system shall refuse new scans, scores, and entries while continuing read-only reconciliation, exits, and cancellation of known exposure. |
+| REQ-KAL-002 | P0 | When a Kalshi market-data pull runs, the system shall paginate active standard binary markets, send `mve_filter=exclude`, retain each market's `price_ranges`, and use authenticated order-book batches of at most 100 tickers as the authoritative bid, ask, depth, and live-eligibility source for normalized YES and NO decimal candidates; without the dedicated read credential, the system may read public market summaries but shall emit no live-eligible candidate or unsigned order-book request. |
+| REQ-KAL-003 | P0 | If required Kalshi market or order-book data is empty, older than the configured 60-second live threshold, rate limited, malformed, or unavailable, then the system shall record an allowlisted error code, make at most three total attempts with configured exponential backoff only for GET, and refuse dependent exposure-increasing orders; valid empty account collections shall remain successful reads. |
+| REQ-KAL-004 | P0 | [ASSUMED] While running locally or in development, the system shall use only the recommended Kalshi demo host and demo credentials; while running in production, it shall use only the recommended production host and production credentials; credentials shall be isolated by environment and model provider and shall never be returned, logged, persisted outside the approved secret store, or committed. Signed requests shall use RSA-PSS SHA-256 over `<millisecond timestamp><UPPERCASE METHOD><full path without query>` and shall fail closed when clock skew causes authentication rejection. |
+| REQ-KAL-005 | P0 | When an approved live Kalshi entry or exit is submitted, the system shall use the V2 event-order API, map normalized outcome and direction through the defined YES-book truth table, emulate a market order with a slippage-bounded IOC limit or use GTC for an explicit limit, round to a side-safe valid `price_ranges` step, resolve current event overrides and series fee type and multiplier, reserve worst-case principal plus fee-model and rounding costs inside approved risk, and send a stable client order ID, 0.01-granular count, supported self-trade prevention, pause cancellation, `reduce_only` for exits, and primary subaccount 0. |
+| REQ-KAL-006 | P0 | Before dispatching a Kalshi mutation, the system shall persist `SUBMITTING`; if the post-dispatch result is ambiguous, it shall persist `UNKNOWN_SUBMIT`, preserve the client order ID, block replacement orders and ID reuse, and reconcile orders, fills, and positions until terminal or operator-reviewed without automatically retrying the POST. |
+| REQ-KAL-007 | P0 | Before an exposure-increasing live Kalshi order, the system shall require enabled venue configuration, valid provider RSA credentials, supported binary semantics, an active market, active exchange trading, market data no older than 60 seconds, account and open-order state no older than 60 seconds, no unknown or conflicting order, distinct provider account identity, and shared risk approval; dry-run mode shall persist simulation without signing or venue transport. A scheduled run shall keep its normal configuration snapshot for the loop and reread only persisted kill-switch state after market data, before scoring, before strategy consensus, and immediately before execution; an active kill switch shall exclude Kalshi candidates from new scans, scores, and strategy decisions while preserving exact open-position quotes, reconciliation, exits, and cancellation. |
+| REQ-KAL-008 | P0 | When Kalshi account reconciliation runs, the system shall read one balance snapshot and cursor-paginate positions, fills, settlements, and orders for each provider's primary account, normalize each field according to the source-unit contract, and retain a failed refresh's prior confirmed snapshot only as degraded state that cannot authorize new exposure. |
+| REQ-KAL-009 | P0 | When an authorized dashboard user saves Kalshi configuration, the system shall persist enablement, default venue, scan limits, and risk limits for the next loop and shall show sanitized credential readiness, activity, account, position, fill, net-of-fee P&L, and freshness; an unauthorized user shall be unable to read or mutate protected Kalshi data. |
+| REQ-KAL-010 | P0 | [ASSUMED] When the Kalshi release is promoted, development and production infrastructure shall accept environment-specific, provider-specific key IDs and RSA private keys from AWS Secrets Manager and keep live submission unavailable when any required secret is absent. A partial six-secret set shall fail release verification. The release shall complete CI, deployment, health, public-read, missing-secret, rollback, and zero-mutation verification without a live-money smoke order; when all six credential secrets are configured, it shall also verify deployed runtime injection, the authenticated batch order book, per-provider balance normalization, and unchanged order and fill counts. |
+| REQ-KAL-011 | P0 | When a known Kalshi order must be canceled, including after venue disablement or kill-switch activation, the system shall reconcile the order, submit one V2 DELETE for the known order ID if it remains cancelable, persist the result, and permit a later bounded cancel attempt only after another read confirms that the same order remains open. |
+| REQ-KAL-012 | P0 | [ASSUMED] While live Kalshi trading is enabled for both model providers, OpenAI and Claude shall use distinct credentials whose authenticated `/api_keys` membership sets produce distinct sanitized account fingerprints, and each shall have read scope for reconciliation plus write scope before live enablement; a credential or account collision shall block new exposure while allowing reconciliation and risk-reducing actions under an account-level reservation lock. |
+| REQ-KAL-013 | P0 | When Kalshi portfolio data is normalized, integer `balance` and `portfolio_value` cents shall be divided by 100 into USD, `*_dollars` prices and costs shall remain dollar Decimal strings, `*_fp` quantities shall remain contract Decimal strings, fees, settlement revenue, and P&L shall retain six-decimal intermediate precision with explicit final currency rounding, per-position unrealized P&L shall remain unavailable until a confirmed venue mark exists, and YES or NO `outcomeSide` shall remain distinct from stock long or short semantics. |
+| REQ-KAL-014 | P0 | When reconciliation needs records older than Kalshi's live-data cutoffs, the system shall read `/historical/cutoff`, paginate historical fills and orders, use live positions and settlements for current and settlement evidence, persist checkpoints, deduplicate live and historical records by stable venue identifiers, and stop as degraded without advancing a checkpoint on a repeated cursor or after 100 pages. |

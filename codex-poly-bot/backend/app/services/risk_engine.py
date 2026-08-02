@@ -2,7 +2,7 @@
 
 REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-009,
 REQ-EXE-013, REQ-EXE-014, REQ-EXE-017, REQ-ALP-009,
-REQ-ALP-010, REQ-ALP-011, REQ-ALP-012
+REQ-ALP-010, REQ-ALP-011, REQ-ALP-012, REQ-KAL-007
 """
 
 from __future__ import annotations
@@ -87,6 +87,30 @@ class LiveOrderGateInput:
 
 
 @dataclass(frozen=True)
+class KalshiLiveOrderGateInput:
+    """Independent Kalshi exposure-increasing order gates.
+
+    REQ: REQ-KAL-007, REQ-KAL-012
+    """
+
+    live_enabled: bool
+    venue_enabled: bool
+    credentials_present: bool
+    binary_market_supported: bool
+    market_active: bool
+    exchange_active: bool
+    market_data_fresh: bool
+    account_state_fresh: bool
+    no_unknown_or_conflicting_order: bool
+    provider_account_distinct: bool
+    risk_approved: bool
+    account_reservation_available: bool = True
+    write_scope_ready: bool = True
+    kill_switch_active: bool = False
+    risk_refusal_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class RiskLimitResult:
     """Stable result from venue-specific risk checks."""
 
@@ -136,6 +160,21 @@ def default_polymarket_risk_config(payload: dict[str, Any] | None = None) -> Pol
 
     source = payload or default_config_payload()
     risk = source["risk"]["polymarket"]
+    return PolymarketRiskConfig(
+        max_position_usd=_decimal(risk["max_position_usd"], "max_position_usd"),
+        max_daily_loss_usd=_decimal(risk["max_daily_loss_usd"], "max_daily_loss_usd"),
+        max_open_positions=int(risk["max_open_positions"]),
+    )
+
+
+def default_kalshi_risk_config(payload: dict[str, Any] | None = None) -> PolymarketRiskConfig:
+    """Load dedicated Kalshi position, loss, and open-position limits.
+
+    REQ: REQ-KAL-007
+    """
+
+    source = payload or default_config_payload()
+    risk = source["risk"]["kalshi"]
     return PolymarketRiskConfig(
         max_position_usd=_decimal(risk["max_position_usd"], "max_position_usd"),
         max_daily_loss_usd=_decimal(risk["max_daily_loss_usd"], "max_daily_loss_usd"),
@@ -224,6 +263,43 @@ def evaluate_live_order_gates(gates: LiveOrderGateInput) -> RiskLimitResult:
     return RiskLimitResult(
         approved=not reasons,
         refusal_reasons=tuple(dict.fromkeys(reasons)),
+        payload={
+            "live_enabled": gates.live_enabled,
+            "venue_enabled": gates.venue_enabled,
+            "kill_switch_active": gates.kill_switch_active,
+        },
+    )
+
+
+def evaluate_kalshi_live_order_gates(gates: KalshiLiveOrderGateInput) -> RiskLimitResult:
+    """Return one stable code per failed Kalshi live-entry boundary.
+
+    REQ: REQ-KAL-007, REQ-KAL-012
+    """
+
+    checks = (
+        (gates.live_enabled, "LIVE_DISABLED"),
+        (not gates.kill_switch_active, "KILL_SWITCH_ACTIVE"),
+        (gates.venue_enabled, "KALSHI_VENUE_DISABLED"),
+        (gates.credentials_present, "KALSHI_CREDENTIAL_MISSING"),
+        (gates.write_scope_ready, "KALSHI_WRITE_SCOPE_MISSING"),
+        (gates.binary_market_supported, "KALSHI_MARKET_UNSUPPORTED"),
+        (gates.market_active, "KALSHI_MARKET_INACTIVE"),
+        (gates.exchange_active, "KALSHI_EXCHANGE_INACTIVE"),
+        (gates.market_data_fresh, "KALSHI_MARKET_DATA_STALE"),
+        (gates.account_state_fresh, "KALSHI_ACCOUNT_STATE_STALE"),
+        (
+            gates.no_unknown_or_conflicting_order,
+            "KALSHI_ORDER_RECONCILIATION_REQUIRED",
+        ),
+        (gates.provider_account_distinct, "KALSHI_PROVIDER_ACCOUNT_COLLISION"),
+        (gates.account_reservation_available, "KALSHI_ACCOUNT_RESERVATION_BUSY"),
+        (gates.risk_approved, gates.risk_refusal_reason or "RISK_CHECK_FAILED"),
+    )
+    reasons = tuple(code for passed, code in checks if not passed)
+    return RiskLimitResult(
+        approved=not reasons,
+        refusal_reasons=reasons,
         payload={
             "live_enabled": gates.live_enabled,
             "venue_enabled": gates.venue_enabled,

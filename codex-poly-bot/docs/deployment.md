@@ -1,6 +1,6 @@
 # Deployment
 
-REQ: REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006, REQ-DEP-010, REQ-WAL-003
+REQ: REQ-DEP-002, REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006, REQ-DEP-010, REQ-WAL-003, REQ-KAL-004, REQ-KAL-010
 
 `codex-poly-bot` deploys to AWS `us-east-1`. The infrastructure contract is defined in `infra/cloudformation.yml`.
 
@@ -29,8 +29,8 @@ The deployed profiles are explicit and separate:
 
 | Environment | Account mode | Live flag | Venue flags | Worker default |
 | --- | --- | --- | --- | --- |
-| `development` | `paper` | `LIVE_ENABLED=false` | `ALPACA_ENABLED=true`, Polymarket disabled | `ENABLE_BACKGROUND_WORKER=true` |
-| `production` | `live` | `LIVE_ENABLED=true` | `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true` | `ENABLE_BACKGROUND_WORKER=false` |
+| `development` | `paper` | `LIVE_ENABLED=false` | `ALPACA_ENABLED=true`; Polymarket and Kalshi disabled by default | `ENABLE_BACKGROUND_WORKER=true` |
+| `production` | `live` | `LIVE_ENABLED=true` | `POLYMARKET_US_ENABLED=true`, `ALPACA_ENABLED=true`; Kalshi disabled until its secrets and account checks pass | `ENABLE_BACKGROUND_WORKER=false` |
 
 The profile values are recorded in `infra/parameters/dev.json` and `infra/parameters/prod.json`, and the CloudFormation task definitions expose matching runtime environment variables.
 Production keeps the in-process scheduler disabled by default so dashboard/API health is isolated from worker memory failures. Set `ENABLE_BACKGROUND_WORKER=true` only after the worker path is verified or split into a separate service.
@@ -70,6 +70,12 @@ Set these GitHub environment variables for both `development` and `production`:
 - `DASHBOARD_GITHUB_CLIENT_ID`
 - `DATABASE_USERNAME`
 - `DESIRED_COUNT`
+- `KALSHI_ENABLED`
+- `KALSHI_MARKET_ORDER_SLIPPAGE`
+- `KALSHI_MARKET_DATA_LIMIT`
+- `KALSHI_MARKET_PAGE_SIZE`
+- `KALSHI_READ_RETRIES`
+- `KALSHI_RETRY_BACKOFF_SECONDS`
 - `PRIVATE_SUBNET_IDS`
 - `PUBLIC_SUBNET_IDS`
 - `SES_IDENTITY_EMAIL`
@@ -106,6 +112,21 @@ curl -sSI https://codex-poly-bot.repetere.net/api/auth/github/start | grep -i '^
 Trading credentials are not stored in GitHub Actions secrets. Live venue, wallet, broker, LLM, and notification secrets must be stored in AWS Secrets Manager under the active environment prefix. The ECS task definitions inject `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from `/codex-poly-bot/{environment}/openai/api-key` and `/codex-poly-bot/{environment}/anthropic/api-key`.
 
 CloudFormation creates placeholder OpenAI and Anthropic secret values so ECS can start before provider keys exist. Replace those AWS Secrets Manager values with provider-issued API keys before using model-backed workflows.
+
+## Kalshi Secrets and Hosts
+
+The deploy script sets `KALSHI_ENVIRONMENT=demo` in development and `KALSHI_ENVIRONMENT=production` in production. The application derives the recommended Kalshi host from that value and rejects environment crossover. It does not accept a runtime base URL override.
+
+The deploy script discovers these optional secret paths and omits each ECS injection when the path does not exist:
+
+- `/codex-poly-bot/{environment}/kalshi/market-data/key-id`
+- `/codex-poly-bot/{environment}/kalshi/market-data/private-key`
+- `/codex-poly-bot/{environment}/kalshi/openai/key-id`
+- `/codex-poly-bot/{environment}/kalshi/openai/private-key`
+- `/codex-poly-bot/{environment}/kalshi/claude/key-id`
+- `/codex-poly-bot/{environment}/kalshi/claude/private-key`
+
+Missing read credentials permit public market summaries but suppress order-book candidates. Missing provider credentials suppress account reconciliation and live submission for that provider. A release must verify zero Kalshi `POST` and `DELETE` operations in the deployment window; production validation uses public and authenticated GET requests only.
 
 ## Optional Alpaca Broker Funding Secrets
 

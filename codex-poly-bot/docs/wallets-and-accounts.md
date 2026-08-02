@@ -1,6 +1,6 @@
 # Wallets and Accounts
 
-REQ: REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-004, REQ-WAL-006, REQ-EXE-017
+REQ: REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-004, REQ-WAL-006, REQ-EXE-017, REQ-KAL-004, REQ-KAL-012
 
 Live trading requires separate credentials by environment, venue, and model provider. A development wallet or paper brokerage account must not share private key material with production.
 
@@ -25,6 +25,9 @@ Examples:
 /codex-poly-bot/development/polymarket_us/claude/wallet
 /codex-poly-bot/production/alpaca/openai/api-key
 /codex-poly-bot/production/alpaca/claude/api-key
+/codex-poly-bot/production/kalshi/market-data/key-id
+/codex-poly-bot/production/kalshi/openai/private-key
+/codex-poly-bot/production/kalshi/claude/private-key
 ```
 
 The deployed backend reads separate runtime variables for the four live account slots:
@@ -36,13 +39,19 @@ POLYMARKET_OPENAI_PRIVATE_KEY
 POLYMARKET_CLAUDE_KEY_ID
 POLYMARKET_CLAUDE_SECRET_KEY
 POLYMARKET_CLAUDE_PRIVATE_KEY
+KALSHI_MARKET_DATA_KEY_ID
+KALSHI_MARKET_DATA_PRIVATE_KEY
+KALSHI_OPENAI_KEY_ID
+KALSHI_OPENAI_PRIVATE_KEY
+KALSHI_CLAUDE_KEY_ID
+KALSHI_CLAUDE_PRIVATE_KEY
 ALPACA_OPENAI_KEY_ID
 ALPACA_OPENAI_SECRET_KEY
 ALPACA_CLAUDE_KEY_ID
 ALPACA_CLAUDE_SECRET_KEY
 ```
 
-These values let OpenAI and Claude use separate Polymarket US wallets and separate Alpaca accounts, so comparison metrics are not mixed across models. The dashboard displays only status, variable names, and secret references. It must not display private keys, API secrets, tokens, seed phrases, or raw `.env` values.
+These values let OpenAI and Claude use separate Polymarket US wallets, Kalshi accounts, and Alpaca accounts, so comparison metrics are not mixed across models. Kalshi also uses a separate read credential for authenticated batch order books. The runtime verifies that the two provider credentials report different authenticated API-key membership fingerprints before allowing new exposure. The dashboard displays only status, variable names, and secret references. It must not display private keys, API secrets, tokens, seed phrases, or raw `.env` values.
 
 ## Live Order Gate
 

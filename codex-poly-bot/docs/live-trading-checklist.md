@@ -1,12 +1,12 @@
 # Live Trading Checklist
 
-REQ: REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-006, REQ-EXE-001, REQ-EXE-014, REQ-EXE-017, REQ-OBS-005
+REQ: REQ-WAL-001, REQ-WAL-002, REQ-WAL-003, REQ-WAL-006, REQ-EXE-001, REQ-EXE-014, REQ-EXE-017, REQ-OBS-005, REQ-KAL-004, REQ-KAL-007, REQ-KAL-010, REQ-KAL-012
 
 Production live trading is intentionally enabled. Live-order test evidence still remains incomplete for any venue until every item below has evidence in the release record.
 
 The dashboard `Full live-gated` manual run mode does not bypass this checklist. It only allows the pipeline to use the configured live setting after credentials, risk limits, persistence, venue status, and the kill switch allow it.
 
-Implementation status: the runtime can now attach concrete Alpaca and Polymarket US submitters when live mode, venue flags, active account status, and required credentials are present. Missing adapters or credentials still produce refused intents instead of venue calls.
+Implementation status: the runtime can attach concrete Alpaca, Polymarket US, and Kalshi submitters when live mode, venue flags, account state, and required credentials are present. Missing adapters or credentials produce refused intents instead of venue calls.
 
 ## Credentials and Accounts
 
@@ -15,9 +15,11 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 - Confirm Polymarket wallet setup is complete for the selected account mode.
 - Confirm Alpaca paper or live account setup is complete for the selected account mode.
 - Confirm deployed secrets exist only in AWS Secrets Manager under `/codex-poly-bot/{environment}/...`.
-- Confirm production runtime exposes separate credentials for `polymarket_us / openai`, `polymarket_us / claude`, `alpaca / openai`, and `alpaca / claude` through ECS secret injection.
+- Confirm production runtime exposes separate credentials for `polymarket_us / openai`, `polymarket_us / claude`, `kalshi / openai`, `kalshi / claude`, `alpaca / openai`, and `alpaca / claude` through ECS secret injection.
 - For Polymarket US, confirm each provider has `POLYMARKET_{OPENAI|CLAUDE}_KEY_ID` plus either `POLYMARKET_{OPENAI|CLAUDE}_SECRET_KEY` or `POLYMARKET_{OPENAI|CLAUDE}_PRIVATE_KEY`.
 - For Alpaca, confirm each provider has `ALPACA_{OPENAI|CLAUDE}_KEY_ID` and `ALPACA_{OPENAI|CLAUDE}_SECRET_KEY`.
+- For Kalshi, confirm the read account has `KALSHI_MARKET_DATA_KEY_ID` and `KALSHI_MARKET_DATA_PRIVATE_KEY`; each provider must also have `KALSHI_{OPENAI|CLAUDE}_KEY_ID` and `KALSHI_{OPENAI|CLAUDE}_PRIVATE_KEY` with read and write scope.
+- Confirm the authenticated Kalshi `/api_keys` membership fingerprints differ between OpenAI and Claude. Never record raw key IDs in release evidence.
 
 ## Dry-Run Evidence
 
@@ -27,12 +29,13 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 - Confirm simulated orders are recorded and no venue submission method is called.
 - Confirm recent audit events and health indicators are visible in the dashboard.
 - Confirm account balance, buying power, and market data freshness checks pass.
+- For Kalshi, verify public exchange status, one authenticated batch order-book read, and one balance normalization per provider. Do not send `POST` or `DELETE` as a release smoke test.
 - Run a `Full live-gated` manual run with intentionally tiny risk caps and confirm the run either submits the expected tiny order or records a specific refusal reason. Do not treat `accepted` as enough evidence.
 
 ## Live Enablement Controls
 
 - Require final approval before setting `LIVE_ENABLED=true`. Production approval was recorded on 2026-07-02, and production currently runs with `LIVE_ENABLED=true`.
-- Enable only the intended venue flag, such as `POLYMARKET_US_ENABLED=true` or `ALPACA_ENABLED=true`; production currently has both intended venue flags enabled.
+- Enable only the intended venue flag, such as `POLYMARKET_US_ENABLED=true`, `KALSHI_ENABLED=true`, or `ALPACA_ENABLED=true`. Kalshi must remain disabled when any read or provider secret is absent.
 - Confirm concrete live venue submitters are attached for each intended venue and no `LIVE_SUBMITTER_NOT_CONFIGURED` refusal is present in the dry-run/live-gated evidence.
 - Confirm no `LIVE_EXIT_SUBMITTER_NOT_CONFIGURED` refusal is present when open positions cross exit triggers.
 - Confirm risk limits for max position size, max daily loss, max open positions, Kelly cap, and market order slippage.
@@ -40,6 +43,7 @@ Implementation status: the runtime can now attach concrete Alpaca and Polymarket
 - Confirm SES identity is verified and notification recipients are approved.
 - Confirm the kill switch can be activated from the dashboard or API.
 - Confirm the kill switch disables live trading for all venues and providers.
+- Confirm Kalshi disablement and the kill switch reconcile known open orders before one bounded cancel attempt, while new exposure remains blocked.
 
 ## Active Stock Day-Trader Profile
 
@@ -84,3 +88,4 @@ Record the operator, environment, venue, model provider, account mode, risk conf
 - Never enable short entry as a deployment smoke test. Use read-only account and asset checks, keep `alpaca.allow_shorting=false`, and verify the saved setting after each deployment.
 - Polymarket entries submit through the official Polymarket US SDK `orders.create` method.
 - Polymarket exits submit through the official Polymarket US SDK `orders.close_position` method with configured market-order slippage tolerance.
+- Kalshi entries and exits use the V2 event-order API. Market-style orders are slippage-bounded IOC limits; explicit limits are GTC. Exits use `reduce_only=true` and the exact confirmed contract count.

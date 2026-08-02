@@ -4,14 +4,15 @@ REQ: REQ-EXE-004, REQ-EXE-005, REQ-EXE-006, REQ-EXE-009,
 REQ-EXE-010, REQ-EXE-013, REQ-EXE-014, REQ-EXE-016,
 REQ-EXT-001, REQ-EXT-002, REQ-EXT-003, REQ-EXT-004,
 REQ-EXT-005, REQ-EXT-006, REQ-ALP-005, REQ-ALP-006,
-REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012
+REQ-ALP-009, REQ-ALP-010, REQ-ALP-011, REQ-ALP-012,
+REQ-KAL-005, REQ-KAL-006, REQ-KAL-007, REQ-KAL-012
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, time
-from decimal import Decimal, InvalidOperation, ROUND_FLOOR
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 from hashlib import sha256
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -38,8 +39,11 @@ from app.services.execution_service import (
     PolymarketPositionCloser,
     PolymarketExecutionRequest,
     PolymarketVenueSubmitter,
+    KalshiExecutionRequest,
+    KalshiVenueSubmitter,
     execute_alpaca_order,
     execute_polymarket_order,
+    execute_kalshi_order,
 )
 from app.services.exit_service import (
     ExitExecutionRequest,
@@ -56,9 +60,12 @@ from app.services.risk_engine import (
     RiskLimitResult,
     default_alpaca_risk_config,
     default_polymarket_risk_config,
+    default_kalshi_risk_config,
     evaluate_alpaca_risk_limits,
     evaluate_live_order_gates,
     evaluate_polymarket_risk_limits,
+    evaluate_kalshi_live_order_gates,
+    KalshiLiveOrderGateInput,
 )
 from app.services.notification_service import (
     NotificationDeliveryLedger,
@@ -67,6 +74,7 @@ from app.services.notification_service import (
     send_trade_placed_alert,
 )
 from app.venues.polymarket import PolymarketLiveOrderRequest, VenueCallResult
+from app.venues.kalshi import KalshiLiveOrderRequest, KalshiOrderOutcome, KalshiOrderResult
 
 
 DEFAULT_EXECUTION_CONFIG: dict[str, Any] = {
@@ -76,6 +84,9 @@ DEFAULT_EXECUTION_CONFIG: dict[str, Any] = {
         "model_capital_usd": "1000.00",
     },
 }
+KALSHI_QUADRATIC_TAKER_FEE_RATE = Decimal("0.07")
+KALSHI_MAX_CENTICENT_ROUNDING_PER_CONTRACT_USD = Decimal("0.01")
+KALSHI_MAX_ORDER_ROUNDING_ACCUMULATOR_USD = Decimal("0.02")
 
 DEFAULT_EXIT_CONFIG: dict[str, Any] = {
     "polymarket": {
@@ -96,7 +107,29 @@ DEFAULT_EXIT_CONFIG: dict[str, Any] = {
     },
 }
 
-TERMINAL_ORDER_STATUSES = {"refused", "simulated", "filled", "canceled", "failed"}
+TERMINAL_ORDER_STATUSES = {
+    "refused",
+    "simulated",
+    "partially_filled",
+    "filled",
+    "unfilled_canceled",
+    "canceled",
+    "failed",
+}
+KALSHI_ACCEPTED_ORDER_STATUSES = {
+    "submitted",
+    "partially_filled_open",
+    "partially_filled",
+    "filled",
+    "unfilled_canceled",
+}
+KALSHI_RECONCILED_TERMINAL_STATUSES = {
+    "executed": "filled",
+    "filled": "filled",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+    "rejected": "failed",
+}
 
 
 @dataclass(frozen=True)
@@ -117,6 +150,7 @@ class PipelineLifecycleService:
         alpaca_submitters: Mapping[ModelProvider, AlpacaVenueSubmitter] | None = None,
         polymarket_submitter: PolymarketVenueSubmitter | None = None,
         polymarket_submitters: Mapping[ModelProvider, PolymarketVenueSubmitter] | None = None,
+        kalshi_submitters: Mapping[ModelProvider, KalshiVenueSubmitter] | None = None,
         alpaca_exit_submitter: AlpacaVenueSubmitter | None = None,
         polymarket_position_closer: PolymarketPositionCloser | None = None,
         notification_adapter: Any | None = None,
@@ -129,8 +163,10 @@ class PipelineLifecycleService:
         self.polymarket_position_closer = polymarket_position_closer
         self._alpaca_submitter_map_configured = alpaca_submitters is not None
         self._polymarket_submitter_map_configured = polymarket_submitters is not None
+        self._kalshi_submitter_map_configured = kalshi_submitters is not None
         self.alpaca_submitters = dict(alpaca_submitters or {})
         self.polymarket_submitters = dict(polymarket_submitters or {})
+        self.kalshi_submitters = dict(kalshi_submitters or {})
         if alpaca_submitter is not None and not self._alpaca_submitter_map_configured:
             for provider in ModelProvider:
                 self.alpaca_submitters.setdefault(provider, alpaca_submitter)
@@ -177,26 +213,67 @@ class PipelineLifecycleService:
         credentials = credential_status or {}
         intents: list[dict[str, Any]] = []
 
-        for output in approved_outputs:
-            intent = self._record_order_intent(
-                environment=environment,
-                pipeline_run_id=pipeline_run_id,
-                execution_run_id=run_row["id"],
-                output=output,
-                market_candidates=market_candidates,
-                market_data_pulls=market_data_pulls,
-                config_payload=config_payload,
-                config=config,
-                credentials=credentials,
-                kill_switch_active=kill_switch_active,
-                created_at=completed_at,
+        if (
+            _execution_mode(config_payload) == "live"
+            and (
+                kill_switch_active
+                or not bool(
+                    config_payload.get("venues", {})
+                    .get(Venue.KALSHI.value, {})
+                    .get("enabled", False)
+                )
             )
+        ):
+            self._cancel_known_kalshi_orders(
+                environment=environment,
+                now=completed_at,
+            )
+
+        for output in approved_outputs:
+            reservation = None
+            reservation_available = True
+            if (
+                str(output.get("venue") or "") == Venue.KALSHI.value
+                and _execution_mode(config_payload) == "live"
+            ):
+                provider = _model_provider(output)
+                reservation = self.registry.state.try_session_lock(
+                    self._kalshi_account_lock_key(
+                        environment=environment,
+                        provider=provider,
+                    )
+                )
+                reservation_available = reservation is not None
+            try:
+                intent = self._record_order_intent(
+                    environment=environment,
+                    pipeline_run_id=pipeline_run_id,
+                    execution_run_id=run_row["id"],
+                    output=output,
+                    market_candidates=market_candidates,
+                    market_data_pulls=market_data_pulls,
+                    config_payload=config_payload,
+                    config=config,
+                    credentials=credentials,
+                    kill_switch_active=kill_switch_active,
+                    kalshi_account_reservation_available=reservation_available,
+                    created_at=completed_at,
+                )
+            finally:
+                if reservation is not None:
+                    self.registry.state.release_session_lock(reservation)
             intents.append(intent)
 
-        submitted_count = sum(1 for intent in intents if intent["status"] == "submitted")
+        submitted_count = sum(
+            1 for intent in intents if intent["status"] in KALSHI_ACCEPTED_ORDER_STATUSES
+        )
         simulated_count = sum(1 for intent in intents if intent["status"] == "simulated")
         refused_count = sum(1 for intent in intents if intent["status"] == "refused")
-        reconciliation_count = sum(1 for intent in intents if intent["status"] == "reconcile_first")
+        reconciliation_count = sum(
+            1
+            for intent in intents
+            if intent["status"] in {"reconcile_first", "submitting", "unknown_submit"}
+        )
         run_row = self.registry.shared().update_execution_run_result(
             execution_run_id=run_row["id"],
             status=_lifecycle_run_status(
@@ -248,6 +325,8 @@ class PipelineLifecycleService:
         positions = self._open_positions(environment, config_payload=config_payload)
         intents: list[dict[str, Any]] = []
         for position in positions:
+            if position["venue"] == Venue.KALSHI.value:
+                position["market_candidate"] = market_candidates.get(position["instrument_id"])
             triggers = self._exit_triggers_for_position(
                 position=position,
                 market_candidates=market_candidates,
@@ -269,7 +348,9 @@ class PipelineLifecycleService:
                     )
                 )
 
-        submitted_count = sum(1 for intent in intents if intent["status"] == "submitted")
+        submitted_count = sum(
+            1 for intent in intents if intent["status"] in KALSHI_ACCEPTED_ORDER_STATUSES
+        )
         simulated_count = sum(1 for intent in intents if intent["status"] == "simulated")
         refused_count = sum(1 for intent in intents if intent["status"] == "refused")
         run_row = self.registry.shared().update_exit_run_result(
@@ -326,6 +407,7 @@ class PipelineLifecycleService:
         config: dict[str, Any],
         credentials: dict[str, bool],
         kill_switch_active: bool,
+        kalshi_account_reservation_available: bool = True,
         created_at: datetime,
     ) -> dict[str, Any]:
         venue = str(output.get("venue") or "")
@@ -348,6 +430,18 @@ class PipelineLifecycleService:
             )
             if expected_account_id:
                 account_ref = _sanitized_alpaca_account_ref(expected_account_id)
+        elif venue == Venue.KALSHI.value:
+            account_ref = self._kalshi_account_ref(
+                environment=environment,
+                provider=model_provider,
+            )
+        account_scope = (
+            account_mode
+            if venue == Venue.ALPACA.value
+            else model_provider.value
+            if venue == Venue.KALSHI.value
+            else "none"
+        )
         idempotency_key = _idempotency_key(
             "entry",
             environment.value,
@@ -355,8 +449,8 @@ class PipelineLifecycleService:
             str(output.get("id") or instrument_id),
             side,
             position_intent,
-            account_mode if venue == Venue.ALPACA.value else "none",
-            account_ref if venue == Venue.ALPACA.value else "none",
+            account_scope,
+            account_ref if venue in {Venue.ALPACA.value, Venue.KALSHI.value} else "none",
         )
         existing_intent = self._existing_order_intent(idempotency_key)
         if existing_intent and existing_intent.get("status") not in TERMINAL_ORDER_STATUSES:
@@ -401,6 +495,7 @@ class PipelineLifecycleService:
             config=config,
             credentials=credentials,
             kill_switch_active=kill_switch_active,
+            kalshi_account_reservation_available=kalshi_account_reservation_available,
             created_at=created_at,
         )
         status = "pending"
@@ -408,6 +503,30 @@ class PipelineLifecycleService:
         venue_order_id = None
         execution_payload: dict[str, Any] = {}
         if risk_result.approved:
+            if venue == Venue.KALSHI.value and _execution_mode(config_payload) == "live":
+                self.registry.shared().record_order_intent(
+                    environment=environment,
+                    execution_run_id=execution_run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    strategy_consensus_output_id=output.get("id"),
+                    venue=venue,
+                    instrument_id=instrument_id,
+                    model_provider=model_provider,
+                    side=side,
+                    order_type=order_type,
+                    status="submitting",
+                    notional_usd=notional,
+                    size_multiplier=size_multiplier,
+                    idempotency_key=idempotency_key,
+                    risk_payload=risk_result.payload,
+                    source_payload={
+                        "consensusOutput": _json_ready(output),
+                        "marketCandidate": _json_ready(candidate or {}),
+                        "accountRef": account_ref,
+                    },
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
             execution_result = self._execute_entry_order(
                 environment=environment,
                 venue=venue,
@@ -453,7 +572,11 @@ class PipelineLifecycleService:
                 "executionResult": _json_ready(execution_payload),
                 "positionIntent": position_intent,
                 "accountMode": account_mode if venue == Venue.ALPACA.value else None,
-                "accountRef": account_ref if venue == Venue.ALPACA.value else None,
+                "accountRef": (
+                    account_ref
+                    if venue in {Venue.ALPACA.value, Venue.KALSHI.value}
+                    else None
+                ),
             },
             created_at=created_at,
             updated_at=created_at,
@@ -466,7 +589,7 @@ class PipelineLifecycleService:
             status=status,
             message=_order_event_message(status, refusal_reason),
         )
-        if status == "submitted":
+        if status in KALSHI_ACCEPTED_ORDER_STATUSES - {"unfilled_canceled"}:
             self._send_trade_placed_notification(
                 config_payload=config_payload,
                 trade=TradePlacedAlert(
@@ -493,6 +616,264 @@ class PipelineLifecycleService:
                 return row
         return None
 
+    def _cancel_known_kalshi_orders(
+        self,
+        *,
+        environment: Environment,
+        now: datetime,
+    ) -> None:
+        """Reconcile and cancel each known open Kalshi order once per observed state."""
+
+        try:
+            order_rows = [
+                row
+                for row in self.registry.state.rows("shared.order_intents")
+                if row.get("environment") == environment.value
+                and row.get("venue") == Venue.KALSHI.value
+                and str(row.get("status") or "")
+                in {
+                    "submitted",
+                    "partially_filled_open",
+                    "submitting",
+                    "unknown_submit",
+                    "reconcile_first",
+                    "cancel_reconciliation_required",
+                    "cancel_unknown",
+                    "cancel_failed",
+                }
+            ]
+            exit_rows = [
+                row
+                for row in self.registry.state.rows("shared.exit_intents")
+                if row.get("environment") == environment.value
+                and row.get("venue") == Venue.KALSHI.value
+                and str(row.get("status") or "")
+                in {
+                    "submitted",
+                    "partially_filled_open",
+                    "submitting",
+                    "unknown_submit",
+                    "reconcile_first",
+                    "cancel_reconciliation_required",
+                    "cancel_unknown",
+                    "cancel_failed",
+                }
+            ]
+            rows = [*order_rows, *exit_rows]
+        except PersistenceUnavailableError:
+            return
+        for row in rows:
+            source_payload = (
+                row.get("source_payload")
+                if isinstance(row.get("source_payload"), Mapping)
+                else {}
+            )
+            try:
+                provider = ModelProvider(
+                    str(
+                        row.get("model_provider")
+                        or source_payload.get("modelProvider")
+                        or ""
+                    )
+                )
+            except ValueError:
+                continue
+            submitter = self._kalshi_submitter_for(provider)
+            find_order = getattr(submitter, "find_order_by_client_order_id", None)
+            cancel_order = getattr(submitter, "cancel_order", None)
+            if submitter is None or not callable(cancel_order):
+                continue
+            position_payload = (
+                source_payload.get("position")
+                if isinstance(source_payload.get("position"), Mapping)
+                else {}
+            )
+            account_ref = str(
+                source_payload.get("accountRef")
+                or position_payload.get("accountRef")
+                or ""
+            ).strip()
+            reservation = self.registry.state.try_session_lock(
+                self._kalshi_account_lock_key(
+                    environment=environment,
+                    provider=provider,
+                    account_ref=account_ref,
+                )
+            )
+            if reservation is None:
+                continue
+            try:
+                venue_order_id = str(row.get("venue_order_id") or "").strip()
+                if not venue_order_id:
+                    if not callable(find_order):
+                        self._persist_kalshi_cancel_state(
+                            row=row,
+                            environment=environment,
+                            provider=provider,
+                            status="cancel_reconciliation_required",
+                            refusal_reason="KALSHI_ORDER_LOOKUP_UNAVAILABLE",
+                            venue_order_id=None,
+                            result_payload={},
+                            now=now,
+                        )
+                        continue
+                    found = find_order(
+                        str(row.get("idempotency_key") or ""),
+                        ticker=_kalshi_ticker_from_intent(row),
+                    )
+                    if not found.ok:
+                        self._persist_kalshi_cancel_state(
+                            row=row,
+                            environment=environment,
+                            provider=provider,
+                            status="cancel_reconciliation_required",
+                            refusal_reason=found.refusal_reason,
+                            venue_order_id=None,
+                            result_payload=found.payload,
+                            now=now,
+                        )
+                        continue
+                    observed = found.payload.get("order", {})
+                    observed_status = str(observed.get("status") or "").strip().lower()
+                    venue_order_id = str(observed.get("order_id") or "").strip()
+                    terminal_status = KALSHI_RECONCILED_TERMINAL_STATUSES.get(observed_status)
+                    if terminal_status:
+                        self._persist_kalshi_cancel_state(
+                            row=row,
+                            environment=environment,
+                            provider=provider,
+                            status=terminal_status,
+                            refusal_reason=None,
+                            venue_order_id=venue_order_id or None,
+                            result_payload=found.payload,
+                            now=now,
+                        )
+                        continue
+                result = cancel_order(venue_order_id)
+                status = "canceled" if result.ok else (
+                    "cancel_unknown"
+                    if result.refusal_reason == "kalshi_cancel_unknown"
+                    else "cancel_failed"
+                )
+                self._persist_kalshi_cancel_state(
+                    row=row,
+                    environment=environment,
+                    provider=provider,
+                    status=status,
+                    refusal_reason=None if result.ok else result.refusal_reason,
+                    venue_order_id=venue_order_id,
+                    result_payload=result.payload,
+                    now=now,
+                )
+            finally:
+                self.registry.state.release_session_lock(reservation)
+
+    def _persist_kalshi_cancel_state(
+        self,
+        *,
+        row: Mapping[str, Any],
+        environment: Environment,
+        provider: ModelProvider,
+        status: str,
+        refusal_reason: str | None,
+        venue_order_id: str | None,
+        result_payload: Mapping[str, Any],
+        now: datetime,
+    ) -> None:
+        source_payload = (
+            dict(row.get("source_payload"))
+            if isinstance(row.get("source_payload"), Mapping)
+            else {}
+        )
+        source_payload["cancelResult"] = _json_ready(dict(result_payload))
+        if row.get("exit_run_id") is not None:
+            intent = self.registry.shared().record_exit_intent(
+                environment=environment,
+                exit_run_id=str(row.get("exit_run_id") or ""),
+                pipeline_run_id=str(row.get("pipeline_run_id") or ""),
+                venue=Venue.KALSHI.value,
+                instrument_id=str(row.get("instrument_id") or ""),
+                position_id=str(row.get("position_id") or ""),
+                model_provider=provider,
+                trigger_type=str(row.get("trigger_type") or ExitTriggerType.STALE_THESIS.value),
+                status=status,
+                side=str(row.get("side") or OrderSide.SELL.value),
+                quantity=_decimal_or_none(row.get("quantity")),
+                notional_usd=_decimal_or_zero(row.get("notional_usd")),
+                threshold=_decimal_or_none(row.get("threshold")),
+                observed_value=_decimal_or_none(row.get("observed_value")),
+                idempotency_key=str(row.get("idempotency_key") or ""),
+                refusal_reason=refusal_reason,
+                venue_order_id=venue_order_id,
+                source_payload=source_payload,
+                created_at=_parse_datetime(row.get("created_at")) or now,
+                updated_at=now,
+            )
+            self._record_order_event(
+                environment=environment,
+                order_id=str(intent.get("idempotency_key") or ""),
+                venue=Venue.KALSHI.value,
+                model_provider=provider,
+                status=status,
+                message=f"Kalshi exit cancellation recorded with status {status}",
+            )
+            return
+        intent = self.registry.shared().record_order_intent(
+            environment=environment,
+            execution_run_id=str(row.get("execution_run_id") or ""),
+            pipeline_run_id=str(row.get("pipeline_run_id") or ""),
+            strategy_consensus_output_id=row.get("strategy_consensus_output_id"),
+            venue=Venue.KALSHI.value,
+            instrument_id=str(row.get("instrument_id") or ""),
+            model_provider=provider,
+            side=str(row.get("side") or OrderSide.BUY.value),
+            order_type=str(row.get("order_type") or OrderType.MARKET.value),
+            status=status,
+            notional_usd=_decimal_or_zero(row.get("notional_usd")),
+            size_multiplier=_decimal_or_zero(row.get("size_multiplier")),
+            idempotency_key=str(row.get("idempotency_key") or ""),
+            refusal_reason=refusal_reason,
+            venue_order_id=venue_order_id,
+            risk_payload=(
+                dict(row.get("risk_payload"))
+                if isinstance(row.get("risk_payload"), Mapping)
+                else {}
+            ),
+            source_payload=source_payload,
+            created_at=_parse_datetime(row.get("created_at")) or now,
+            updated_at=now,
+        )
+        self._record_order_event(
+            environment=environment,
+            order_id=str(intent.get("idempotency_key") or ""),
+            venue=Venue.KALSHI.value,
+            model_provider=provider,
+            status=status,
+            message=f"Kalshi order cancellation recorded with status {status}",
+        )
+
+    def _kalshi_order_state_clear(
+        self,
+        *,
+        environment: Environment,
+        model_provider: ModelProvider,
+        instrument_id: str,
+    ) -> bool:
+        """Refuse new exposure while any same-market Kalshi intent is unresolved."""
+
+        try:
+            rows = self.registry.state.rows("shared.order_intents")
+        except PersistenceUnavailableError:
+            return False
+        return not any(
+            row.get("environment") == environment.value
+            and row.get("venue") == Venue.KALSHI.value
+            and row.get("model_provider") == model_provider.value
+            and str(row.get("instrument_id") or "") == instrument_id
+            and str(row.get("status") or "") not in TERMINAL_ORDER_STATUSES
+            for row in rows
+        )
+
     def _entry_risk_result(
         self,
         *,
@@ -507,6 +888,7 @@ class PipelineLifecycleService:
         config: dict[str, Any],
         credentials: dict[str, bool],
         kill_switch_active: bool,
+        kalshi_account_reservation_available: bool,
         created_at: datetime,
     ) -> RiskLimitResult:
         if venue == Venue.ALPACA.value:
@@ -529,6 +911,25 @@ class PipelineLifecycleService:
                     model_capital=str(config["alpaca"]["model_capital_usd"]),
                 ),
                 config=default_alpaca_risk_config(config_payload),
+            )
+        elif venue == Venue.KALSHI.value:
+            venue_risk = evaluate_polymarket_risk_limits(
+                PolymarketRiskInput(
+                    proposed_notional=notional,
+                    daily_loss=self._daily_loss(
+                        environment,
+                        venue,
+                        created_at,
+                        config_payload=config_payload,
+                    ),
+                    open_positions=self._open_position_count(
+                        environment,
+                        venue,
+                        config_payload=config_payload,
+                    ),
+                    creates_new_position=True,
+                ),
+                config=default_kalshi_risk_config(config_payload),
             )
         else:
             venue_risk = evaluate_polymarket_risk_limits(
@@ -600,7 +1001,46 @@ class PipelineLifecycleService:
         if not _slippage_ok(venue=venue, candidate=candidate, config_payload=config_payload):
             reasons.append("SLIPPAGE_LIMIT")
         execution_mode = _execution_mode(config_payload)
-        if execution_mode == "live":
+        if execution_mode == "live" and venue == Venue.KALSHI.value:
+            provider = _model_provider(output)
+            credential_key = f"{Venue.KALSHI.value}:{provider.value}"
+            kalshi_gates = evaluate_kalshi_live_order_gates(
+                KalshiLiveOrderGateInput(
+                    live_enabled=bool(config_payload.get("live_enabled", False)),
+                    venue_enabled=bool(
+                        config_payload.get("venues", {}).get(venue, {}).get("enabled", False)
+                    ),
+                    credentials_present=_credentials_present(
+                        credentials,
+                        venue=venue,
+                        model_provider=provider,
+                    ),
+                    binary_market_supported=str((candidate or {}).get("outcome") or "").upper()
+                    in {"YES", "NO"},
+                    market_active=bool((candidate or {}).get("active", False))
+                    and not bool((candidate or {}).get("closed", False)),
+                    exchange_active=bool((candidate or {}).get("exchangeActive", False)),
+                    market_data_fresh="STALE_MARKET_DATA" not in reasons,
+                    account_state_fresh=bool(credentials.get(f"{credential_key}:account_fresh", False)),
+                    no_unknown_or_conflicting_order=self._kalshi_order_state_clear(
+                        environment=environment,
+                        model_provider=provider,
+                        instrument_id=str(output.get("instrument_id") or ""),
+                    ),
+                    provider_account_distinct=bool(
+                        credentials.get(f"{credential_key}:account_distinct", False)
+                    ),
+                    account_reservation_available=kalshi_account_reservation_available,
+                    risk_approved=venue_risk.approved,
+                    write_scope_ready=bool(
+                        credentials.get(f"{credential_key}:write_scope", False)
+                    ),
+                    kill_switch_active=kill_switch_active,
+                    risk_refusal_reason=venue_risk.refusal_reason,
+                )
+            )
+            reasons.extend(kalshi_gates.refusal_reasons)
+        elif execution_mode == "live":
             credentials_present = _credentials_present(
                 credentials,
                 venue=venue,
@@ -655,6 +1095,37 @@ class PipelineLifecycleService:
         expected_account_id: str | None,
     ) -> dict[str, Any]:
         execution_mode = _execution_mode(config_payload)
+        if venue == Venue.KALSHI.value:
+            kalshi_submitter = self._kalshi_submitter_for(model_provider)
+            if execution_mode == "live" and kalshi_submitter is None:
+                return {
+                    "status": "refused",
+                    "refusal_reason": "LIVE_SUBMITTER_NOT_CONFIGURED",
+                }
+            request = _kalshi_order_request(
+                candidate=candidate,
+                idempotency_key=idempotency_key,
+                notional=notional,
+                entering=True,
+                order_type=order_type,
+                config_payload=config_payload,
+            )
+            if isinstance(request, str):
+                return {"status": "refused", "refusal_reason": request}
+            result = execute_kalshi_order(
+                KalshiExecutionRequest(
+                    global_execution_mode=execution_mode,
+                    risk_approved=True,
+                    order=request,
+                ),
+                submitter=kalshi_submitter or _NoopKalshiSubmitter(),
+            )
+            return {
+                "status": result.status,
+                "refusal_reason": result.refusal_reason,
+                "venue_order_id": result.payload.get("order_id"),
+                "payload": result.payload,
+            }
         if venue == Venue.ALPACA.value:
             alpaca_submitter = self._alpaca_submitter_for(model_provider)
             if execution_mode == "live" and alpaca_submitter is None:
@@ -887,6 +1358,7 @@ class PipelineLifecycleService:
             if isinstance(alpaca_config, Mapping):
                 account_mode = str(alpaca_config.get("account_mode") or "paper")
         positions.extend(self._open_alpaca_positions(environment, account_mode=account_mode))
+        positions.extend(self._open_kalshi_positions(environment))
         return positions
 
     def _alpaca_submitter_for(self, provider: ModelProvider) -> AlpacaVenueSubmitter | None:
@@ -898,6 +1370,53 @@ class PipelineLifecycleService:
         if self._polymarket_submitter_map_configured:
             return self.polymarket_submitters.get(provider)
         return self.polymarket_submitters.get(provider) or self.polymarket_submitter
+
+    def _kalshi_submitter_for(self, provider: ModelProvider) -> KalshiVenueSubmitter | None:
+        """Resolve one provider-isolated Kalshi submitter.
+
+        REQ: REQ-KAL-004, REQ-KAL-012
+        """
+
+        return self.kalshi_submitters.get(provider)
+
+    def _kalshi_account_ref(
+        self,
+        *,
+        environment: Environment,
+        provider: ModelProvider,
+    ) -> str:
+        """Resolve the latest sanitized venue account fingerprint for locking."""
+
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows("shared.venue_portfolio_snapshots")
+                if row.get("environment") == environment.value
+                and row.get("venue") == Venue.KALSHI.value
+                and row.get("model_provider") == provider.value
+                and str(row.get("account_ref") or "").strip()
+            ]
+        except PersistenceUnavailableError:
+            rows = []
+        if not rows:
+            return "unresolved"
+        latest = max(rows, key=lambda row: _datetime_or_min(row.get("observed_at")))
+        return str(latest.get("account_ref") or "").strip() or "unresolved"
+
+    def _kalshi_account_lock_key(
+        self,
+        *,
+        environment: Environment,
+        provider: ModelProvider,
+        account_ref: str | None = None,
+    ) -> str:
+        """Build one reservation key from the sanitized account fingerprint."""
+
+        resolved = (account_ref or "").strip() or self._kalshi_account_ref(
+            environment=environment,
+            provider=provider,
+        )
+        return f"kalshi-account:{environment.value}:{resolved}"
 
     def _open_polymarket_positions(self, environment: Environment) -> list[dict[str, Any]]:
         try:
@@ -924,6 +1443,75 @@ class PipelineLifecycleService:
                     "unrealized_pnl": Decimal("0"),
                     "opened_at": row.get("opened_at"),
                     "source": row,
+                }
+            )
+        return positions
+
+    def _open_kalshi_positions(self, environment: Environment) -> list[dict[str, Any]]:
+        """Return the latest confirmed nonzero Kalshi position per provider account."""
+
+        try:
+            rows = [
+                row
+                for row in self.registry.state.rows("shared.venue_position_snapshots")
+                if row.get("environment") == environment.value
+                and row.get("venue") == Venue.KALSHI.value
+            ]
+        except PersistenceUnavailableError:
+            return []
+        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for row in rows:
+            key = (
+                str(row.get("model_provider") or ""),
+                str(row.get("account_ref") or ""),
+                str(row.get("instrument_id") or ""),
+            )
+            if all(key):
+                grouped.setdefault(key, []).append(row)
+        positions: list[dict[str, Any]] = []
+        for (provider_value, account_ref, ticker), history in grouped.items():
+            ordered = sorted(history, key=lambda row: _datetime_or_min(row.get("observed_at")))
+            latest = ordered[-1]
+            signed_quantity = _decimal_or_zero(latest.get("quantity"))
+            outcome = str(latest.get("outcome") or "").strip().upper()
+            if (
+                signed_quantity == 0
+                or str(latest.get("state") or "open") != "open"
+                or outcome not in {"YES", "NO"}
+            ):
+                continue
+            try:
+                model_provider = ModelProvider(provider_value)
+            except ValueError:
+                continue
+            open_history = ordered
+            for index in range(len(ordered) - 1, -1, -1):
+                if _decimal_or_zero(ordered[index].get("quantity")) == 0:
+                    open_history = ordered[index + 1 :]
+                    break
+            opened_at = _parse_datetime(open_history[0].get("observed_at")) if open_history else None
+            identity = sha256(
+                f"{provider_value}|{account_ref}|{ticker}|{outcome}".encode("utf-8")
+            ).hexdigest()[:24]
+            positions.append(
+                {
+                    "position_id": f"kalshi:{identity}",
+                    "venue": Venue.KALSHI.value,
+                    "instrument_id": f"{ticker}:{outcome}",
+                    "ticker": ticker,
+                    "outcome_id": outcome,
+                    "outcome": outcome,
+                    "quantity": abs(signed_quantity),
+                    "signed_quantity": signed_quantity,
+                    "position_side": "outcome",
+                    "model_provider": model_provider,
+                    "account_ref": account_ref,
+                    "safe_account_ref": account_ref,
+                    "entry_price": _decimal_or_none(latest.get("average_entry_price")),
+                    "current_price": _decimal_or_none(latest.get("current_price")),
+                    "unrealized_pnl": _decimal_or_none(latest.get("unrealized_pnl_usd")),
+                    "opened_at": opened_at,
+                    "source": latest,
                 }
             )
         return positions
@@ -1110,13 +1698,24 @@ class PipelineLifecycleService:
                 intent
                 for intent in self.registry.shared().exit_intents(
                     environment=environment,
-                    status="submitted",
                 )
                 if intent.get("idempotency_key") == idempotency_key
+                and str(intent.get("status") or "") not in TERMINAL_ORDER_STATUSES
             ),
             None,
         )
         if existing_submission is not None:
+            existing_status = str(existing_submission.get("status") or "")
+            reused_status = (
+                existing_status
+                if existing_status in {"submitted", "partially_filled_open"}
+                else "reconcile_first"
+            )
+            existing_source = (
+                dict(existing_submission.get("source_payload"))
+                if isinstance(existing_submission.get("source_payload"), Mapping)
+                else {}
+            )
             return self.registry.shared().record_exit_intent(
                 environment=environment,
                 exit_run_id=exit_run_id,
@@ -1124,28 +1723,40 @@ class PipelineLifecycleService:
                 venue=venue,
                 instrument_id=position["instrument_id"],
                 position_id=position["position_id"],
+                model_provider=model_provider,
                 trigger_type=exit_trigger.trigger_type.value,
-                status="submitted",
+                status=reused_status,
                 side=exit_side,
                 quantity=position.get("quantity"),
                 notional_usd=_position_notional(position),
                 threshold=exit_trigger.threshold,
                 observed_value=exit_trigger.observed_value,
                 idempotency_key=idempotency_key,
-                refusal_reason=None,
+                refusal_reason=(
+                    existing_submission.get("refusal_reason")
+                    or (
+                        "RECONCILE_EXISTING_EXIT_STATE"
+                        if reused_status == "reconcile_first"
+                        else None
+                    )
+                ),
                 venue_order_id=existing_submission.get("venue_order_id"),
                 source_payload={
-                    "position": _exit_source_payload(position),
-                    "triggerReason": exit_trigger.reason,
-                    "executionMode": _execution_mode(config_payload),
-                    "reusedSubmittedExit": True,
+                    **existing_source,
+                    "reusedUnresolvedExit": True,
+                    "reusedSubmittedExit": existing_status == "submitted",
+                    "previousStatus": existing_status,
                 },
                 created_at=existing_submission.get("created_at") or created_at,
                 updated_at=created_at,
             )
         execution_mode = _execution_mode(config_payload)
-        risk_approved = not kill_switch_active
-        refusal_reason = "KILL_SWITCH_ACTIVE" if kill_switch_active else None
+        risk_approved = not kill_switch_active or venue == Venue.KALSHI.value
+        refusal_reason = (
+            "KILL_SWITCH_ACTIVE"
+            if kill_switch_active and venue != Venue.KALSHI.value
+            else None
+        )
         if venue == Venue.ALPACA.value and config_payload.get("exit", {}).get("alpaca", {}).get(
             "market_hours_only",
             DEFAULT_EXIT_CONFIG["alpaca"]["market_hours_only"],
@@ -1158,15 +1769,58 @@ class PipelineLifecycleService:
         ):
             risk_approved = False
             refusal_reason = "ALPACA_VENUE_DISABLED"
-        result = self._execute_exit_order(
-            position=position,
-            venue=venue,
-            execution_mode=execution_mode,
-            risk_approved=risk_approved,
-            refusal_reason=refusal_reason,
-            config_payload=config_payload,
-            idempotency_key=idempotency_key,
-        )
+        reservation = None
+        if venue == Venue.KALSHI.value and execution_mode == "live" and risk_approved:
+            reservation = self.registry.state.try_session_lock(
+                self._kalshi_account_lock_key(
+                    environment=environment,
+                    provider=model_provider,
+                    account_ref=str(position.get("safe_account_ref") or ""),
+                )
+            )
+            if reservation is None:
+                risk_approved = False
+                refusal_reason = "KALSHI_ACCOUNT_RESERVATION_BUSY"
+            else:
+                self.registry.shared().record_exit_intent(
+                    environment=environment,
+                    exit_run_id=exit_run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    venue=venue,
+                    instrument_id=position["instrument_id"],
+                    position_id=position["position_id"],
+                    model_provider=model_provider,
+                    trigger_type=exit_trigger.trigger_type.value,
+                    status="submitting",
+                    side=exit_side,
+                    quantity=position.get("quantity"),
+                    notional_usd=_position_notional(position),
+                    threshold=exit_trigger.threshold,
+                    observed_value=exit_trigger.observed_value,
+                    idempotency_key=idempotency_key,
+                    refusal_reason=None,
+                    venue_order_id=None,
+                    source_payload={
+                        "position": _exit_source_payload(position),
+                        "triggerReason": exit_trigger.reason,
+                        "executionMode": execution_mode,
+                    },
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+        try:
+            result = self._execute_exit_order(
+                position=position,
+                venue=venue,
+                execution_mode=execution_mode,
+                risk_approved=risk_approved,
+                refusal_reason=refusal_reason,
+                config_payload=config_payload,
+                idempotency_key=idempotency_key,
+            )
+        finally:
+            if reservation is not None:
+                self.registry.state.release_session_lock(reservation)
         status = result.status
         notional = _position_notional(position)
         intent = self.registry.shared().record_exit_intent(
@@ -1176,6 +1830,7 @@ class PipelineLifecycleService:
             venue=venue,
             instrument_id=position["instrument_id"],
             position_id=position["position_id"],
+            model_provider=model_provider,
             trigger_type=exit_trigger.trigger_type.value,
             status=status,
             side=exit_side,
@@ -1206,7 +1861,7 @@ class PipelineLifecycleService:
             status=status,
             message=_exit_event_message(status, exit_trigger, result.refusal_reason),
         )
-        if status == "submitted":
+        if status in KALSHI_ACCEPTED_ORDER_STATUSES - {"unfilled_canceled"}:
             self._send_trade_placed_notification(
                 config_payload=config_payload,
                 trade=TradePlacedAlert(
@@ -1356,6 +2011,56 @@ class PipelineLifecycleService:
                     "venue_order_id": result.payload.get("venue_order_id"),
                 },
             )
+        if venue == Venue.KALSHI.value:
+            model_provider = _position_model_provider(position)
+            submitter = self._kalshi_submitter_for(model_provider)
+            if submitter is None:
+                return ExitExecutionResult(
+                    status="refused",
+                    exit_recorded=False,
+                    venue_submitted=False,
+                    refusal_reason="LIVE_EXIT_SUBMITTER_NOT_CONFIGURED",
+                )
+            request = _kalshi_order_request(
+                candidate=(
+                    position.get("market_candidate")
+                    if isinstance(position.get("market_candidate"), dict)
+                    else None
+                ),
+                idempotency_key=idempotency_key,
+                notional=_position_notional(position),
+                quantity=abs(_decimal_or_zero(position.get("quantity"))),
+                entering=False,
+                order_type=OrderType.MARKET.value,
+                config_payload=config_payload,
+            )
+            if isinstance(request, str):
+                return ExitExecutionResult(
+                    status="refused",
+                    exit_recorded=False,
+                    venue_submitted=False,
+                    refusal_reason=request,
+                )
+            result = execute_kalshi_order(
+                KalshiExecutionRequest(
+                    global_execution_mode="live",
+                    risk_approved=True,
+                    order=request,
+                ),
+                submitter=submitter,
+            )
+            return ExitExecutionResult(
+                status=result.status,
+                exit_recorded=result.order_recorded,
+                venue_submitted=result.broker_submitted,
+                refusal_reason=result.refusal_reason,
+                payload={
+                    **result.payload,
+                    "position_id": position["position_id"],
+                    "venue": venue,
+                    "venue_order_id": result.payload.get("order_id"),
+                },
+            )
         return ExitExecutionResult(
             status="refused",
             exit_recorded=False,
@@ -1370,7 +2075,13 @@ class PipelineLifecycleService:
         venue: str,
         config_payload: dict[str, Any],
     ) -> Decimal:
-        risk_key = "alpaca" if venue == Venue.ALPACA.value else "polymarket"
+        risk_key = (
+            "alpaca"
+            if venue == Venue.ALPACA.value
+            else Venue.KALSHI.value
+            if venue == Venue.KALSHI.value
+            else "polymarket"
+        )
         max_position = _decimal_or_zero(
             config_payload.get("risk", {}).get(risk_key, {}).get("max_position_usd")
         )
@@ -1469,6 +2180,9 @@ class PipelineLifecycleService:
         event_type = {
             "refused": OrderEventType.REFUSED,
             "failed": OrderEventType.FAILED,
+            "cancel_failed": OrderEventType.FAILED,
+            "canceled": OrderEventType.CANCELED,
+            "filled": OrderEventType.FILLED,
         }.get(status, OrderEventType.SUBMITTED)
         try:
             self.registry.record_order_event_with_audit(
@@ -1632,12 +2346,13 @@ def _polymarket_exit_triggers(
     current = _candidate_price(candidate) or entry
     quantity = _decimal_or_zero(position.get("quantity"))
     unrealized = (current - entry) * quantity if entry > 0 else Decimal("0")
+    position_venue = Venue(str(position.get("venue") or Venue.POLYMARKET_US.value))
     instrument = Instrument(
-        venue=Venue.POLYMARKET_US,
+        venue=position_venue,
         instrument_type=InstrumentType.PREDICTION_MARKET,
         display_name=position["instrument_id"],
-        market_id=position.get("market_id"),
-        outcome_id=position.get("outcome_id"),
+        market_id=position.get("market_id") or position.get("ticker"),
+        outcome_id=position.get("outcome_id") or position.get("outcome"),
     )
     snapshot = PositionSnapshot(
         position_id=position["position_id"],
@@ -1810,6 +2525,25 @@ def _market_candidates_by_key(market_data_pulls: list[dict[str, Any]]) -> dict[s
     return candidates
 
 
+def _kalshi_ticker_from_intent(row: Mapping[str, Any]) -> str | None:
+    source_payload = row.get("source_payload") if isinstance(row.get("source_payload"), Mapping) else {}
+    candidate = (
+        source_payload.get("marketCandidate")
+        if isinstance(source_payload.get("marketCandidate"), Mapping)
+        else {}
+    )
+    ticker = str(candidate.get("ticker") or candidate.get("marketId") or "").strip()
+    if ticker:
+        return ticker
+    instrument_id = str(row.get("instrument_id") or "").strip()
+    if instrument_id.startswith("kalshi:"):
+        parts = instrument_id.split(":")
+        return parts[1] if len(parts) >= 3 else None
+    if ":" in instrument_id:
+        return instrument_id.rsplit(":", 1)[0]
+    return instrument_id or None
+
+
 def _candidate_for_instrument(
     output: dict[str, Any],
     market_candidates: dict[str, dict[str, Any]],
@@ -1833,6 +2567,8 @@ def _market_data_is_fresh(
     now: datetime,
 ) -> bool:
     freshness_seconds = max(1, int(config["market_data_freshness_seconds"]))
+    if str((candidate or {}).get("venue") or "") == Venue.KALSHI.value:
+        freshness_seconds = min(freshness_seconds, 60)
     observed = _parse_datetime((candidate or {}).get("pulledAt") or (candidate or {}).get("pulled_at"))
     if observed is None:
         observed_values = [
@@ -1857,7 +2593,13 @@ def _slippage_ok(
 ) -> bool:
     if candidate is None:
         return False
-    risk_key = "alpaca" if venue == Venue.ALPACA.value else "polymarket"
+    risk_key = (
+        "alpaca"
+        if venue == Venue.ALPACA.value
+        else "kalshi"
+        if venue == Venue.KALSHI.value
+        else "polymarket"
+    )
     threshold = _decimal_or_zero(
         config_payload.get("risk", {}).get(risk_key, {}).get("market_order_slippage_threshold")
     )
@@ -2019,6 +2761,169 @@ def _polymarket_entry_intent(*, side: str, output: dict[str, Any]) -> str:
     if signal in {"buy_yes", "bullish"}:
         return "ORDER_INTENT_BUY_LONG"
     return "ORDER_INTENT_BUY_LONG" if side == OrderSide.BUY.value else "ORDER_INTENT_SELL_LONG"
+
+
+def _kalshi_order_request(
+    *,
+    candidate: dict[str, Any] | None,
+    idempotency_key: str,
+    notional: Decimal,
+    quantity: Decimal | None = None,
+    entering: bool,
+    order_type: str,
+    config_payload: dict[str, Any],
+) -> KalshiLiveOrderRequest | str:
+    """Translate one normalized outcome into Kalshi's YES-book V2 shape.
+
+    REQ: REQ-KAL-002, REQ-KAL-005
+    """
+
+    if not candidate:
+        return "KALSHI_MARKET_DATA_UNAVAILABLE"
+    ticker = str(candidate.get("ticker") or candidate.get("marketId") or "").strip()
+    outcome = str(candidate.get("outcome") or candidate.get("outcomeId") or "").upper()
+    best_bid = _decimal_or_none(candidate.get("bestBid"))
+    best_ask = _decimal_or_none(candidate.get("bestAsk"))
+    price_ranges_raw = candidate.get("priceRanges")
+    if not ticker or outcome not in {"YES", "NO"} or best_bid is None or best_ask is None:
+        return "KALSHI_MARKET_DATA_UNAVAILABLE"
+    if not isinstance(price_ranges_raw, list) or not price_ranges_raw:
+        return "KALSHI_PRICE_RANGES_MISSING"
+    price_ranges = tuple(row for row in price_ranges_raw if isinstance(row, dict))
+    if not price_ranges:
+        return "KALSHI_PRICE_RANGES_MISSING"
+    is_market_order = str(order_type).strip().lower() == OrderType.MARKET.value
+    slippage = _decimal_or_none(
+        config_payload.get("risk", {}).get("kalshi", {}).get(
+            "market_order_slippage_threshold"
+        )
+    )
+    if slippage is None or slippage < 0:
+        return "KALSHI_SLIPPAGE_CONFIG_INVALID"
+    reference_price = best_ask if entering else best_bid
+    if is_market_order:
+        economic_price = (
+            reference_price + slippage
+            if entering
+            else reference_price - slippage
+        )
+    else:
+        economic_price = _candidate_price(candidate) or reference_price
+    if economic_price <= 0 or economic_price >= 1:
+        return "KALSHI_PRICE_UNAVAILABLE"
+    if outcome == "YES":
+        venue_side = "bid" if entering else "ask"
+        venue_price = economic_price
+    else:
+        venue_side = "ask" if entering else "bid"
+        venue_price = Decimal("1") - economic_price
+    aligned_price = _kalshi_side_safe_price(venue_price, venue_side, price_ranges)
+    if aligned_price is None:
+        return "KALSHI_PRICE_RANGE_UNAVAILABLE"
+    aligned_economic_price = aligned_price if outcome == "YES" else Decimal("1") - aligned_price
+    fee_type = str(candidate.get("feeType") or "").strip().lower()
+    fee_multiplier = _decimal_or_none(candidate.get("feeMultiplier"))
+    if (
+        fee_type not in {"quadratic", "quadratic_with_maker_fees"}
+        or fee_multiplier is None
+        or fee_multiplier < 0
+    ):
+        return "KALSHI_FEE_CONFIG_UNAVAILABLE"
+    variable_fee_per_contract = (
+        KALSHI_QUADRATIC_TAKER_FEE_RATE
+        * fee_multiplier
+        * aligned_economic_price
+        * (Decimal("1") - aligned_economic_price)
+    )
+    per_contract_reserve = (
+        aligned_economic_price
+        + variable_fee_per_contract
+        + KALSHI_MAX_CENTICENT_ROUNDING_PER_CONTRACT_USD
+    )
+    count = (
+        abs(quantity)
+        if quantity is not None
+        else (
+            max(Decimal("0"), notional - KALSHI_MAX_ORDER_ROUNDING_ACCUMULATOR_USD)
+            / per_contract_reserve
+        ).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_FLOOR,
+        )
+    )
+    if count <= 0:
+        return "KALSHI_COUNT_BELOW_MINIMUM"
+    if entering:
+        principal = aligned_economic_price * count
+        worst_case_fee = _kalshi_worst_case_fee(
+            count=count,
+            price=aligned_economic_price,
+            fee_multiplier=fee_multiplier,
+        )
+        if principal + worst_case_fee > notional:
+            return "KALSHI_NOTIONAL_WITH_FEES_EXCEEDED"
+    return KalshiLiveOrderRequest(
+        ticker=ticker,
+        side=venue_side,
+        count=count,
+        price=aligned_price,
+        client_order_id=idempotency_key,
+        time_in_force=(
+            "immediate_or_cancel" if is_market_order else "good_till_canceled"
+        ),
+        self_trade_prevention_type="taker_at_cross",
+        cancel_order_on_pause=True,
+        reduce_only=not entering,
+        post_only=False,
+        subaccount=0,
+        exchange_index=0,
+        price_ranges=price_ranges,
+        market_style=is_market_order,
+    )
+
+
+def _kalshi_worst_case_fee(
+    *,
+    count: Decimal,
+    price: Decimal,
+    fee_multiplier: Decimal,
+) -> Decimal:
+    """Conservatively bound taker fees and fixed-point rounding for one order."""
+
+    trade_fee = (
+        KALSHI_QUADRATIC_TAKER_FEE_RATE
+        * fee_multiplier
+        * count
+        * price
+        * (Decimal("1") - price)
+    ).quantize(Decimal("0.0001"), rounding=ROUND_CEILING)
+    fragmentation_rounding = (
+        count * KALSHI_MAX_CENTICENT_ROUNDING_PER_CONTRACT_USD
+    )
+    return trade_fee + fragmentation_rounding + KALSHI_MAX_ORDER_ROUNDING_ACCUMULATOR_USD
+
+
+def _kalshi_side_safe_price(
+    price: Decimal,
+    side: str,
+    price_ranges: tuple[dict[str, Any], ...],
+) -> Decimal | None:
+    """Align a bid down or an ask up to the applicable market price step."""
+
+    rounding = ROUND_FLOOR if side == "bid" else ROUND_CEILING
+    for price_range in price_ranges:
+        start = _decimal_or_none(price_range.get("start") or price_range.get("min"))
+        end = _decimal_or_none(price_range.get("end") or price_range.get("max"))
+        step = _decimal_or_none(price_range.get("step"))
+        if start is None or end is None or step is None or step <= 0:
+            continue
+        if not (start <= price <= end):
+            continue
+        units = ((price - start) / step).to_integral_value(rounding=rounding)
+        aligned = start + (units * step)
+        if start <= aligned <= end and Decimal("0") < aligned < Decimal("1"):
+            return aligned
+    return None
 
 
 def _candidate_price(candidate: dict[str, Any] | None) -> Decimal | None:
@@ -2268,6 +3173,11 @@ def _stock_position_high_watermark(
 def _exit_position_identity(position: Mapping[str, Any]) -> str:
     venue = str(position.get("venue") or "unknown")
     instrument_id = str(position.get("instrument_id") or position.get("position_id") or "unknown")
+    if venue == Venue.KALSHI.value:
+        return (
+            f"{venue}:{position.get('position_id') or instrument_id}:"
+            f"{_decimal_or_zero(position.get('signed_quantity') or position.get('quantity'))}"
+        )
     if venue != Venue.ALPACA.value:
         return f"{venue}:{position.get('position_id') or instrument_id}"
     source = position.get("source") if isinstance(position.get("source"), Mapping) else {}
@@ -2443,6 +3353,20 @@ class _NoopPolymarketSubmitter:
                 "market_slug": request.market_slug,
                 "venue_order_id": f"polymarket-{request.market_slug}-dry-run",
             },
+        )
+
+
+class _NoopKalshiSubmitter:
+    """Fail-closed placeholder used only by the dry-run helper.
+
+    REQ: REQ-KAL-007
+    """
+
+    def submit_order(self, request: KalshiLiveOrderRequest) -> KalshiOrderResult:
+        return KalshiOrderResult(
+            outcome=KalshiOrderOutcome.REFUSED,
+            client_order_id=request.client_order_id,
+            safe_error_code="LIVE_SUBMITTER_NOT_CONFIGURED",
         )
 
 

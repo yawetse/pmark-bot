@@ -11,8 +11,11 @@ case "${environment}" in
     default_selected_venue="alpaca"
     polymarket_us_enabled="false"
     polymarket_international_enabled="false"
+    kalshi_enabled="${KALSHI_ENABLED:-false}"
+    kalshi_environment="demo"
     alpaca_enabled="true"
     polymarket_slippage_threshold="${POLYMARKET_MARKET_ORDER_SLIPPAGE:-0.02}"
+    kalshi_slippage_threshold="${KALSHI_MARKET_ORDER_SLIPPAGE:-0.02}"
     alpaca_slippage_threshold="${ALPACA_MARKET_ORDER_SLIPPAGE:-0.005}"
     alpaca_base_url="${ALPACA_BASE_URL:-https://paper-api.alpaca.markets}"
     alpaca_data_feed="${ALPACA_DATA_FEED:-iex}"
@@ -35,8 +38,11 @@ case "${environment}" in
     default_selected_venue="polymarket_us"
     polymarket_us_enabled="true"
     polymarket_international_enabled="false"
+    kalshi_enabled="${KALSHI_ENABLED:-false}"
+    kalshi_environment="production"
     alpaca_enabled="true"
     polymarket_slippage_threshold="${POLYMARKET_MARKET_ORDER_SLIPPAGE:-0.02}"
+    kalshi_slippage_threshold="${KALSHI_MARKET_ORDER_SLIPPAGE:-0.02}"
     alpaca_slippage_threshold="${ALPACA_MARKET_ORDER_SLIPPAGE:-0.005}"
     alpaca_base_url="${ALPACA_BASE_URL:-https://api.alpaca.markets}"
     alpaca_data_feed="${ALPACA_DATA_FEED:-iex}"
@@ -99,6 +105,10 @@ signoz_otlp_endpoint="${SIGNOZ_OTLP_ENDPOINT:-}"
 signoz_ingestion_key_secret_arn="${SIGNOZ_INGESTION_KEY_SECRET_ARN:-}"
 signoz_cloudwatch_read_policy_enabled="${SIGNOZ_CLOUDWATCH_READ_POLICY_ENABLED:-false}"
 openai_tick_summary_timeout_seconds="${OPENAI_TICK_SUMMARY_TIMEOUT_SECONDS:-60}"
+kalshi_market_data_limit="${KALSHI_MARKET_DATA_LIMIT:-100}"
+kalshi_market_page_size="${KALSHI_MARKET_PAGE_SIZE:-100}"
+kalshi_read_retries="${KALSHI_READ_RETRIES:-2}"
+kalshi_retry_backoff_seconds="${KALSHI_RETRY_BACKOFF_SECONDS:-0.25}"
 
 stack_exists="false"
 if aws cloudformation describe-stacks --stack-name "${stack_name}" >/dev/null 2>&1; then
@@ -133,8 +143,15 @@ parameter_overrides=(
   "DefaultSelectedVenue=${default_selected_venue}"
   "PolymarketUsEnabled=${polymarket_us_enabled}"
   "PolymarketInternationalEnabled=${polymarket_international_enabled}"
+  "KalshiEnabled=${kalshi_enabled}"
+  "KalshiEnvironment=${kalshi_environment}"
+  "KalshiMarketDataLimit=${kalshi_market_data_limit}"
+  "KalshiMarketPageSize=${kalshi_market_page_size}"
+  "KalshiReadRetries=${kalshi_read_retries}"
+  "KalshiRetryBackoffSeconds=${kalshi_retry_backoff_seconds}"
   "AlpacaEnabled=${alpaca_enabled}"
   "PolymarketMarketOrderSlippage=${polymarket_slippage_threshold}"
+  "KalshiMarketOrderSlippage=${kalshi_slippage_threshold}"
   "AlpacaMarketOrderSlippage=${alpaca_slippage_threshold}"
   "AlpacaBaseUrl=${alpaca_base_url}"
   "AlpacaDataFeed=${alpaca_data_feed}"
@@ -232,6 +249,24 @@ add_secret_parameter_if_present \
 add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/polymarket_us/claude/private-key" \
   "PolymarketClaudePrivateKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/kalshi/market-data/key-id" \
+  "KalshiMarketDataKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/kalshi/market-data/private-key" \
+  "KalshiMarketDataPrivateKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/kalshi/openai/key-id" \
+  "KalshiOpenAiKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/kalshi/openai/private-key" \
+  "KalshiOpenAiPrivateKeySecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/kalshi/claude/key-id" \
+  "KalshiClaudeKeyIdSecretArn"
+add_secret_parameter_if_present \
+  "/codex-poly-bot/${environment}/kalshi/claude/private-key" \
+  "KalshiClaudePrivateKeySecretArn"
 add_secret_parameter_if_present \
   "/codex-poly-bot/${environment}/alpaca/key-id" \
   "AlpacaKeyIdSecretArn"

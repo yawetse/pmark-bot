@@ -53,7 +53,7 @@ LOGGER = logging.getLogger(__name__)
 class AppSettings:
     """Runtime settings for the FastAPI app.
 
-    REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003
+    REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-KAL-001, REQ-KAL-004
     """
 
     allowed_usernames: tuple[str, ...] = ("yaw",)
@@ -61,7 +61,7 @@ class AppSettings:
     trusted_origins: tuple[str, ...] = ("http://localhost:3100", "http://127.0.0.1:3100")
     csrf_token: str = "local-dev-csrf-token"
     environment: Environment = Environment.LOCAL
-    runtime_env: dict[str, str] = field(default_factory=dict)
+    runtime_env: dict[str, str] = field(default_factory=dict, repr=False)
     database_url: str = ""
     runtime_config_username: str | None = None
     live_enabled: bool = False
@@ -70,8 +70,11 @@ class AppSettings:
     polymarket_us_enabled: bool = False
     polymarket_international_enabled: bool = False
     alpaca_enabled: bool = False
+    kalshi_enabled: bool = False
+    kalshi_environment: str = "demo"
     polymarket_slippage_threshold: str = "0.02"
     alpaca_slippage_threshold: str = "0.005"
+    kalshi_slippage_threshold: str = "0.02"
     alpaca_account_status: str = "active"
     alpaca_symbol_presets: tuple[str, ...] = DEFAULT_ALPACA_SYMBOL_PRESETS
     alpaca_custom_symbols: tuple[str, ...] = ()
@@ -91,7 +94,7 @@ class AppSettings:
     def from_env(cls) -> "AppSettings":
         """Load deployed app settings from environment variables.
 
-        REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006
+        REQ: REQ-UI-001, REQ-UI-002, REQ-UI-003, REQ-UI-006, REQ-KAL-001, REQ-KAL-004
         """
 
         runtime_env = {key: value for key, value in os.environ.items()}
@@ -111,8 +114,11 @@ class AppSettings:
             polymarket_us_enabled=_bool_env("POLYMARKET_US_ENABLED", False),
             polymarket_international_enabled=_bool_env("POLYMARKET_INTERNATIONAL_ENABLED", False),
             alpaca_enabled=_bool_env("ALPACA_ENABLED", False),
+            kalshi_enabled=_bool_env("KALSHI_ENABLED", False),
+            kalshi_environment=os.environ.get("KALSHI_ENVIRONMENT", "demo").strip().lower() or "demo",
             polymarket_slippage_threshold=os.environ.get("POLYMARKET_MARKET_ORDER_SLIPPAGE", "0.02"),
             alpaca_slippage_threshold=os.environ.get("ALPACA_MARKET_ORDER_SLIPPAGE", "0.005"),
+            kalshi_slippage_threshold=os.environ.get("KALSHI_MARKET_ORDER_SLIPPAGE", "0.02"),
             alpaca_account_status=os.environ.get("ALPACA_ACCOUNT_STATUS", "active").strip().lower() or "active",
             alpaca_symbol_presets=_symbol_presets_from_env(),
             alpaca_custom_symbols=_custom_symbols_from_env(),
@@ -439,6 +445,11 @@ async def _worker_heartbeat_loop(
     environment: Environment,
     interval_seconds: int,
 ) -> None:
+    """Run one config snapshot per loop with immediate kill-switch reads.
+
+    REQ: REQ-KAL-007
+    """
+
     while True:
         loop_started_at = asyncio.get_running_loop().time()
         next_interval_seconds = interval_seconds
@@ -460,6 +471,8 @@ async def _worker_heartbeat_loop(
                     services.runtime_status.trigger_scheduled_run,
                     environment=environment,
                     config_payload=config_payload,
+                    kill_switch_active=services.kill_switch.state(environment).active,
+                    kill_switch_reader=lambda: services.kill_switch.state(environment).active,
                 )
             except Exception as exc:
                 tick_errors.append(exc)

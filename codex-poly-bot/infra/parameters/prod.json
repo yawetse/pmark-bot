@@ -11,6 +11,8 @@
     "default_selected_venue": "polymarket_us",
     "polymarket_us_enabled": true,
     "polymarket_international_enabled": false,
+    "kalshi_enabled": false,
+    "kalshi_environment": "production",
     "alpaca_enabled": true
   },
   "resource_names": [
