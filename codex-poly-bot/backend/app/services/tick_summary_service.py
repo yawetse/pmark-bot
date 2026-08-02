@@ -55,7 +55,7 @@ A tick is one manual or scheduled pipeline run. Each tick has an actor, trigger,
 
 ### What are the five steps?
 
-1. Data fetch: pulls market data from enabled venues such as Polymarket and Alpaca.
+1. Data fetch: pulls market data from enabled venues such as Polymarket, Kalshi, and Alpaca.
 2. Scanner: applies deterministic filters to priced candidates and records accepted or rejected candidates.
 3. Reasoning / brain: scores accepted candidates with configured model providers and records thesis, confidence, probability, and cost.
 4. Execution: turns approved strategy consensus outputs into order intents, then submits or simulates orders based on live gates.

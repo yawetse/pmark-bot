@@ -215,6 +215,7 @@ def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -
 
     assert payload["max_output_tokens"] == DEFAULT_TICK_SUMMARY_MAX_OUTPUT_TOKENS == 4096
     assert "Recommendations section" in payload["input"][0]["content"]
+    assert "Polymarket, Kalshi, and Alpaca" in payload["input"][0]["content"]
     assert len(user_payload["ticks"]) == 20
     assert len(user_payload["ticks"][0]["steps"][0]["outputs"]) == 8
     assert user_payload["ticks"][0]["steps"][0]["outputs"][0]["body"].endswith("...")
