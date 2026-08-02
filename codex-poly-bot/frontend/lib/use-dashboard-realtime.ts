@@ -86,7 +86,7 @@ export function useDashboardRealtime({
         setMessage("Connecting to realtime updates.");
       }
       try {
-        const response = await fetch("/api/dashboard/realtime-token", { cache: "no-store" });
+        const response = await fetch("/dashboard-realtime-token", { cache: "no-store" });
         if (!response.ok) {
           throw new Error(`token request failed with status ${response.status}`);
         }

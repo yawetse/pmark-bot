@@ -24,6 +24,8 @@ for (const token of [
   assert.match(realtimeHook, new RegExp(token));
 }
 assert.match(realtimeHook, /portfolio\?: VenuePortfolioView/);
+assert.match(realtimeHook, /fetch\("\/dashboard-realtime-token"/);
+assert.doesNotMatch(realtimeHook, /fetch\("\/api\/dashboard\/realtime-token"/);
 
 const consumerDashboard = read("components/dashboard/consumer-dashboard.tsx");
 assert.match(consumerDashboard, /snapshot\.portfolio/);
