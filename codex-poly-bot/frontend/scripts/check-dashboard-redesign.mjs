@@ -24,11 +24,8 @@ assert.doesNotMatch(nav, /More|nav-more/);
 const overview = read("components/dashboard/overview-dashboard.tsx");
 for (const token of [
   "deriveOverviewState",
-  "config/current",
-  "operations/summary",
-  "market-data/latest",
-  "operations/tick-schedule",
-  "notifications/settings",
+  "dashboard/overview",
+  "enabled: initialLoadComplete",
   "How things are running",
   "Recent result",
   "Explore more",

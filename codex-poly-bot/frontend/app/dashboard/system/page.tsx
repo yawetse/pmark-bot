@@ -16,7 +16,7 @@ export default async function SystemPage() {
     redirect("/access-denied");
   }
   const summary = await serverDashboardApi<DashboardSummaryView>(
-    "dashboard/summary",
+    "dashboard/readiness",
     sessionCheck.session.username,
   );
 
