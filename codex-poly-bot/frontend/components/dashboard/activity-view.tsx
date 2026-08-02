@@ -96,23 +96,34 @@ export function ActivityView({
       setDetailState({
         status: "error",
         runId: null,
+        stageKey: key,
         message: "No completed check is available yet. Run a check and try again.",
       });
       return;
     }
-    if (detailState.status === "ready" && detailState.runId === latestRun.id) {
+    if (
+      detailState.status === "ready" &&
+      detailState.runId === latestRun.id &&
+      detailState.stageKey === key
+    ) {
       return;
     }
-    setDetailState({ status: "loading", runId: latestRun.id });
+    setDetailState({ status: "loading", runId: latestRun.id, stageKey: key });
     const result = await dashboardApi<ActivityRunDetail>(
-      `operations/runs/${encodeURIComponent(latestRun.id)}`,
+      `operations/runs/${encodeURIComponent(latestRun.id)}?activity_stage=${encodeURIComponent(key)}`,
     );
     setDetailState(
       result.ok
-        ? { status: "ready", runId: latestRun.id, detail: result.data }
+        ? {
+            status: "ready",
+            runId: latestRun.id,
+            stageKey: key,
+            detail: result.data,
+          }
         : {
             status: "error",
             runId: latestRun.id,
+            stageKey: key,
             message: result.message,
           },
     );
@@ -299,9 +310,14 @@ export function ActivityView({
 
 type ActivityDetailLoadState =
   | { status: "idle" }
-  | { status: "loading"; runId: string }
-  | { status: "ready"; runId: string; detail: ActivityRunDetail }
-  | { status: "error"; runId: string | null; message: string };
+  | { status: "loading"; runId: string; stageKey: ActivityStageKey }
+  | {
+      status: "ready";
+      runId: string;
+      stageKey: ActivityStageKey;
+      detail: ActivityRunDetail;
+    }
+  | { status: "error"; runId: string | null; stageKey: ActivityStageKey; message: string };
 
 function activityDetailColumns(
   key: ActivityStageKey,
