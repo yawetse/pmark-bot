@@ -5,9 +5,12 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.adapters.aws import AwsBillingCost, CostExplorerBillingAdapter, InMemorySesEmailAdapter
+from app.db import PersistenceUnavailableError
 from app.domain import Environment, ModelProvider, Venue
 from app.main import AppSettings, create_app
 from app.services.market_data_provider import MarketDataProviderResult
@@ -652,6 +655,58 @@ def test_req_ui_001_03_fastapi_app_registers_dashboard_api_routes() -> None:
     assert health.json()["status"] == "ok"
     assert dashboard.status_code == 200
     assert dashboard.json()["data_source"] == "fastapi"
+
+
+def test_req_obs_006_postgres_startup_failure_is_not_hidden(monkeypatch) -> None:
+    """TST-REQ-OBS-006-02: Validates REQ-OBS-006
+
+    Given: a deployed runtime has a configured database that cannot be reached
+    When: the repository registry initializes
+    Then: startup fails so the task can retry instead of serving a false healthy state
+    """
+
+    def unavailable_session_factory(database_url: str):
+        del database_url
+        raise RuntimeError("connection timeout expired")
+
+    monkeypatch.setattr(main_module, "create_session_factory", unavailable_session_factory)
+
+    with pytest.raises(PersistenceUnavailableError, match="Postgres persistence is unavailable"):
+        main_module._repository_registry_from_settings(
+            AppSettings(database_url="postgresql+psycopg://configured-database")
+        )
+
+
+def test_req_obs_006_persistence_failure_returns_safe_503() -> None:
+    """TST-REQ-OBS-006-03: Validates REQ-OBS-006
+
+    Given: persistence becomes unavailable after the backend starts
+    When: an authenticated dashboard read needs stored data
+    Then: the API reports a safe retryable 503 response
+    """
+
+    settings = AppSettings(
+        allowed_usernames=("yaw",),
+        signing_secret="test-secret",
+        environment=Environment.DEVELOPMENT,
+    )
+    app = create_app(settings)
+    token = app.state.services.auth.create_session_token(username="yaw")
+    app.state.services.registry.state.available = False
+
+    response = TestClient(app).get(
+        "/api/dashboard/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "5"
+    assert response.json() == {
+        "detail": {
+            "error_code": "persistence_unavailable",
+            "message": "Dashboard data is temporarily unavailable.",
+        }
+    }
 
 
 def test_req_ui_001_04_app_settings_load_deployed_environment(monkeypatch) -> None:
