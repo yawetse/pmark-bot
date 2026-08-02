@@ -62,8 +62,10 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
 ) -> None:
     module = _script_module()
     _safe_environment(monkeypatch)
+    requested_urls: list[str] = []
 
     def get_json(url: str, **_: object) -> dict[str, object]:
+        requested_urls.append(url)
         if url.endswith("/health"):
             return {"status": "ok"}
         if url.endswith("/api/config/current"):
@@ -101,6 +103,8 @@ def test_release_verifier_requires_safe_readback_and_zero_broker_posts(
     assert '"acmCertificateBinding": "STACK_OUTPUT_MATCH"' in output
     assert '"tlsCertificateStatus": "VALID"' in output
     assert '"realTransferSmokeTest": "not-performed"' in output
+    assert any(url.endswith("/api/funding/readiness") for url in requested_urls)
+    assert not any("/api/funding?" in url for url in requested_urls)
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,8 @@ Parameters:
     Type: List<AWS::EC2::Subnet::Id>
   PublicSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
+  BackendServiceSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
   DesiredCount:
     Type: Number
     Default: 1
@@ -1044,6 +1046,11 @@ Resources:
       LaunchType: FARGATE
       Cluster: !Ref Cluster
       DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
       TaskDefinition: !Ref BackendTaskDefinition
       LoadBalancers:
         - ContainerName: backend
@@ -1054,7 +1061,7 @@ Resources:
           AssignPublicIp: ENABLED
           SecurityGroups:
             - !Ref ServiceSecurityGroup
-          Subnets: !Ref PublicSubnetIds
+          Subnets: !Ref BackendServiceSubnetIds
 
   FrontendService:
     Type: AWS::ECS::Service
