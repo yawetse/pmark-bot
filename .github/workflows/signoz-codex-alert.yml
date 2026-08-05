@@ -31,6 +31,7 @@ jobs:
       issue_title: ${{ steps.issue.outputs.issue_title }}
       issue_body: ${{ steps.issue.outputs.issue_body }}
       has_signoz_resolved: ${{ steps.issue.outputs.has_signoz_resolved }}
+      latest_signoz_status: ${{ steps.issue.outputs.latest_signoz_status }}
       operation: ${{ steps.issue.outputs.operation }}
     steps:
       - name: Load issue metadata
@@ -59,10 +60,34 @@ jobs:
               return;
             }
 
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const updates = [
+              { created_at: issue.created_at, body: issue.body || '' },
+              ...comments.map((comment) => ({
+                created_at: comment.created_at,
+                body: comment.body || '',
+              })),
+            ].sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at));
+            let latestStatus = 'unknown';
+            for (const update of updates) {
+              const text = String(update.body || '');
+              const match = text.match(/^Status:\s*(firing|resolved)\s*$/im)
+                || text.match(/^\|\s*Status\s*\|\s*(firing|resolved)\s*\|/im);
+              if (match) {
+                latestStatus = match[1].toLowerCase();
+              }
+            }
+
             core.setOutput('issue_number', String(issue.number));
             core.setOutput('issue_title', issue.title || '');
             core.setOutput('issue_body', issue.body || '');
             core.setOutput('has_signoz_resolved', String(labels.includes('signoz-resolved')));
+            core.setOutput('latest_signoz_status', latestStatus);
             core.setOutput('operation', '${{ inputs.operation }}');
 
   generate_fix:
@@ -231,7 +256,7 @@ jobs:
   close_resolved:
     name: Close resolved alert issue
     needs: issue_context
-    if: needs.issue_context.outputs.operation == 'close_resolved' && needs.issue_context.outputs.has_signoz_resolved == 'true'
+    if: needs.issue_context.outputs.operation == 'close_resolved' && needs.issue_context.outputs.has_signoz_resolved == 'true' && needs.issue_context.outputs.latest_signoz_status == 'resolved'
     runs-on: ubuntu-latest
     concurrency:
       group: signoz-resolved-alert-${{ needs.issue_context.outputs.issue_number }}
@@ -244,6 +269,47 @@ jobs:
         with:
           script: |
             const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const updates = [
+              { created_at: issue.created_at, body: issue.body || '' },
+              ...comments.map((comment) => ({
+                created_at: comment.created_at,
+                body: comment.body || '',
+              })),
+            ].sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at));
+            let latestStatus = 'unknown';
+            for (const update of updates) {
+              const text = String(update.body || '');
+              const match = text.match(/^Status:\s*(firing|resolved)\s*$/im)
+                || text.match(/^\|\s*Status\s*\|\s*(firing|resolved)\s*\|/im);
+              if (match) {
+                latestStatus = match[1].toLowerCase();
+              }
+            }
+            if (latestStatus !== 'resolved') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: [
+                  `Latest SigNoz status is not resolved (${latestStatus}).`,
+                  '',
+                  'Leaving the issue open because a resolved label can remain after the alert fires again.'
+                ].join('\n'),
+              });
+              return;
+            }
+
             const issueRef = `#${issueNumber}`;
             const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open "${issueRef}"`;
             const openPrs = await github.paginate(github.rest.search.issuesAndPullRequests, {
