@@ -105,6 +105,7 @@ class ProviderBackedVenuePortfolioSource:
         self.funding_repository = FundingRepository(registry) if registry is not None else None
         self._funding_sync_metadata: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._kalshi_readiness: dict[tuple[str, str], dict[str, Any]] = {}
+        self._polymarket_account_refs: dict[str, str] = {}
 
     def fetch_accounts(self, environment: Environment) -> list[dict[str, Any]]:
         accounts: list[dict[str, Any]] = []
@@ -719,8 +720,12 @@ class ProviderBackedVenuePortfolioSource:
         )
         if balance_ids:
             return _account_ref(Venue.POLYMARKET_US, "|".join(balance_ids))
+        cached_ref = self._polymarket_account_refs.get(fallback_ref)
+        if cached_ref:
+            return cached_ref
         get = getattr(client, "get", None)
         if not callable(get):
+            self._polymarket_account_refs[fallback_ref] = fallback_ref
             return fallback_ref
         for path in ("/v1/accounts", "/v1/whoami"):
             try:
@@ -729,7 +734,10 @@ class ProviderBackedVenuePortfolioSource:
                 continue
             identities = _polymarket_identity_values(response)
             if identities:
-                return _account_ref(Venue.POLYMARKET_US, "|".join(identities))
+                account_ref = _account_ref(Venue.POLYMARKET_US, "|".join(identities))
+                self._polymarket_account_refs[fallback_ref] = account_ref
+                return account_ref
+        self._polymarket_account_refs[fallback_ref] = fallback_ref
         return fallback_ref
 
     def _alpaca_account(

@@ -622,6 +622,39 @@ def test_req_cmp_005_03_provider_source_uses_venue_account_identity() -> None:
     assert accounts[0]["accountRef"] == accounts[1]["accountRef"]
 
 
+def test_req_obs_005_polymarket_identity_fallback_does_not_repeat_failed_probes() -> None:
+    """TST-REQ-OBS-005-13: unsupported identity probes run once per credential ref."""
+
+    class MissingIdentityEndpoints:
+        def __init__(self) -> None:
+            self.paths: list[str] = []
+
+        def get(self, path: str, *, authenticated: bool = False) -> dict:
+            assert authenticated is True
+            self.paths.append(path)
+            raise RuntimeError("endpoint unavailable")
+
+    source = ProviderBackedVenuePortfolioSource({})
+    client = MissingIdentityEndpoints()
+
+    first = source._polymarket_account_ref(
+        client,
+        provider_env={},
+        balances=[],
+        fallback_ref="polymarket:fallback",
+    )
+    second = source._polymarket_account_ref(
+        client,
+        provider_env={},
+        balances=[],
+        fallback_ref="polymarket:fallback",
+    )
+
+    assert first == "polymarket:fallback"
+    assert second == first
+    assert client.paths == ["/v1/accounts", "/v1/whoami"]
+
+
 def test_req_ui_013_07_polymarket_missing_buying_power_preserves_cash_fallback() -> None:
     """TST-REQ-UI-013-07: missing buying power remains absent so cash can be used."""
 
