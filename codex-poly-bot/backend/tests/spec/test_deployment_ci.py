@@ -120,7 +120,7 @@ def test_req_dep_004_04_backend_rollout_uses_scoped_subnets_and_rollback() -> No
 
     assert "BackendServiceSubnetIds:" in template
     assert "Subnets: !Ref BackendServiceSubnetIds" in template
-    assert "HealthCheckGracePeriodSeconds: 60" in template
+    assert "HealthCheckGracePeriodSeconds: 300" in template
     assert "DeploymentCircuitBreaker:" in template
     assert "Rollback: true" in template
     assert 'backend_service_subnet_ids="${BACKEND_SERVICE_SUBNET_IDS:-${PUBLIC_SUBNET_IDS}}"' in deploy_script
