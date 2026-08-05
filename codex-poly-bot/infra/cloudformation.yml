@@ -1143,7 +1143,9 @@ Resources:
       LaunchType: FARGATE
       Cluster: !Ref Cluster
       DesiredCount: !Ref DesiredCount
-      HealthCheckGracePeriodSeconds: 60
+      # Fargate image startup can exceed one minute. Keep the task protected
+      # long enough for the ALB to recover from any initial failed checks.
+      HealthCheckGracePeriodSeconds: 300
       DeploymentConfiguration:
         DeploymentCircuitBreaker:
           Enable: true
