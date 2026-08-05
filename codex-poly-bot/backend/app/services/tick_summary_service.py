@@ -137,7 +137,8 @@ class TickSummaryService:
         )
 
     def summarize(self, request: TickSummaryRequest) -> TickSummaryResult:
-        model = _summary_model_candidates(self.environ)[0]
+        model_candidates = _summary_model_candidates(self.environ)
+        model = model_candidates[0]
         prompt_version = str(
             self.environ.get("OPENAI_TICK_SUMMARY_PROMPT_VERSION")
             or DEFAULT_TICK_SUMMARY_PROMPT_VERSION
@@ -168,9 +169,7 @@ class TickSummaryService:
 
         failures: list[tuple[str, Exception]] = []
         latest_run_id = _latest_run_id(request.runs)
-        for attempt_number, candidate_model in enumerate(
-            _summary_model_candidates(self.environ), start=1
-        ):
+        for attempt_number, candidate_model in enumerate(model_candidates, start=1):
             with start_observability_span(
                 "tick_summary.model_attempt",
                 attributes={
@@ -238,6 +237,12 @@ class TickSummaryService:
                         message="AI summary generated from recent tick history.",
                     )
                 except Exception as exc:
+                    is_final_attempt = attempt_number == len(model_candidates)
+                    event_name = (
+                        "tick_summary_model_failed"
+                        if is_final_attempt
+                        else "tick_summary_model_retrying"
+                    )
                     failure_payload = {
                         "model": candidate_model,
                         "attempt_number": attempt_number,
@@ -249,17 +254,28 @@ class TickSummaryService:
                         "latest_run_id": latest_run_id or "",
                         "window_minutes": request.window_minutes,
                     }
-                    record_span_failure(
-                        span,
-                        exc,
-                        event_name="tick_summary_model_failed",
-                        attributes=failure_payload,
-                    )
+                    if is_final_attempt:
+                        record_span_failure(
+                            span,
+                            exc,
+                            event_name=event_name,
+                            attributes=failure_payload,
+                        )
+                    else:
+                        set_span_attributes(
+                            span,
+                            {
+                                "event_name": event_name,
+                                "status": "retrying",
+                                **failure_payload,
+                            },
+                        )
                     LOGGER.warning(
-                        "tick_summary_model_failed %s",
+                        "%s %s",
+                        event_name,
                         json.dumps(
                             {
-                                "event": "tick_summary_model_failed",
+                                "event": event_name,
                                 **failure_payload,
                             },
                             sort_keys=True,
