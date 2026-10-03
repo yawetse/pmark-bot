@@ -5,8 +5,8 @@ import type { Metadata } from "next";
 import { LoginProductLanding } from "@/components/product-story/product-landing";
 
 export const metadata: Metadata = {
-  title: "Sign in | Codex Poly Bot",
-  description: "Sign in to inspect and operate Codex Poly Bot.",
+  title: "Sign in | niles",
+  description: "Sign in to inspect and operate niles.",
 };
 
 type LoginPageProps = {

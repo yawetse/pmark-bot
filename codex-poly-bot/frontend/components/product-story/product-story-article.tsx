@@ -27,12 +27,12 @@ export function ProductStoryArticle() {
       </a>
 
       <header className="story-header">
-        <a className="landing-brand" href="/" aria-label="Codex Poly Bot home">
+        <a className="landing-brand" href="/" aria-label="niles home">
           <span className="landing-brand-mark" aria-hidden="true">
             CP
           </span>
           <span>
-            <strong>Codex Poly Bot</strong>
+            <strong>niles</strong>
             <small>Controlled market automation</small>
           </span>
         </a>
@@ -54,7 +54,7 @@ export function ProductStoryArticle() {
             <p className="story-label">A PRODUCT NOTE ON CONTROLLED MARKET AUTOMATION</p>
             <h1>Why a trading bot should be allowed to do nothing</h1>
             <p className="story-deck">
-              Most trading bots are designed around execution. Poly Bot starts from a
+              Most trading bots are designed around execution. niles starts from a
               different premise: refusal is part of a valid decision.
             </p>
             <p className="story-publication-note">Product note · July 2026</p>
@@ -64,7 +64,7 @@ export function ProductStoryArticle() {
             <aside className="story-reader-note" aria-label="Article summary">
               <span>IN ONE SENTENCE</span>
               <p>
-                Poly Bot turns market signals into reviewable decisions, then requires
+                niles turns market signals into reviewable decisions, then requires
                 evidence, agreement, and risk approval before an order can run.
               </p>
               <nav aria-label="Article sections">
@@ -89,7 +89,7 @@ export function ProductStoryArticle() {
                 still produce a bad trade.
               </p>
               <p>
-                That distinction is the starting point for Codex Poly Bot. It does not treat
+                That distinction is the starting point for niles. It does not treat
                 every signal as a reason to move money. The system must be able to explain
                 why it traded, why it refused, and which evidence supported either result.
               </p>
@@ -109,7 +109,7 @@ export function ProductStoryArticle() {
                   prediction?
                 </p>
                 <p>
-                  Poly Bot is a working answer. It scans prediction markets on Polymarket
+                  niles is a working answer. It scans prediction markets on Polymarket
                   and a configured stock and ETF universe through Alpaca. Eligible short
                   entries are available behind a separate disabled-by-default gate. It can
                   run in dry-run mode or submit live orders when the operator has enabled
@@ -233,7 +233,7 @@ export function ProductStoryArticle() {
               <section aria-labelledby="boundaries-title">
                 <h2 id="boundaries-title">What the product does not claim</h2>
                 <p>
-                  Poly Bot does not guarantee returns, and it does not make automated
+                  niles does not guarantee returns, and it does not make automated
                   trading safe. Models can be wrong. Historical wallet behavior can stop
                   repeating. Market structure can change faster than a strategy adapts. A
                   valid control path limits how the system acts; it does not remove market
@@ -272,7 +272,7 @@ export function ProductStoryArticle() {
 
                 <div className="story-end-note">
                   <p>
-                    Poly Bot is designed to make automated decisions legible. The system can
+                    niles is designed to make automated decisions legible. The system can
                     act, but it must also be able to stop, refuse, and explain why.
                   </p>
                   <div className="story-closing-actions">
@@ -297,7 +297,7 @@ export function ProductStoryArticle() {
       </main>
 
       <footer className="story-footer">
-        <span>Codex Poly Bot</span>
+        <span>niles</span>
         <p>
           <CircleAlert size={14} aria-hidden="true" />
           Trading involves risk. Automated decisions can be wrong. Historical behavior does

@@ -1,4 +1,4 @@
-# codex-poly-bot Requirements
+# niles Requirements
 
 **Spec ID:** SPEC-CODEX-POLY-BOT  
 **Version:** 1.4
@@ -7,7 +7,7 @@
 
 ## Product Intent
 
-`codex-poly-bot` is a standalone live-capable trading bot with a Python/FastAPI backend and a Next.js React dashboard. The bot supports Polymarket US, Polymarket International, Kalshi event markets, and traditional stock-market trading through Alpaca for stocks and ETFs. The bot defaults to Polymarket US, disables every venue unless explicitly enabled by configuration, and runs OpenAI and Claude evaluators at the same time with separate budgets, venue accounts or wallets, and Postgres schemas.
+`niles` is a standalone live-capable trading bot with a Python/FastAPI backend and a Next.js React dashboard. The bot supports Polymarket US, Polymarket International, Kalshi event markets, and traditional stock-market trading through Alpaca for stocks and ETFs. The bot defaults to Polymarket US, disables every venue unless explicitly enabled by configuration, and runs OpenAI and Claude evaluators at the same time with separate budgets, venue accounts or wallets, and Postgres schemas.
 
 The first version includes market scanning, daily full and incremental S3 data downloads, wallet target analysis, LLM thesis scoring, arbitrage, convergence, whale-copy strategies, Alpaca stock/ETF signal evaluation, Kelly sizing, configurable risk controls, limit and market order execution, exit monitoring, dashboard configuration, GitHub OAuth login, SES email notifications, model and venue comparison analytics, and AWS deployment. Dry-run mode exists from day one, live trading defaults to off, and configuration changes made in the dashboard apply on the next trading loop. The system runs locally with gitignored `.env` files and deploys through GitHub Actions to AWS `us-east-1` development and production environments.
 
