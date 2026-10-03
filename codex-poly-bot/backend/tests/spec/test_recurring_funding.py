@@ -1303,7 +1303,13 @@ def test_req_fnd_010_01_authenticated_history_api_is_sanitized() -> None:
 
     assert client.get("/api/funding/history").status_code == 401
     response = client.get(
-        "/api/funding/history?limit=25",
+        "/api/funding/history",
+        params={
+            "limit": 25,
+            # Keep the dated cash-flow fixture inside the requested interval.
+            "start_at": (NOW - timedelta(days=1)).isoformat(),
+            "end_at": (NOW + timedelta(days=1)).isoformat(),
+        },
         headers={"Authorization": f"Bearer {token}", "X-Environment": "development"},
     )
 
