@@ -73,7 +73,7 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
       <header className="landing-header">
         <a className="landing-brand" href="#top" aria-label="niles home">
           <span className="landing-brand-mark" aria-hidden="true">
-            CP
+            n
           </span>
           <span>
             <strong>niles</strong>

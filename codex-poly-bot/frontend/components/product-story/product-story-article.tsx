@@ -29,7 +29,7 @@ export function ProductStoryArticle() {
       <header className="story-header">
         <a className="landing-brand" href="/" aria-label="niles home">
           <span className="landing-brand-mark" aria-hidden="true">
-            CP
+            n
           </span>
           <span>
             <strong>niles</strong>
