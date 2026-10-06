@@ -40,7 +40,7 @@ export function HelpAboutView() {
         <div>
           <p className="section-label">Help</p>
           <h1 id="help-title">Understand every decision</h1>
-          <p>Inspect how Codex Poly Bot finds evidence, narrows candidates, makes decisions, and controls exposure.</p>
+          <p>Inspect how niles finds evidence, narrows candidates, makes decisions, and controls exposure.</p>
         </div>
         <CircleHelp aria-hidden="true" size={30} />
       </header>

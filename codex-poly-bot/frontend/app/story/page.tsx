@@ -3,9 +3,9 @@ import type { Metadata } from "next";
 import { ProductStoryArticle } from "@/components/product-story/product-story-article";
 
 export const metadata: Metadata = {
-  title: "Why a trading bot should be allowed to do nothing | Codex Poly Bot",
+  title: "Why a trading bot should be allowed to do nothing | niles",
   description:
-    "How Codex Poly Bot uses evidence, refusal, risk authorization, and reviewable decisions to control automated trading.",
+    "How niles uses evidence, refusal, risk authorization, and reviewable decisions to control automated trading.",
   alternates: {
     canonical: "https://codex-poly-bot.repetere.net/story",
   },
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     title: "Why a trading bot should be allowed to do nothing",
     description:
       "What changes when an automated trading system is designed around refusal instead of execution.",
-    siteName: "Codex Poly Bot",
+    siteName: "niles",
   },
   twitter: {
     card: "summary",
