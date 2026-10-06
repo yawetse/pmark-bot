@@ -1560,6 +1560,27 @@ def run_migrations(connection=None) -> MigrationPlan:
 
     plan = migration_plan()
     if connection is not None:
+        # CREATE INDEX IF NOT EXISTS still takes a write-conflicting table lock
+        # before checking the name. Avoid that lock for already-present objects;
+        # absent indexes retain the original race-safe IF NOT EXISTS statement.
+        existing_relations = {
+            (row[0], row[1])
+            for row in connection.execute(
+                text(
+                    "SELECT n.nspname, c.relname FROM pg_catalog.pg_class AS c "
+                    "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = ANY(:schemas)"
+                ),
+                {"schemas": list(REQUIRED_SCHEMAS)},
+            )
+        }
+        index_relations = {
+            _ddl(CreateIndex(index, if_not_exists=True)): (table.schema, index.name)
+            for table in _ALL_TABLES
+            for index in table.indexes
+        }
         for statement in plan.sql:
+            if index_relations.get(statement) in existing_relations:
+                continue
             connection.execute(text(statement))
     return plan
