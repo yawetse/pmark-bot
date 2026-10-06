@@ -2493,16 +2493,21 @@ class RuntimeStatusService:
         """
 
         try:
-            orders = self.registry.shared().alpaca_historical_orders(environment=environment)
-            fills = self.registry.shared().alpaca_historical_fills(environment=environment)
-            positions = self.registry.shared().alpaca_historical_positions(environment=environment)
-            account_snapshots = self.registry.shared().alpaca_broker_account_snapshots(
-                environment=environment
-            )
-            bars = self.registry.shared().stock_bars(environment=environment)
-            pnl_snapshots = self.registry.shared().alpaca_symbol_pnl_snapshots(
-                environment=environment
-            )
+            # Dashboard totals need scalar counts, not sorted historical payloads.
+            counts = {
+                name: self.registry.state.count(
+                    f"{SHARED_SCHEMA}.{table}",
+                    filters={"environment": environment.value},
+                )
+                for name, table in (
+                    ("orders", "alpaca_historical_orders"),
+                    ("fills", "alpaca_historical_fills"),
+                    ("positions", "alpaca_historical_positions"),
+                    ("accountSnapshots", "alpaca_broker_account_snapshots"),
+                    ("bars", "stock_bars"),
+                    ("pnlSnapshots", "alpaca_symbol_pnl_snapshots"),
+                )
+            }
             checkpoints = [
                 row
                 for row in self.registry.shared().historical_import_checkpoints(
@@ -2520,15 +2525,7 @@ class RuntimeStatusService:
             }
 
         checkpoints.sort(key=_historical_checkpoint_sort_key, reverse=True)
-        counts = {
-            "orders": len(orders),
-            "fills": len(fills),
-            "positions": len(positions),
-            "accountSnapshots": len(account_snapshots),
-            "bars": len(bars),
-            "pnlSnapshots": len(pnl_snapshots),
-            "checkpoints": len(checkpoints),
-        }
+        counts["checkpoints"] = len(checkpoints)
         status = _historical_import_status(checkpoints=checkpoints, counts=counts)
         latest = checkpoints[0] if checkpoints else None
         return {
