@@ -110,7 +110,7 @@ export function SystemReadinessView({
           value={String(missingRequiredCredentials.length)}
           detail={
             missingRequiredCredentials[0]
-              ? `${formatLabel(missingRequiredCredentials[0].provider)} for ${formatLabel(missingRequiredCredentials[0].venue)}`
+              ? missingRequiredCredentials[0].label ?? `${formatLabel(missingRequiredCredentials[0].provider)} for ${formatLabel(missingRequiredCredentials[0].venue)}`
               : "No required credential gap"
           }
         />
@@ -300,7 +300,7 @@ function buildSystemActions({
       label: "Open operations",
     });
   }
-  for (const item of blockedItems.slice(0, 3)) {
+  for (const item of blockedItems) {
     actions.push({
       title: `Fix ${item.label.toLowerCase()}`,
       body: item.value,
@@ -308,7 +308,7 @@ function buildSystemActions({
       label: actionLabelForStatus(item),
     });
   }
-  for (const credential of credentials.slice(0, 2)) {
+  for (const credential of credentials) {
     actions.push({
       title: `Connect ${credential.label ?? formatLabel(credential.venue)}`,
       body:
@@ -326,7 +326,7 @@ function buildSystemActions({
       label: "Open config",
     });
   }
-  return dedupeActions(actions).slice(0, 5);
+  return dedupeActions(actions);
 }
 
 function actionHrefForStatus(item: StatusItem): string {

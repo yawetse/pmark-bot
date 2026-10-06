@@ -71,12 +71,12 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
       </a>
 
       <header className="landing-header">
-        <a className="landing-brand" href="#top" aria-label="Codex Poly Bot home">
+        <a className="landing-brand" href="#top" aria-label="niles home">
           <span className="landing-brand-mark" aria-hidden="true">
-            CP
+            n
           </span>
           <span>
-            <strong>Codex Poly Bot</strong>
+            <strong>niles</strong>
             <small>Controlled market automation</small>
           </span>
         </a>
@@ -103,7 +103,7 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
               <span> earn the right to run.</span>
             </h1>
             <p className="landing-lede">
-              Codex Poly Bot turns live market data into reviewable trading decisions across
+              niles turns live market data into reviewable trading decisions across
               Polymarket, Kalshi, and Alpaca. It can simulate or submit orders within limits an
               operator can inspect and change.
             </p>
@@ -217,8 +217,7 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
             <p className="landing-section-label">PRODUCT BOUNDARIES</p>
             <h2 id="control-title">Automation with explicit limits.</h2>
             <p>
-              You decide where the bot can operate and how much exposure it can take. Codex
-              Poly Bot versions those settings, applies them on the next loop, and records
+              You decide where the bot can operate and how much exposure it can take. niles versions those settings, applies them on the next loop, and records
               what it did with them.
             </p>
           </div>
@@ -278,7 +277,7 @@ function ProductLandingFrame({ accessFeedback }: ProductLandingFrameProps) {
 
       <footer className="landing-footer">
         <span>
-          Codex Poly Bot · <a href="/story">Read the product note</a>
+          niles · <a href="/story">Read the product note</a>
         </span>
         <p>
           Trading involves risk. Automated decisions can be wrong. Access does not remove the

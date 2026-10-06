@@ -1,7 +1,7 @@
 [project]
-name = "codex-poly-bot-backend"
+name = "niles-backend"
 version = "0.1.0"
-description = "Backend for codex-poly-bot"
+description = "Backend for niles"
 requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.35.0",

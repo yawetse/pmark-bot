@@ -1,4 +1,6 @@
-# codex-poly-bot Agent Setup
+# niles Agent Setup
+
+The project and agent identity is **niles**. The existing `codex-poly-bot` directory and deployed identifiers are compatibility names; see `docs/niles-migration.md` before changing them.
 
 This project is safe to inspect, install, and test without production trading secrets.
 

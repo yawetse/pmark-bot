@@ -218,7 +218,7 @@ def create_app(
 
     resolved_settings = settings or AppSettings.from_env()
     resolved_services = services or build_dashboard_api_services(resolved_settings)
-    app = FastAPI(title="codex-poly-bot backend")
+    app = FastAPI(title="niles backend")
     app.state.settings = resolved_settings
     app.state.services = resolved_services
     app.state.worker_heartbeat_task = None

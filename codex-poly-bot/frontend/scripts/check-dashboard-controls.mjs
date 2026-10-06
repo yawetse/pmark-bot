@@ -277,3 +277,30 @@ for (const token of [
 ]) {
   assert.match(loopMonitor, new RegExp(token));
 }
+
+// REQ-UI-009: all actionable readiness gaps must remain visible, including late credentials.
+const { default: ts } = await import("typescript");
+const { runInNewContext } = await import("node:vm");
+const readinessModule = { exports: {} };
+const readinessSource = read("components/dashboard/system-readiness-view.tsx");
+const readinessCode = ts.transpileModule(
+  `${readinessSource}\nexportsForTest = buildSystemActions;`,
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } },
+).outputText;
+const readinessContext = {
+  exports: readinessModule.exports,
+  require: () => ({}),
+  exportsForTest: undefined,
+};
+runInNewContext(readinessCode, readinessContext);
+const allReadinessActions = readinessContext.exportsForTest({
+  blockedItems: Array.from({ length: 4 }, (_, index) => ({ label: `Runtime ${index}`, value: `Blocked ${index}` })),
+  credentials: Array.from({ length: 6 }, (_, index) => ({ label: `Account ${index}`, venue: "alpaca", provider: "openai", message: `Missing safe name ${index}` })),
+  killSwitchActive: true,
+  notificationState: "unknown",
+});
+assert.equal(allReadinessActions.length, 12);
+assert.ok(allReadinessActions.some((action) => action.title === "Fix runtime 3"));
+assert.ok(allReadinessActions.some((action) => action.title === "Connect Account 5" && action.body === "Missing safe name 5"));
+assert.ok(allReadinessActions.some((action) => action.title === "Check notifications"));
+console.log("Complete readiness blocker coverage passed.");

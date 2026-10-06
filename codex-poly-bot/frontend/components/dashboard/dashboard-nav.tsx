@@ -31,7 +31,7 @@ export function DashboardNav() {
       </a>
       <header className="topbar">
         <Link className="brand" href="/dashboard">
-          <span>Poly Bot</span>
+          <span>niles</span>
         </Link>
         <div className="topbar-actions">
           <nav className="nav" aria-label="Dashboard">

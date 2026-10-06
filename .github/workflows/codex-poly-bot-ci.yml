@@ -1,6 +1,6 @@
 # REQ: REQ-DEP-003, REQ-DEP-004, REQ-DEP-005, REQ-DEP-006,
 # REQ-DEP-010, REQ-OBS-002
-name: Codex Poly Bot CI
+name: niles CI
 
 on:
   pull_request:
