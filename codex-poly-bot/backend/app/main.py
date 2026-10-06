@@ -8,10 +8,12 @@ REQ-UI-011, REQ-UI-015, REQ-OBS-004, REQ-OBS-005, REQ-OBS-006
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 import logging
 import os
+from time import perf_counter
+from typing import Iterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +49,32 @@ from app.services.runtime_status_service import RuntimeStatusService
 
 
 LOGGER = logging.getLogger(__name__)
+# Uvicorn configures this hierarchy before loading its application factory.
+STARTUP_LOGGER = logging.getLogger("uvicorn.error.startup")
+
+
+@contextmanager
+def _startup_stage(stage: str) -> Iterator[None]:
+    """Log fixed startup stage names and elapsed time, without application data.
+
+    REQ: REQ-OBS-006
+    """
+
+    started_at = perf_counter()
+    STARTUP_LOGGER.info("startup_stage stage=%s event=begin", stage)
+    outcome = "ok"
+    try:
+        yield
+    except BaseException:
+        outcome = "failed"
+        raise
+    finally:
+        STARTUP_LOGGER.info(
+            "startup_stage stage=%s event=end outcome=%s elapsed_ms=%.3f",
+            stage,
+            outcome,
+            (perf_counter() - started_at) * 1000,
+        )
 
 
 @dataclass(frozen=True)
@@ -170,7 +198,8 @@ def build_dashboard_api_services(
     REQ: REQ-UI-001, REQ-OBS-004
     """
 
-    shared_registry = registry or _repository_registry_from_settings(settings)
+    with _startup_stage("repository"):
+        shared_registry = registry or _repository_registry_from_settings(settings)
     auth = AuthService(
         allowed_usernames=set(settings.allowed_usernames),
         signing_secret=settings.signing_secret,
@@ -216,15 +245,19 @@ def create_app(
     REQ: REQ-UI-001, REQ-OBS-006
     """
 
-    resolved_settings = settings or AppSettings.from_env()
-    resolved_services = services or build_dashboard_api_services(resolved_settings)
+    with _startup_stage("settings"):
+        resolved_settings = settings or AppSettings.from_env()
+    with _startup_stage("services"):
+        resolved_services = services or build_dashboard_api_services(resolved_settings)
     app = FastAPI(title="niles backend")
     app.state.settings = resolved_settings
     app.state.services = resolved_services
     app.state.worker_heartbeat_task = None
     app.state.portfolio_refresh_task = None
-    resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
-    configure_observability(app, settings=resolved_settings)
+    with _startup_stage("startup_heartbeat"):
+        resolved_services.runtime_status.record_worker_heartbeat(message="backend startup")
+    with _startup_stage("observability"):
+        configure_observability(app, settings=resolved_settings)
 
     @app.exception_handler(PersistenceUnavailableError)
     async def _persistence_unavailable(
@@ -250,7 +283,8 @@ def create_app(
 
     @app.on_event("startup")
     async def _start_dashboard_events() -> None:
-        await resolved_services.dashboard_events.start()
+        with _startup_stage("dashboard_events"):
+            await resolved_services.dashboard_events.start()
 
     @app.on_event("shutdown")
     async def _stop_dashboard_events() -> None:
@@ -318,11 +352,13 @@ def _repository_registry_from_settings(settings: AppSettings) -> RepositoryRegis
     if not settings.database_url:
         return RepositoryRegistry()
     try:
-        session_factory = create_session_factory(settings.database_url)
+        with _startup_stage("database_session_factory"):
+            session_factory = create_session_factory(settings.database_url)
         engine = session_factory.kw.get("bind")
         if engine is not None:
-            with engine.begin() as connection:
-                run_migrations(connection)
+            with _startup_stage("database_migrations"):
+                with engine.begin() as connection:
+                    run_migrations(connection)
         return RepositoryRegistry(PersistentDatabaseState(session_factory))
     except PersistenceConfigurationError:
         LOGGER.exception("Postgres persistence is misconfigured")
