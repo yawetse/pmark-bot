@@ -78,7 +78,7 @@ assert.doesNotMatch(productLanding, /original post|source post|source method/i);
 
 const productStoryPage = read(files.productStoryPage);
 assert.match(productStoryPage, /ProductStoryArticle/);
-assert.match(productStoryPage, /canonical: "https:\/\/codex-poly-bot\.repetere\.net\/story"/);
+assert.match(productStoryPage, /canonical: "https:\/\/nilesagent\.com\/story"/);
 
 const productStoryArticle = read(files.productStoryArticle);
 assert.match(productStoryArticle, /Why a trading bot should be allowed to do nothing/);
