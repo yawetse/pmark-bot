@@ -486,7 +486,7 @@ Resources:
       Engine: postgres
       DBName: codexbot
       DBInstanceClass: db.t4g.micro
-      AllocatedStorage: 20
+      AllocatedStorage: !If [IsProduction, 22, 20]
       StorageType: gp3
       StorageEncrypted: true
       PubliclyAccessible: false
