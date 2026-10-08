@@ -254,6 +254,8 @@ jobs:
           aws ecs wait services-stable \
             --cluster codex-poly-bot-development-cluster \
             --services codex-poly-bot-development-backend codex-poly-bot-development-frontend
+      - name: Verify requested release images
+        run: python codex-poly-bot/scripts/verify-release-images.py development "$GITHUB_SHA"
       - name: Verify funding release guardrails
         env:
           APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
@@ -316,6 +318,8 @@ jobs:
           aws ecs wait services-stable \
             --cluster codex-poly-bot-production-cluster \
             --services codex-poly-bot-production-backend codex-poly-bot-production-frontend
+      - name: Verify requested release images
+        run: python codex-poly-bot/scripts/verify-release-images.py production "$GITHUB_SHA"
       - name: Verify funding release guardrails
         env:
           APPLICATION_DOMAIN_NAME: ${{ vars.APPLICATION_DOMAIN_NAME }}
