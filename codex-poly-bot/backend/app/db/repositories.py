@@ -1581,16 +1581,16 @@ class SharedRepositories:
         account_id: str | None = None,
     ) -> list[dict]:
         self.ensure_schema(SHARED_SCHEMA)
-        rows = [
-            row
-            for row in self.state.rows(f"{SHARED_SCHEMA}.alpaca_historical_positions")
-            if row["environment"] == environment.value
-        ]
+        # Filter before sorting/materializing payloads; retain every matching row
+        # and the existing order so financial callers preserve their tie behavior.
+        filters: dict[str, Any] = {"environment": environment.value}
         if account_mode is not None:
-            rows = [row for row in rows if row["account_mode"] == account_mode]
+            filters["account_mode"] = account_mode
         if account_id is not None:
-            rows = [row for row in rows if row["account_id"] == account_id]
-        return rows
+            filters["account_id"] = account_id
+        return self.state.rows(
+            f"{SHARED_SCHEMA}.alpaca_historical_positions", filters=filters
+        )
 
     def record_alpaca_broker_account_snapshot(
         self,
