@@ -2,7 +2,7 @@
   "environment": "production",
   "secret_prefix": "/codex-poly-bot/production/",
   "domain": {
-    "application_domain_name": "codex-poly-bot.repetere.net",
+    "application_domain_name": "nilesagent.com",
     "ses_identity": "asyncdoc.net"
   },
   "runtime": {
