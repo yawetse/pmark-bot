@@ -14,14 +14,14 @@ The repository is [yawetse/pmark-bot](https://github.com/yawetse/pmark-bot). Cur
 | GitHub repository | yawetse/pmark-bot | yawetse/niles; review integrations, redirects, remotes, branch protections, Actions environments, and external links before repository rename |
 | Source directory | codex-poly-bot | niles; migrate build contexts, scripts, Docker Compose mounts, tests, and documentation together |
 | Workflow filename | codex-poly-bot-ci.yml | niles-ci.yml; audit workflow references and badge links; current CI display name becomes niles CI |
-| Production and development domains | codex-poly-bot.repetere.net and dev-codex-poly-bot.repetere.net | proposed niles.repetere.net and dev-niles.repetere.net; verify DNS ownership, TLS, OAuth callbacks, allowed origins, cookies, realtime routing, and redirects before cutover |
+| Production and development domains | codex-poly-bot.repetere.net and dev-codex-poly-bot.repetere.net | selected production nilesagent.com; retain current development hostname and old production hostname for rollback; verify DNS, TLS, exact OAuth callbacks, origins, cookies and realtime routes before cutover |
 | AWS stacks, ECS services, ECR images, database and storage names | codex-poly-bot prefixes | niles prefixes; review resource replacements and data migration, costs, rollback, and release gates before applying |
 | Secret references | /codex-poly-bot/{environment}/... | keep current paths until an approved migration verifies every consumer; never copy values into issues, code, or logs |
 | Observability namespace and services | codex-poly-bot namespace and service labels | migrate dashboards, alert rules, export configuration, and historical continuity together |
 | Browser preference key | codex-poly-bot-theme | retain to preserve saved preferences; a future key migration must read existing values before writing the new key |
 | Historical specs and evidence | SPEC-CODEX-POLY-BOT, REQ identifiers, old screenshots and reports | retain immutable identifiers and historical evidence; active project name is niles |
 
-The proposed repository and domains have not been provisioned or verified available. No account, domain, DNS, credential, resource, or production changes are part of this patch. Trading settings, funding behavior, order execution, and financial safety gates are unchanged.
+Repository/resource renames remain separate. The production hostname cutover uses the existing nilesagent.com zone and existing hosting; see `nilesagent-domain-cutover.md`. Trading settings, funding behavior, order execution, and financial safety gates are unchanged.
 
 ## Remaining work
 
