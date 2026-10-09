@@ -177,6 +177,20 @@ Parameters:
     Type: String
     Default: ""
     Description: Optional ACM certificate ARN in us-east-1 for ApplicationDomainName.
+  AdditionalCertificateArn:
+    Type: String
+    Default: ""
+    Description: Optional additional HTTPS certificate; preserves the existing listener certificate.
+  LegacyApplicationDomainName:
+    Type: String
+    Default: ""
+    Description: Previous hostname retained for a reversible canonical-domain transition.
+  EnableLegacyDomainRedirect:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
   DatabaseUsername:
     Type: String
     Default: codexbot
@@ -350,6 +364,9 @@ Conditions:
   CreateSesIdentity: !Equals [!Ref ManageSesIdentity, "true"]
   UseCustomDomain: !Not [!Equals [!Ref ApplicationDomainName, ""]]
   UseHttps: !Not [!Equals [!Ref CertificateArn, ""]]
+  UseAdditionalHttpsCertificate: !And
+    - !Condition UseHttps
+    - !Not [!Equals [!Ref AdditionalCertificateArn, ""]]
   UseCustomHttpsDomain: !And
     - !Condition UseCustomDomain
     - !Condition UseHttps
@@ -606,6 +623,14 @@ Resources:
       Port: 443
       Protocol: HTTPS
       SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+
+  AdditionalHttpsListenerCertificate:
+    Type: AWS::ElasticLoadBalancingV2::ListenerCertificate
+    Condition: UseAdditionalHttpsCertificate
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Certificates:
+        - CertificateArn: !Ref AdditionalCertificateArn
 
   FrontendAuthListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
@@ -1097,6 +1122,10 @@ Resources:
                 - UseCustomHttpsDomain
                 - !Sub "https://${ApplicationDomainName}"
                 - !Sub "http://${ApplicationLoadBalancer.DNSName}"
+            - Name: LEGACY_APPLICATION_DOMAIN_NAME
+              Value: !Ref LegacyApplicationDomainName
+            - Name: LEGACY_DOMAIN_REDIRECT_ENABLED
+              Value: !Ref EnableLegacyDomainRedirect
             - Name: GITHUB_CLIENT_ID
               Value: !Ref GithubClientId
             - Name: GITHUB_CLIENT_SECRET
