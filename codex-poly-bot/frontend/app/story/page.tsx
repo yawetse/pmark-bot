@@ -7,11 +7,11 @@ export const metadata: Metadata = {
   description:
     "How niles uses evidence, refusal, risk authorization, and reviewable decisions to control automated trading.",
   alternates: {
-    canonical: "https://codex-poly-bot.repetere.net/story",
+    canonical: "https://nilesagent.com/story",
   },
   openGraph: {
     type: "article",
-    url: "https://codex-poly-bot.repetere.net/story",
+    url: "https://nilesagent.com/story",
     title: "Why a trading bot should be allowed to do nothing",
     description:
       "What changes when an automated trading system is designed around refusal instead of execution.",
