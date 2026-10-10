@@ -29,6 +29,31 @@ export type PerformanceAccountBalanceRow = {
   lastUpdatedAt: string | null;
 };
 
+// A stale aggregate can mean incomplete account coverage rather than a failed
+// refresh of previously confirmed data. Keep the API status and values intact.
+export function buildPerformanceCoverage(
+  portfolio?: Pick<VenuePortfolioView, "overall" | "accounts" | "freshness">,
+): { label: string; message: string } {
+  const accounts = portfolio?.accounts ?? [];
+  const ready = accounts.filter((account) => account.status === "ready").length;
+  const unavailable = accounts.filter((account) => account.status === "unavailable").length;
+  if (
+    portfolio?.overall.status === "stale"
+    && ready > 0
+    && unavailable > 0
+    && ready + unavailable === accounts.length
+  ) {
+    return {
+      label: "Partial account coverage",
+      message: "Some venue accounts are unavailable. Totals include confirmed accounts; see account status below.",
+    };
+  }
+  return {
+    label: portfolio?.overall.status ?? "unavailable",
+    message: portfolio?.freshness.message ?? "Waiting for confirmed data",
+  };
+}
+
 export function buildPerformanceHeadline(
   portfolio?: VenuePortfolioView,
 ): PerformanceHeadlineView {
