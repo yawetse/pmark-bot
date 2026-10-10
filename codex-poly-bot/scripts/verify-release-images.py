@@ -4,10 +4,15 @@ import argparse
 import json
 import re
 import subprocess
+import time
 
 
 class ReleaseVerificationError(RuntimeError):
     pass
+
+
+class ReleaseServiceNotReady(ReleaseVerificationError):
+    """A recognized deployment transition may settle after the CLI waiter."""
 
 
 def aws_json(*args):
@@ -40,9 +45,18 @@ def verify_release_images(environment, revision, reader=aws_json):
             raise ReleaseVerificationError(f"{component}: service metadata is missing")
         service = services[0]
         desired = service.get("desired", 0)
-        if (service.get("name") != name or desired <= 0
-                or service.get("running") != desired or service.get("pending") != 0
+        if (service.get("name") != name or not isinstance(desired, int) or desired <= 0
+                or any(not isinstance(service.get(k), int) or service[k] < 0
+                       for k in ("running", "pending"))):
+            raise ReleaseVerificationError(f"{component}: service metadata is invalid")
+        if (service.get("running") != desired or service.get("pending") != 0
                 or service.get("deployments") != [{"status": "PRIMARY", "state": "COMPLETED"}]):
+            deployments = service.get("deployments", [])
+            if (isinstance(deployments, list) and deployments
+                    and any(d.get("status") == "PRIMARY" for d in deployments)
+                    and all(d.get("status") in ("PRIMARY", "ACTIVE")
+                            and d.get("state") in ("IN_PROGRESS", "COMPLETED") for d in deployments)):
+                raise ReleaseServiceNotReady(f"{component}: service is not stable")
             raise ReleaseVerificationError(f"{component}: service is not stable")
         expected = reader(
             "ecr", "describe-images", "--repository-name", name,
@@ -74,13 +88,27 @@ def verify_release_images(environment, revision, reader=aws_json):
     return report
 
 
+def wait_for_release_images(environment, revision, reader=aws_json, *, timeout_seconds=90,
+                            poll_seconds=5, clock=time.monotonic, sleeper=time.sleep):
+    """Wait only for recognized rollout transitions; image failures stay terminal."""
+    deadline = clock() + timeout_seconds
+    while True:
+        try:
+            return verify_release_images(environment, revision, reader)
+        except ReleaseServiceNotReady:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise
+            sleeper(min(poll_seconds, remaining))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("environment", choices=("development", "production"))
     parser.add_argument("revision")
     args = parser.parse_args()
     try:
-        verify_release_images(args.environment, args.revision)
+        wait_for_release_images(args.environment, args.revision)
     except (ReleaseVerificationError, KeyError, TypeError, OSError) as exc:
         # Malformed metadata fails closed; never print raw response data.
         parser.exit(1, f"Release image verification failed: {type(exc).__name__}\n")
