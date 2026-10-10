@@ -11,9 +11,43 @@ import {
 } from "../lib/dashboard-activity-detail.ts";
 import {
   buildPerformanceAccountBalances,
+  buildPerformanceCoverage,
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
 } from "../lib/dashboard-performance-view-model.ts";
+
+// TST-REQ-UI-013: incomplete coverage must not imply that confirmed accounts
+// failed to refresh, or hide genuinely stale account snapshots.
+for (const [statuses, overall, expectedLabel] of [
+  [["ready", "ready", "unavailable", "unavailable"], "stale", "Partial account coverage"],
+  [["ready", "unavailable"], "stale", "Partial account coverage"],
+  [["ready", "stale", "unavailable"], "stale", "stale"],
+  [["stale"], "stale", "stale"],
+  [["unavailable", "unavailable"], "unavailable", "unavailable"],
+  [["ready", "ready"], "ready", "ready"],
+  [[], "stale", "stale"],
+  [["ready", "unknown", "unavailable"], "stale", "stale"],
+]) {
+  const input = {
+    overall: { status: overall, accountValueUsd: "42.00" },
+    accounts: statuses.map((status) => ({ status })),
+    freshness: { status: overall, message: "Original freshness message", refreshedAt: "2026-10-08T12:49:00Z" },
+  };
+  const original = structuredClone(input);
+  const result = buildPerformanceCoverage(input);
+  assert.equal(result.label, expectedLabel);
+  assert.equal(
+    result.message,
+    expectedLabel === "Partial account coverage"
+      ? "Some venue accounts are unavailable. Totals include confirmed accounts; see account status below."
+      : "Original freshness message",
+  );
+  assert.deepEqual(input, original);
+}
+assert.deepEqual(buildPerformanceCoverage(), {
+  label: "unavailable",
+  message: "Waiting for confirmed data",
+});
 
 // TST-REQ-UI-020-02: the funnel uses one completed pipeline's persisted metrics.
 

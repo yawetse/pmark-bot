@@ -8,6 +8,7 @@ import { Disclosure } from "@/components/dashboard/dashboard-primitives";
 import type { VenuePortfolioView } from "@/components/dashboard/venue-portfolio-panel";
 import {
   buildPerformanceAccountBalances,
+  buildPerformanceCoverage,
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
 } from "@/lib/dashboard-performance-view-model";
@@ -86,6 +87,7 @@ export function PerformanceView({
   const headline = useMemo(() => buildPerformanceHeadline(currentPortfolio), [currentPortfolio]);
   const accountBalances = useMemo(() => buildPerformanceAccountBalances(currentPortfolio), [currentPortfolio]);
   const marketRows = useMemo(() => buildPerformanceVenueRows(currentPortfolio), [currentPortfolio]);
+  const coverage = buildPerformanceCoverage(currentPortfolio);
 
   return (
     <div className="ia-page performance-page" aria-labelledby="performance-title">
@@ -96,7 +98,7 @@ export function PerformanceView({
           <p>Venue-confirmed balances, positions, and fills. Practice and unfilled orders are excluded.</p>
         </div>
         <span className={`ia-update-chip ${currentPortfolio?.freshness.status ?? "idle"}`}>
-          <span aria-hidden="true" /> {currentPortfolio?.freshness.message ?? "Waiting for confirmed data"}
+          <span aria-hidden="true" /> {coverage.message}
         </span>
       </header>
 
@@ -231,7 +233,7 @@ export function PerformanceView({
       <section className="ia-panel" aria-labelledby="by-market-title">
         <div className="ia-section-heading">
           <div><p className="section-label">Breakdown</p><h2 id="by-market-title">By market</h2></div>
-          <span className={`status ${currentPortfolio?.overall.status === "ready" ? "ok" : currentPortfolio?.overall.status === "stale" ? "waiting" : "blocked"}`}>{currentPortfolio?.overall.status ?? "unavailable"}</span>
+          <span className={`status ${currentPortfolio?.overall.status === "ready" ? "ok" : currentPortfolio?.overall.status === "stale" ? "waiting" : "blocked"}`}>{coverage.label}</span>
         </div>
         <div className="performance-table-wrap">
           <table className="performance-table">

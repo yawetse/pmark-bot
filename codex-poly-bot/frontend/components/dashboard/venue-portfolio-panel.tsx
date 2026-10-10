@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { BriefcaseBusiness, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
+import { buildPerformanceCoverage } from "@/lib/dashboard-performance-view-model";
 import {
   CartesianGrid,
   Line,
@@ -111,6 +112,7 @@ export type VenuePortfolioView = {
 };
 
 export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioView }) {
+  const coverage = buildPerformanceCoverage(portfolio);
   const chartData = portfolio.history.map((row) => ({
     label: formatChartTime(row.asOf),
     total: numberOrNull(row.totalPnlUsd),
@@ -133,7 +135,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
         </div>
         <div className="portfolio-heading-status">
           <BriefcaseBusiness aria-hidden="true" size={20} />
-          <span className={`status ${statusTone}`}>{portfolio.overall.status}</span>
+          <span className={`status ${statusTone}`}>{coverage.label}</span>
         </div>
       </div>
 
@@ -154,7 +156,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
         <div className="portfolio-chart-block">
           <div className="portfolio-subheading">
             <h3>Confirmed P&L over time</h3>
-            <span>{portfolio.freshness.message}</span>
+            <span>{coverage.message}</span>
           </div>
           <div className="consumer-chart" aria-label="Confirmed portfolio profit and loss over time">
             {chartData.length > 1 ? (

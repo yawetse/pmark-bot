@@ -990,6 +990,7 @@ class ProviderBackedMarketDataFetcher:
     ) -> MarketDataProviderResult:
         errors: list[ProviderHttpError] = []
         candidates: list[dict[str, Any]] = []
+        throttled: ProviderHttpError | None = None
         market_limit = _polymarket_market_data_limit(
             config_payload=config_payload,
             default=self.polymarket_market_limit,
@@ -1049,6 +1050,12 @@ class ProviderBackedMarketDataFetcher:
                     )
                 except ProviderHttpError as exc:
                     errors.append(exc)
+                    if exc.status == "rate_limited":
+                        # The candidate cap counts successes, so continuing after
+                        # throttling can hit every remaining market without progress.
+                        # Leave retries to a later pull, retaining incomplete status.
+                        throttled = exc
+                        break
                     continue
                 candidate = _polymarket_us_candidate(
                     market=market,
@@ -1058,7 +1065,7 @@ class ProviderBackedMarketDataFetcher:
                 if candidate is not None:
                     candidates.append(candidate)
 
-        return _venue_result(
+        result = _venue_result(
             venue=Venue.POLYMARKET_US.value,
             provider_label="Polymarket US",
             source="polymarket us market api",
@@ -1066,6 +1073,19 @@ class ProviderBackedMarketDataFetcher:
             errors=errors,
             empty_message="No priced Polymarket US candidates were found in active markets.",
         )
+        if throttled is not None:
+            return MarketDataProviderResult(
+                venue=result.venue,
+                status=result.status,
+                source=result.source,
+                candidates=result.candidates,
+                error_code=throttled.error_code,
+                message=(
+                    f"{result.message} Order-book requests stopped after provider throttling; "
+                    "coverage is incomplete. Retry on a later pull."
+                ),
+            )
+        return result
 
     def _fetch_polymarket_order_books(
         self,
