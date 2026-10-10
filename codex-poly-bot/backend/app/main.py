@@ -15,9 +15,10 @@ import os
 from time import perf_counter
 from typing import Iterator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.websockets import WebSocketState
 
 from app.api import build_dashboard_router
 from app.db import (
@@ -261,9 +262,20 @@ def create_app(
 
     @app.exception_handler(PersistenceUnavailableError)
     async def _persistence_unavailable(
-        request: Request,
+        request: Request | WebSocket,
         exc: PersistenceUnavailableError,
-    ) -> JSONResponse:
+    ) -> JSONResponse | None:
+        if isinstance(request, WebSocket):
+            LOGGER.warning(
+                "WebSocket closed because Postgres persistence is unavailable: %s",
+                request.url.path,
+            )
+            if request.application_state != WebSocketState.DISCONNECTED:
+                await request.close(
+                    code=1013,
+                    reason="Dashboard data is temporarily unavailable.",
+                )
+            return None
         LOGGER.warning(
             "Request failed because Postgres persistence is unavailable: %s %s",
             request.method,
