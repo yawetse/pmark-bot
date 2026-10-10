@@ -105,3 +105,54 @@ def test_both_workflows_gate_images_before_other_guardrails():
         assert job.index("aws ecs wait services-stable") < job.index("Verify requested release images")
         assert job.index("Verify requested release images") < job.index("Verify funding release guardrails")
         assert f'verify-release-images.py {stage} "$GITHUB_SHA"' in job
+
+
+def transition_reader(state, *, completed_after=None, failed=False):
+    base = metadata_reader()
+    def read(*args):
+        result = base(*args)
+        if args[:2] == ("ecs", "describe-services") and "frontend" in args[args.index("--services") + 1]:
+            state["reads"] += 1
+            if failed or completed_after is None or state["reads"] < completed_after:
+                result[0]["deployments"][0]["state"] = "FAILED" if failed else "IN_PROGRESS"
+        return result
+    return read
+
+
+def test_cli_waiter_counts_can_settle_before_rollout_state():
+    state = {"reads": 0, "elapsed": 0}
+    def sleep(seconds):
+        state["elapsed"] += seconds
+    report = verifier.wait_for_release_images(
+        "development", SHA, transition_reader(state, completed_after=3),
+        timeout_seconds=20, poll_seconds=5, clock=lambda: state["elapsed"], sleeper=sleep,
+    )
+    assert len(report["images"]) == 2
+    assert state == {"reads": 3, "elapsed": 10}
+
+
+def test_rollout_wait_is_bounded_and_stays_closed():
+    state = {"reads": 0, "elapsed": 0}
+    def sleep(seconds):
+        state["elapsed"] += seconds
+    with pytest.raises(verifier.ReleaseVerificationError, match="not stable"):
+        verifier.wait_for_release_images(
+            "development", SHA, transition_reader(state), timeout_seconds=10,
+            poll_seconds=5, clock=lambda: state["elapsed"], sleeper=sleep,
+        )
+    assert state == {"reads": 3, "elapsed": 10}
+
+
+@pytest.mark.parametrize("scenario", ("rollback", "missing_image", "missing_service"))
+def test_terminal_image_or_metadata_failure_is_not_retried(scenario):
+    def refuse(seconds):
+        pytest.fail("A terminal verification failure must not wait or retry")
+    with pytest.raises(verifier.ReleaseVerificationError):
+        verifier.wait_for_release_images("development", SHA, metadata_reader(scenario=scenario), sleeper=refuse)
+
+
+def test_failed_rollout_is_not_retried():
+    def refuse(seconds):
+        pytest.fail("A failed deployment must not wait or retry")
+    with pytest.raises(verifier.ReleaseVerificationError):
+        verifier.wait_for_release_images("development", SHA, transition_reader({"reads": 0}, failed=True), sleeper=refuse)
