@@ -2070,20 +2070,19 @@ class SharedRepositories:
         status: str | None = None,
     ) -> list[dict]:
         self.ensure_schema(SHARED_SCHEMA)
-        rows = [
-            row
-            for row in self.state.rows(f"{SHARED_SCHEMA}.reasoning_outputs")
-            if row["environment"] == environment.value
-        ]
+        filters: dict[str, Any] = {"environment": environment.value}
         if reasoning_run_id is not None:
-            rows = [row for row in rows if row["reasoning_run_id"] == reasoning_run_id]
+            filters["reasoning_run_id"] = reasoning_run_id
         if venue is not None:
-            rows = [row for row in rows if row["venue"] == venue]
+            filters["venue"] = venue
         if model_provider is not None:
-            rows = [row for row in rows if row["model_provider"] == model_provider.value]
+            filters["model_provider"] = model_provider.value
         if status is not None:
-            rows = [row for row in rows if row["status"] == status]
-        return rows
+            filters["status"] = status
+        return self.state.rows(
+            f"{SHARED_SCHEMA}.reasoning_outputs",
+            filters=filters,
+        )
 
     def record_strategy_consensus_run(
         self,
