@@ -1218,6 +1218,19 @@ class VenuePortfolioService:
             return _empty_summary(environment, now, "Portfolio persistence is unavailable.")
 
         accounts = _account_views(snapshots, position_rows)
+        # REQ: REQ-UI-013. Reporting only: retain financial coverage/status and
+        # confirmed values, and never hide a real refresh error behind setup.
+        runtime_env = getattr(self.source, "runtime_env", {})
+        latest_by_route: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in snapshots:
+            latest_by_route.setdefault((str(row.get("venue")), str(row.get("model_provider"))), row)
+        for account in accounts:
+            latest_rows = [
+                latest_by_route[(account["venue"], provider)]
+                for provider in account["providers"]
+                if (account["venue"], provider) in latest_by_route
+            ]
+            account["availabilityReason"] = _account_availability_reason(account, runtime_env, latest_rows)
         venues = [
             _aggregate_accounts(
                 [account for account in accounts if account["venue"] == venue.value],
@@ -1274,7 +1287,7 @@ class VenuePortfolioService:
                 "status": overall["status"],
                 "refreshedAt": latest_observed.isoformat() if latest_observed else None,
                 "ageSeconds": age_seconds,
-                "message": _freshness_message(overall["status"], age_seconds),
+                "message": _portfolio_reporting_message(accounts, overall["status"], age_seconds),
             },
             "source": "venue-confirmed account APIs",
         }
@@ -2499,6 +2512,52 @@ def _empty_summary(environment: Environment, now: datetime, message: str) -> dic
         },
         "source": "venue-confirmed account APIs",
     }
+
+
+def _account_availability_reason(
+    account: dict[str, Any], runtime_env: dict[str, str], latest_rows: list[dict[str, Any]],
+) -> str:
+    """Classify existing results without changing polling, values or readiness."""
+
+    if account["status"] == "ready":
+        return "ready"
+    setup_messages = {
+        "polymarket_us": "Polymarket US credentials are not configured for this model provider.",
+        "alpaca": "Alpaca credentials are not configured for this model provider.",
+        "kalshi": "Kalshi credentials are not configured for this model provider.",
+    }
+    venue = str(account.get("venue"))
+    setup_message = setup_messages.get(venue)
+    issues = [row for row in latest_rows if row.get("status") != "ready"]
+    # Check every grouped provider: a newer setup message must not conceal a
+    # different provider's actual error on the same confirmed account.
+    if any(row.get("status") == "error" and not (setup_message is not None and row.get("message") == setup_message) for row in issues):
+        return "refresh_failed"
+    if issues and setup_message is not None and all(row.get("message") == setup_message for row in issues):
+        enabled_key = {
+            "polymarket_us": "POLYMARKET_US_ENABLED",
+            "alpaca": "ALPACA_ENABLED",
+            "kalshi": "KALSHI_ENABLED",
+        }.get(venue)
+        enabled = runtime_env.get(enabled_key) if enabled_key else None
+        if enabled is not None and enabled.strip().lower() in {"false", "0", "no", "off"}:
+            return "disabled"
+        return "not_configured"
+    if account["status"] == "stale":
+        return "refresh_failed"
+    return "unavailable"
+
+
+def _portfolio_reporting_message(accounts: list[dict[str, Any]], status: str, age_seconds: int | None) -> str:
+    reasons = {account["availabilityReason"] for account in accounts if account["status"] != "ready"}
+    setup = bool(reasons & {"disabled", "not_configured"})
+    if setup:
+        if "refresh_failed" in reasons:
+            return "Some venue accounts are disabled or not configured; other account refreshes failed. Confirmed values remain visible."
+        if reasons <= {"disabled", "not_configured"}:
+            return "Some venue accounts are disabled or not configured. Totals include confirmed accounts only."
+        return "Some venue accounts are disabled or not configured; other accounts are unavailable. Confirmed values remain visible."
+    return _freshness_message(status, age_seconds)
 
 
 def _freshness_message(status: str, age_seconds: int | None) -> str:

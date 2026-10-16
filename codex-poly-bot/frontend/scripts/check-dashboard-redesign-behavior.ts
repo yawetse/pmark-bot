@@ -12,6 +12,7 @@ import {
 import {
   buildPerformanceAccountBalances,
   buildPerformanceCoverage,
+  portfolioAccountStatusLabel,
   buildPerformanceHeadline,
   buildPerformanceVenueRows,
 } from "../lib/dashboard-performance-view-model.ts";
@@ -48,6 +49,32 @@ assert.deepEqual(buildPerformanceCoverage(), {
   label: "unavailable",
   message: "Waiting for confirmed data",
 });
+
+// REQ-UI-013: reporting reasons never change coverage or confirmed values.
+for (const [reasons, overall, label] of [
+  [["ready", "disabled"], "stale", "Partial account coverage"],
+  [["ready", "not_configured"], "stale", "Partial account coverage"],
+  [["disabled", "not_configured"], "unavailable", "Account setup incomplete"],
+  [["ready", "disabled", "refresh_failed"], "stale", "Refresh failed"],
+]) {
+  const input = {
+    overall: { status: overall, accountValueUsd: "42.00" },
+    accounts: reasons.map((reason) => ({ status: reason === "ready" ? "ready" : "unavailable", availabilityReason: reason })),
+    freshness: { status: overall, message: "Specific backend reporting message" },
+  };
+  const before = structuredClone(input);
+  assert.deepEqual(buildPerformanceCoverage(input), { label, message: input.freshness.message });
+  assert.deepEqual(input, before);
+}
+for (const [reason, label] of [["disabled", "Disabled"], ["not_configured", "Not configured"], ["refresh_failed", "Refresh failed"]]) {
+  assert.equal(portfolioAccountStatusLabel({ status: "unavailable", availabilityReason: reason }), label);
+}
+assert.equal(portfolioAccountStatusLabel({ status: "stale" }), "stale");
+assert.equal(buildPerformanceCoverage({
+  overall: { status: "stale" },
+  accounts: [{ status: "unavailable", availabilityReason: "disabled" }, { status: "stale" }],
+  freshness: { message: "Existing refresh failure" },
+}).label, "stale");
 
 // TST-REQ-UI-020-02: the funnel uses one completed pipeline's persisted metrics.
 
