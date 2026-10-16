@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { BriefcaseBusiness, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
-import { buildPerformanceCoverage } from "@/lib/dashboard-performance-view-model";
+import { buildPerformanceCoverage, portfolioAccountStatusLabel } from "@/lib/dashboard-performance-view-model";
 import {
   CartesianGrid,
   Line,
@@ -27,6 +27,7 @@ type PortfolioTotals = {
 };
 
 type PortfolioAccountView = PortfolioTotals & {
+  availabilityReason?: "ready" | "disabled" | "not_configured" | "refresh_failed" | "unavailable";
   venue: string;
   accountRef: string;
   accountMode: string;
@@ -212,7 +213,7 @@ export function VenuePortfolioPanel({ portfolio }: { portfolio: VenuePortfolioVi
                     <PortfolioDatum label="Available" value={formatOptionalUsd(availableToTradeUsd(account))} />
                     <PortfolioDatum label="P&L" value={formatOptionalUsd(account.totalPnlUsd)} tone={pnlTone(account.totalPnlUsd)} />
                     <span className={`status ${account.status === "ready" ? "ok" : account.status === "stale" ? "waiting" : "blocked"}`}>
-                      {account.status}
+                      {portfolioAccountStatusLabel(account)}
                     </span>
                   </div>
                 )) : (

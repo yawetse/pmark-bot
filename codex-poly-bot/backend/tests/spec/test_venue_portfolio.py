@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from copy import deepcopy
 
 from fastapi.testclient import TestClient
 import httpx
+import pytest
 
 from app.db import RepositoryRegistry
 from app.domain import Environment, ModelProvider, Venue
@@ -376,6 +378,94 @@ def test_req_ui_013_02_failed_refresh_keeps_last_confirmed_values_stale() -> Non
     assert payload["accounts"][0]["status"] == "stale"
     assert "timed out" in payload["accounts"][0]["message"]
     assert payload["freshness"]["refreshedAt"] == "2026-07-13T12:00:00+00:00"
+
+
+@pytest.mark.parametrize("enabled,reason", [("false", "disabled"), ("true", "not_configured"), (None, "not_configured")])
+def test_portfolio_reports_setup_gap_without_changing_financial_coverage(enabled, reason):
+    """REQ-UI-013: missing setup is distinct from a failed venue read."""
+    app = create_app(AppSettings(environment=Environment.DEVELOPMENT))
+    source = StaticVenuePortfolioSource([*_ready_accounts()[:1], {
+        "status": "unavailable", "venue": "kalshi", "provider": "claude",
+        "accountRef": "synthetic-unconfigured", "accountMode": "demo",
+        "message": "Kalshi credentials are not configured for this model provider.",
+        "observedAt": datetime(2026, 7, 13, 12, 1, tzinfo=UTC),
+    }])
+    service = VenuePortfolioService(app.state.services.registry, source=source)
+    before = service.refresh(Environment.DEVELOPMENT)
+    rows_before = deepcopy(service.registry.state.tables)
+    source.runtime_env = {} if enabled is None else {"KALSHI_ENABLED": enabled}
+    after = service.summary(Environment.DEVELOPMENT)
+    account = next(a for a in after["accounts"] if a["venue"] == "kalshi")
+    assert account["availabilityReason"] == reason
+    assert account["status"] == "unavailable"
+    assert after["overall"]["status"] == "stale"
+    assert "disabled or not configured" in after["freshness"]["message"]
+    assert "refreshes failed" not in after["freshness"]["message"]
+    for field in ("overall", "positions", "fills", "history"):
+        assert after[field] == before[field]
+    assert [{k: v for k, v in a.items() if k != "availabilityReason"} for a in after["accounts"]] == [
+        {k: v for k, v in a.items() if k != "availabilityReason"} for a in before["accounts"]
+    ]
+    assert service.registry.state.tables == rows_before
+
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_portfolio_does_not_hide_actual_refresh_failure_behind_disabled_flag(enabled):
+    app = create_app(AppSettings(environment=Environment.DEVELOPMENT))
+    source = StaticVenuePortfolioSource([*_ready_accounts()[:1], {
+        "status": "error", "venue": "kalshi", "provider": "claude",
+        "accountRef": "synthetic-error", "accountMode": "demo",
+        "message": "Kalshi portfolio refresh failed: ReadTimeout.",
+        "observedAt": datetime(2026, 7, 13, 12, 1, tzinfo=UTC),
+    }])
+    source.runtime_env = {"KALSHI_ENABLED": enabled}
+    service = VenuePortfolioService(app.state.services.registry, source=source)
+    payload = service.refresh(Environment.DEVELOPMENT)
+    assert next(a for a in payload["accounts"] if a["venue"] == "kalshi")["availabilityReason"] == "refresh_failed"
+    assert payload["overall"]["accountValueUsd"] == "130.00"
+    assert payload["overall"]["status"] == "stale"
+
+
+def test_portfolio_preserves_confirmed_values_when_setup_is_removed():
+    app = create_app(AppSettings(environment=Environment.DEVELOPMENT))
+    source = StaticVenuePortfolioSource([_ready_accounts()[0]])
+    service = VenuePortfolioService(app.state.services.registry, source=source)
+    before = service.refresh(Environment.DEVELOPMENT)
+    source.accounts = [{
+        "status": "unavailable", "venue": "polymarket_us", "provider": "openai",
+        "accountRef": "synthetic-fallback", "accountMode": "live",
+        "message": "Polymarket US credentials are not configured for this model provider.",
+        "observedAt": datetime(2026, 7, 13, 12, 1, tzinfo=UTC),
+    }]
+    after = service.refresh(Environment.DEVELOPMENT)
+    assert after["accounts"][0]["availabilityReason"] == "not_configured"
+    assert after["accounts"][0]["status"] == "stale"
+    assert after["overall"]["accountValueUsd"] == before["overall"]["accountValueUsd"]
+    assert after["freshness"]["refreshedAt"] == before["freshness"]["refreshedAt"]
+
+
+def test_portfolio_grouped_provider_error_is_not_masked_by_newer_setup_message():
+    app = create_app(AppSettings(environment=Environment.DEVELOPMENT))
+    ready = _ready_accounts()[0]
+    source = StaticVenuePortfolioSource([ready, {**ready, "provider": "claude"}])
+    service = VenuePortfolioService(app.state.services.registry, source=source)
+    service.refresh(Environment.DEVELOPMENT)
+    source.accounts = [{
+        "status": "error", "venue": "polymarket_us", "provider": "openai",
+        "accountRef": "synthetic-error", "accountMode": "live",
+        "message": "Polymarket US portfolio refresh failed: ReadTimeout.",
+        "observedAt": datetime(2026, 7, 13, 12, 1, tzinfo=UTC),
+    }, {
+        "status": "unavailable", "venue": "polymarket_us", "provider": "claude",
+        "accountRef": "synthetic-missing", "accountMode": "live",
+        "message": "Polymarket US credentials are not configured for this model provider.",
+        "observedAt": datetime(2026, 7, 13, 12, 2, tzinfo=UTC),
+    }]
+    after = service.refresh(Environment.DEVELOPMENT)
+    assert len(after["accounts"]) == 1
+    assert after["accounts"][0]["availabilityReason"] == "refresh_failed"
+    assert after["accounts"][0]["status"] == "stale"
+    assert after["overall"]["accountValueUsd"] == "130.00"
 
 
 def test_req_cmp_005_02_missing_portfolio_is_unavailable_not_zero() -> None:

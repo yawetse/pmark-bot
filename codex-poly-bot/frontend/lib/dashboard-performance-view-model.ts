@@ -37,6 +37,18 @@ export function buildPerformanceCoverage(
   const accounts = portfolio?.accounts ?? [];
   const ready = accounts.filter((account) => account.status === "ready").length;
   const unavailable = accounts.filter((account) => account.status === "unavailable").length;
+  const setupGap = accounts.some((account) => ["disabled", "not_configured"].includes(account.availabilityReason ?? ""));
+  const refreshFailure = accounts.some((account) => account.availabilityReason === "refresh_failed");
+  if (refreshFailure) {
+    return { label: "Refresh failed", message: portfolio?.freshness.message ?? "An account refresh failed; confirmed values remain visible." };
+  }
+  const setupOnly = accounts.every((account) => account.status === "ready" || ["disabled", "not_configured"].includes(account.availabilityReason ?? ""));
+  if (setupGap && setupOnly) {
+    return {
+      label: portfolio?.overall.status === "unavailable" ? "Account setup incomplete" : "Partial account coverage",
+      message: portfolio?.freshness.message ?? "Some venue accounts are disabled or not configured.",
+    };
+  }
   if (
     portfolio?.overall.status === "stale"
     && ready > 0
@@ -52,6 +64,12 @@ export function buildPerformanceCoverage(
     label: portfolio?.overall.status ?? "unavailable",
     message: portfolio?.freshness.message ?? "Waiting for confirmed data",
   };
+}
+
+export function portfolioAccountStatusLabel(
+  account: { status: string; availabilityReason?: string },
+): string {
+  return ({ disabled: "Disabled", not_configured: "Not configured", refresh_failed: "Refresh failed" } as Record<string, string>)[account.availabilityReason ?? ""] ?? account.status;
 }
 
 export function buildPerformanceHeadline(
