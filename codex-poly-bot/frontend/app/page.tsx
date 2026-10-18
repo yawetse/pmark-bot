@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { PublicProductLanding } from "@/components/product-story/product-landing";
+import { PublicAnalytics } from "@/components/public-analytics";
 
 // REQ: REQ-UI-002, REQ-UI-023
 
@@ -11,5 +12,14 @@ export const metadata: Metadata = {
 };
 
 export default function HomePage() {
-  return <PublicProductLanding />;
+  return (
+    <>
+      <PublicAnalytics
+        measurementId="G-5SDXN5J0EK"
+        path="/"
+        title="niles | Controlled market automation"
+      />
+      <PublicProductLanding />
+    </>
+  );
 }

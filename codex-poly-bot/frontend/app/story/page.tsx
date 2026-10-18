@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { ProductStoryArticle } from "@/components/product-story/product-story-article";
+import { PublicAnalytics } from "@/components/public-analytics";
 
 export const metadata: Metadata = {
   title: "Why a trading bot should be allowed to do nothing | niles",
@@ -26,5 +27,14 @@ export const metadata: Metadata = {
 };
 
 export default function ProductStoryPage() {
-  return <ProductStoryArticle />;
+  return (
+    <>
+      <PublicAnalytics
+        measurementId="G-5SDXN5J0EK"
+        path="/story"
+        title="Why a trading bot should be allowed to do nothing | niles"
+      />
+      <ProductStoryArticle />
+    </>
+  );
 }
