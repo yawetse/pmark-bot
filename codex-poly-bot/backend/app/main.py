@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 import logging
 import os
 from time import perf_counter
@@ -50,6 +51,7 @@ from app.services.runtime_status_service import RuntimeStatusService
 
 
 LOGGER = logging.getLogger(__name__)
+_REFRESH_SLOW_SECONDS = 90
 # Uvicorn configures this hierarchy before loading its application factory.
 STARTUP_LOGGER = logging.getLogger("uvicorn.error.startup")
 
@@ -572,42 +574,149 @@ async def _portfolio_refresh_loop(
     REQ: REQ-DB-008, REQ-UI-013, REQ-CMP-005, REQ-FND-007
     """
 
+    diagnostics = _RefreshTimingDiagnostics.from_settings(settings)
     while True:
+        loop_started_at = perf_counter()
+        phase_timings: dict[str, int | str] = {}
+        refresh_started_at = perf_counter()
+        refresh_outcome = "ok"
+        refresh_watchdog = (
+            asyncio.get_running_loop().call_later(
+                _REFRESH_SLOW_SECONDS,
+                diagnostics.record,
+                "portfolio_refresh",
+                _REFRESH_SLOW_SECONDS * 1000,
+                "running",
+            )
+            if diagnostics.active()
+            else None
+        )
         try:
             await asyncio.to_thread(
                 services.runtime_status.refresh_venue_portfolio,
                 environment,
             )
         except Exception:
+            refresh_outcome = "failed"
             LOGGER.exception("venue portfolio refresh failed")
+        finally:
+            if refresh_watchdog is not None:
+                refresh_watchdog.cancel()
+            elapsed_ms = round((perf_counter() - refresh_started_at) * 1000)
+            diagnostics.record("portfolio_refresh", elapsed_ms, refresh_outcome)
+            phase_timings["portfolioRefreshMs"] = elapsed_ms
+            phase_timings["portfolioRefreshOutcome"] = refresh_outcome
         try:
-            username = _scheduler_config_username(settings, services, environment)
-            reload_result = services.config.config_for_next_loop(
-                environment,
-                username=username,
+            config_started_at = perf_counter()
+            config_outcome = "ok"
+            try:
+                username = _scheduler_config_username(settings, services, environment)
+                reload_result = services.config.config_for_next_loop(
+                    environment,
+                    username=username,
+                )
+                config_payload = (
+                    reload_result.snapshot.payload
+                    or services.runtime_status.runtime_config_payload()
+                )
+                funding_config = FundingConfig.model_validate(config_payload.get("funding", {}))
+            except Exception:
+                config_outcome = "failed"
+                raise
+            finally:
+                elapsed_ms = round((perf_counter() - config_started_at) * 1000)
+                diagnostics.record("config_reload", elapsed_ms, config_outcome)
+                phase_timings["configReloadMs"] = elapsed_ms
+
+            funding_started_at = perf_counter()
+            funding_outcome = "ok"
+            funding_watchdog = (
+                asyncio.get_running_loop().call_later(
+                    _REFRESH_SLOW_SECONDS,
+                    diagnostics.record,
+                    "funding_tick",
+                    _REFRESH_SLOW_SECONDS * 1000,
+                    "running",
+                )
+                if diagnostics.active()
+                else None
             )
-            config_payload = (
-                reload_result.snapshot.payload
-                or services.runtime_status.runtime_config_payload()
-            )
-            funding_config = FundingConfig.model_validate(config_payload.get("funding", {}))
-            funding_result = await asyncio.to_thread(
-                services.funding.run_tick,
-                environment=environment,
-                config=funding_config,
-                config_owner=username or "__shared__",
-                config_version=reload_result.snapshot.version,
-                kill_switch_active=services.kill_switch.state(environment).active,
-                portfolio_freshness_seconds=max(1, interval_seconds * 2),
-            )
+            try:
+                funding_result = await asyncio.to_thread(
+                    services.funding.run_tick,
+                    environment=environment,
+                    config=funding_config,
+                    config_owner=username or "__shared__",
+                    config_version=reload_result.snapshot.version,
+                    kill_switch_active=services.kill_switch.state(environment).active,
+                    portfolio_freshness_seconds=max(1, interval_seconds * 2),
+                )
+            except Exception:
+                funding_outcome = "failed"
+                raise
+            finally:
+                if funding_watchdog is not None:
+                    funding_watchdog.cancel()
+                elapsed_ms = round((perf_counter() - funding_started_at) * 1000)
+                diagnostics.record("funding_tick", elapsed_ms, funding_outcome)
+                phase_timings["fundingTickMs"] = elapsed_ms
+
+            metadata: dict[str, object] = {"funding": funding_result}
+            if diagnostics.active():
+                phase_timings["cycleMs"] = round((perf_counter() - loop_started_at) * 1000)
+                metadata["refreshTiming"] = phase_timings
             services.runtime_status.record_worker_heartbeat(
                 status="ok",
                 message="post-portfolio funding tick completed",
-                metadata={"funding": funding_result},
+                metadata=metadata,
             )
         except Exception:
             LOGGER.exception("post-portfolio funding tick failed")
         await asyncio.sleep(interval_seconds)
+
+
+@dataclass
+class _RefreshTimingDiagnostics:
+    """Time a temporary portfolio diagnostic without account data or log growth."""
+
+    deadline: datetime | None = None
+    last_log_at: float = float("-inf")
+    emitted_logs: int = 0
+
+    @classmethod
+    def from_settings(cls, settings: AppSettings) -> _RefreshTimingDiagnostics:
+        raw = settings.runtime_env.get("PORTFOLIO_REFRESH_DIAGNOSTICS_UNTIL", "")
+        try:
+            requested = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if requested.tzinfo is None:
+                return cls()
+            now = datetime.now(UTC)
+            deadline = min(requested.astimezone(UTC), now + timedelta(hours=24))
+            return cls(deadline=deadline) if deadline > now else cls()
+        except ValueError:
+            return cls()
+
+    def active(self) -> bool:
+        return self.deadline is not None and datetime.now(UTC) < self.deadline
+
+    def record(self, phase: str, elapsed_ms: int, outcome: str) -> None:
+        """Emit at most one slow/failure line per 15 minutes, 96 per process."""
+
+        if not self.active() or (
+            outcome == "ok" and elapsed_ms < _REFRESH_SLOW_SECONDS * 1000
+        ):
+            return
+        now = perf_counter()
+        if self.emitted_logs >= 96 or now - self.last_log_at < 900:
+            return
+        LOGGER.warning(
+            "portfolio_refresh_timing phase=%s outcome=%s elapsed_ms=%d",
+            phase,
+            outcome,
+            elapsed_ms,
+        )
+        self.last_log_at = now
+        self.emitted_logs += 1
 
 
 def _notification_recipients_from_env() -> dict[str, str]:
