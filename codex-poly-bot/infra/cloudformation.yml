@@ -163,6 +163,10 @@ Parameters:
     Type: Number
     Default: 900
     MinValue: 15
+  PortfolioRefreshDiagnosticsUntil:
+    Type: String
+    Default: ""
+    Description: Optional UTC expiry for bounded portfolio timing diagnostics.
   ManageSesIdentity:
     Type: String
     Default: "false"
@@ -889,6 +893,8 @@ Resources:
               Value: !Ref EnableBackgroundWorker
             - Name: WORKER_HEARTBEAT_INTERVAL_SECONDS
               Value: !Ref WorkerHeartbeatIntervalSeconds
+            - Name: PORTFOLIO_REFRESH_DIAGNOSTICS_UNTIL
+              Value: !Ref PortfolioRefreshDiagnosticsUntil
             - Name: DASHBOARD_ALLOWED_USERS
               Value: !Ref DashboardAllowedUsers
             - Name: RUNTIME_CONFIG_USERNAME

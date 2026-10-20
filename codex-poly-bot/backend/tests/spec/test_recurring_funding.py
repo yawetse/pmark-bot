@@ -1653,11 +1653,15 @@ def test_req_fnd_020_02_polymarket_direct_mode_is_rejected_and_observe_is_allowe
         )
 
 
-def test_req_fnd_007_03_portfolio_refresh_is_the_single_funding_hook(monkeypatch) -> None:
+@pytest.mark.parametrize("diagnostics_enabled", [False, True])
+def test_req_fnd_007_03_portfolio_refresh_is_the_single_funding_hook(
+    monkeypatch, diagnostics_enabled: bool
+) -> None:
     """TST-REQ-FND-007-03: funding runs after refresh and outside the trading hook."""
 
     funding_calls: list[dict] = []
     events: list[str] = []
+    heartbeats: list[dict] = []
 
     class Runtime:
         def refresh_venue_portfolio(self, environment):
@@ -1666,6 +1670,7 @@ def test_req_fnd_007_03_portfolio_refresh_is_the_single_funding_hook(monkeypatch
             return {"status": "ready"}
 
         def record_worker_heartbeat(self, **kwargs):
+            heartbeats.append(kwargs)
             return kwargs
 
     class Config:
@@ -1701,7 +1706,16 @@ def test_req_fnd_007_03_portfolio_refresh_is_the_single_funding_hook(monkeypatch
         asyncio.run(
             _portfolio_refresh_loop(
                 services=services,
-                settings=AppSettings(allowed_usernames=("yaw",)),
+                settings=AppSettings(
+                    allowed_usernames=("yaw",),
+                    runtime_env={
+                        "PORTFOLIO_REFRESH_DIAGNOSTICS_UNTIL": (
+                            datetime.now(UTC) + timedelta(hours=1)
+                        ).isoformat()
+                    }
+                    if diagnostics_enabled
+                    else {},
+                ),
                 environment=Environment.DEVELOPMENT,
                 interval_seconds=60,
             )
@@ -1711,6 +1725,18 @@ def test_req_fnd_007_03_portfolio_refresh_is_the_single_funding_hook(monkeypatch
     assert len(funding_calls) == 1
     assert funding_calls[0]["config_owner"] == "yaw"
     assert funding_calls[0]["portfolio_freshness_seconds"] == 120
+    assert len(heartbeats) == 1
+    assert ("refreshTiming" in heartbeats[0]["metadata"]) is diagnostics_enabled
+    if diagnostics_enabled:
+        timings = heartbeats[0]["metadata"]["refreshTiming"]
+        assert set(timings) == {
+            "portfolioRefreshMs",
+            "portfolioRefreshOutcome",
+            "configReloadMs",
+            "fundingTickMs",
+            "cycleMs",
+        }
+        assert timings["portfolioRefreshOutcome"] == "ok"
 
 
 def test_req_fnd_007_03_tick_lock_skips_and_releases_after_success_or_failure(monkeypatch) -> None:
