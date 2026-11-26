@@ -24,14 +24,17 @@ from app.observability import (
 from app.services.llm_service import (
     HttpxProviderTransport,
     LlmUsageEvent,
+    OPENAI_LUNA_MODEL,
+    OPENAI_TERRA_MODEL,
     RepositoryLlmUsageRecorder,
     TokenPricing,
+    migrate_retired_openai_model,
     token_pricing_from_env,
 )
 
 
-DEFAULT_TICK_SUMMARY_MODEL = "gpt-5-nano"
-DEFAULT_TICK_SUMMARY_FALLBACK_MODEL = "gpt-5-mini"
+DEFAULT_TICK_SUMMARY_MODEL = OPENAI_LUNA_MODEL
+DEFAULT_TICK_SUMMARY_FALLBACK_MODEL = OPENAI_TERRA_MODEL
 DEFAULT_TICK_SUMMARY_WINDOW_MINUTES = 10
 DEFAULT_TICK_SUMMARY_CACHE_SECONDS = 60
 DEFAULT_TICK_SUMMARY_PROMPT_VERSION = "tick-summary-v1"
@@ -41,6 +44,22 @@ DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION = Decimal("0.05")
 DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION = Decimal("0.40")
 DEFAULT_GPT_5_MINI_INPUT_COST_PER_MILLION = Decimal("0.25")
 DEFAULT_GPT_5_MINI_OUTPUT_COST_PER_MILLION = Decimal("2.00")
+# Standard uncached rates, USD per million tokens. This remains an estimate.
+DEFAULT_TICK_SUMMARY_PRICING = {
+    OPENAI_LUNA_MODEL: TokenPricing(Decimal("0.10"), Decimal("0.50")),
+    OPENAI_TERRA_MODEL: TokenPricing(Decimal("1.00"), Decimal("5.00")),
+    "gpt-5-nano": TokenPricing(
+        DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION,
+        DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION,
+    ),
+    "gpt-5-mini": TokenPricing(
+        DEFAULT_GPT_5_MINI_INPUT_COST_PER_MILLION,
+        DEFAULT_GPT_5_MINI_OUTPUT_COST_PER_MILLION,
+    ),
+}
+# Historical model identities must not inherit their replacements' prices.
+DEFAULT_TICK_SUMMARY_PRICING["gpt-5-nano-2025-08-07"] = DEFAULT_TICK_SUMMARY_PRICING["gpt-5-nano"]
+DEFAULT_TICK_SUMMARY_PRICING["gpt-5-mini-2025-08-07"] = DEFAULT_TICK_SUMMARY_PRICING["gpt-5-mini"]
 SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[3] / "docs" / "tick-summary-system-prompt.md"
 LOGGER = logging.getLogger(__name__)
 DEFAULT_TICK_SUMMARY_SYSTEM_PROMPT = """# Tick Summary System Prompt
@@ -343,7 +362,7 @@ def _summary_model_candidates(environ: Mapping[str, str]) -> tuple[str, ...]:
     )
     models: list[str] = []
     for raw_model in [primary, *fallback_values]:
-        candidate = raw_model.strip()
+        candidate = migrate_retired_openai_model(raw_model)
         if candidate and candidate not in models:
             models.append(candidate)
     return tuple(models or [DEFAULT_TICK_SUMMARY_MODEL])
@@ -536,17 +555,7 @@ def _tick_summary_pricing(model: str, environ: Mapping[str, str]) -> TokenPricin
     configured = token_pricing_from_env(ModelProvider.OPENAI, environ)
     if configured is not None:
         return configured
-    if model == DEFAULT_TICK_SUMMARY_MODEL:
-        return TokenPricing(
-            input_cost_per_million_tokens=DEFAULT_GPT_5_NANO_INPUT_COST_PER_MILLION,
-            output_cost_per_million_tokens=DEFAULT_GPT_5_NANO_OUTPUT_COST_PER_MILLION,
-        )
-    if model == DEFAULT_TICK_SUMMARY_FALLBACK_MODEL:
-        return TokenPricing(
-            input_cost_per_million_tokens=DEFAULT_GPT_5_MINI_INPUT_COST_PER_MILLION,
-            output_cost_per_million_tokens=DEFAULT_GPT_5_MINI_OUTPUT_COST_PER_MILLION,
-        )
-    return None
+    return DEFAULT_TICK_SUMMARY_PRICING.get(model)
 
 
 def _openai_response_text(body: dict[str, Any]) -> str:

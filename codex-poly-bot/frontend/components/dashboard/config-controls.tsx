@@ -324,8 +324,8 @@ const ACCOUNT_MODE_OPTIONS = [
 ];
 
 const OPENAI_SCORING_MODEL_OPTIONS = [
-  { label: "GPT-5 Mini", value: "gpt-5-mini" },
-  { label: "GPT-5 Nano", value: "gpt-5-nano" },
+  { label: "GPT-6.1 Terra", value: "gpt-6.1-terra" },
+  { label: "GPT-6 Luna", value: "gpt-6-luna" },
 ];
 
 const ACTIVE_STOCK_PROFILE = "active_stock_day_trader";
@@ -525,10 +525,10 @@ const PREFERENCE_SECTIONS: SettingSection[] = [
       {
         path: "llm.openai.settings.model",
         kind: "select",
-        fallback: "gpt-5-mini",
+        fallback: "gpt-6.1-terra",
         options: OPENAI_SCORING_MODEL_OPTIONS,
         stage: "Model cost",
-        note: "Full GPT-5 is intentionally not available here. Existing saved full GPT-5 values are treated as GPT-5 Mini by the backend.",
+        note: "Saved GPT-5 Mini and Nano selections use Terra and Luna respectively. Full GPT-5 remains unavailable for scoring.",
       },
       {
         path: "reasoning.polymarket.min_confidence",

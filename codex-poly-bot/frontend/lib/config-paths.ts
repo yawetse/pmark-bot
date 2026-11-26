@@ -176,8 +176,8 @@ export const CONFIG_PATH_DETAILS: Record<AllowedConfigPath, ConfigPathDetail> = 
   "llm.openai.settings.model": {
     label: "OpenAI scoring model",
     description: "Chooses the OpenAI model used when scoring scanner survivors.",
-    valueHint: "gpt-5-mini or gpt-5-nano",
-    effect: "Applies to the next reasoning call. Use nano for the lowest cost or mini when scoring quality matters more.",
+    valueHint: "gpt-6.1-terra or gpt-6-luna",
+    effect: "Applies to the next reasoning call. Luna has lower token rates; Terra is the replacement for GPT-5 Mini.",
   },
   "llm.claude.budget_usd": {
     label: "Claude budget",

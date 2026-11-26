@@ -8,6 +8,8 @@ from decimal import Decimal
 import json
 from typing import Any
 
+import pytest
+
 from app.db import RepositoryRegistry
 from app.domain import Environment
 from app.services.tick_summary_service import (
@@ -15,6 +17,8 @@ from app.services.tick_summary_service import (
     DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS,
     TickSummaryRequest,
     TickSummaryService,
+    _summary_model_candidates,
+    _tick_summary_pricing,
 )
 
 
@@ -116,7 +120,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
         environ={
             "OPENAI_API_KEY": "test-key",
             "OPENAI_TICK_SUMMARY_MODEL": "unavailable-model",
-            "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "gpt-5-mini",
+            "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "gpt-5-mini-2025-08-07",
         },
         transport=transport,
     )
@@ -138,18 +142,25 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
     )
 
     assert result.status == "summarized"
-    assert result.model == "gpt-5-mini"
+    assert result.model == "gpt-6.1-terra"
     assert result.warnings == [
-        "Primary tick summary model failed (unavailable-model: model not available); used gpt-5-mini."
+        "Primary tick summary model failed (unavailable-model: model not available); used gpt-6.1-terra."
     ]
     assert [call["payload"]["model"] for call in transport.calls] == [
         "unavailable-model",
-        "gpt-5-mini",
+        "gpt-6.1-terra",
     ]
+    assert all(call["url"] == "https://api.openai.com/v1/responses" for call in transport.calls)
+    format_payload = transport.calls[1]["payload"]["text"]["format"]
+    assert format_payload["type"] == "json_schema"
+    assert format_payload["name"] == "codex_poly_tick_summary"
+    assert format_payload["strict"] is True
+    assert format_payload["schema"]["additionalProperties"] is False
+    assert set(format_payload["schema"]["required"]) == {"summary_markdown", "key_events", "warnings"}
     usage_rows = registry.state.rows("shared.ai_usage_events")
     assert len(usage_rows) == 1
-    assert usage_rows[0]["model"] == "gpt-5-mini"
-    assert Decimal(str(usage_rows[0]["cost_usd"])) == Decimal("0.0000650")
+    assert usage_rows[0]["model"] == "gpt-6.1-terra"
+    assert Decimal(str(usage_rows[0]["cost_usd"])) == Decimal("0.0002")
     assert [span["name"] for span in spans] == [
         "tick_summary.model_attempt",
         "tick_summary.model_attempt",
@@ -159,7 +170,7 @@ def test_req_obs_005_tick_summary_retries_with_low_cost_fallback_model(monkeypat
     assert spans[0]["attributes"]["status"] == "retrying"
     assert spans[0]["attributes"]["error_type"] == "RuntimeError"
     assert spans[0]["attributes"]["message"] == "model not available"
-    assert spans[1]["attributes"]["model"] == "gpt-5-mini"
+    assert spans[1]["attributes"]["model"] == "gpt-6.1-terra"
     assert spans[1]["attributes"]["status"] == "success"
     assert recorded_failures == []
 
@@ -271,7 +282,7 @@ def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -
 
     Given: many recent runs contain large step payloads
     When: the tick summary request is sent to OpenAI
-    Then: the payload is compacted and the default output cap is large enough for GPT-5 nano
+    Then: the payload is compacted and the default output cap is large enough for GPT-6 Luna
     """
 
     registry = RepositoryRegistry()
@@ -280,7 +291,7 @@ def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -
         registry=registry,
         environ={
             "OPENAI_API_KEY": "test-key",
-            "OPENAI_TICK_SUMMARY_MODEL": "gpt-5-nano",
+            "OPENAI_TICK_SUMMARY_MODEL": "gpt-5-nano-2025-08-07",
         },
         transport=transport,
     )
@@ -327,7 +338,7 @@ def test_req_obs_005_tick_summary_uses_larger_output_cap_and_compact_payload() -
 def test_req_obs_005_tick_summary_timeout_is_configurable() -> None:
     """TST-REQ-OBS-005-11: Validates REQ-OBS-005
 
-    Given: GPT-5 nano tick summaries may take longer than one short provider read window
+    Given: GPT-6 Luna tick summaries may take longer than one short provider read window
     When: the operator configures a tick-summary timeout
     Then: the OpenAI transport uses that timeout without requiring code changes
     """
@@ -343,3 +354,35 @@ def test_req_obs_005_tick_summary_timeout_is_configurable() -> None:
 
     assert configured.transport.timeout_seconds == 75.5
     assert defaulted.transport.timeout_seconds == DEFAULT_TICK_SUMMARY_TIMEOUT_SECONDS == 60.0
+
+
+def test_tick_summary_migrates_every_model_setting_and_deduplicates() -> None:
+    assert _summary_model_candidates({}) == ("gpt-6-luna", "gpt-6.1-terra")
+    assert _summary_model_candidates({
+        "OPENAI_TICK_SUMMARY_MODEL": " gpt-5-nano-2025-08-07 ",
+        "OPENAI_TICK_SUMMARY_FALLBACK_MODEL": "gpt-6-luna",
+        "OPENAI_TICK_SUMMARY_FALLBACK_MODELS": " ,gpt-5-mini, gpt-5-mini-2025-08-07,Custom-ID,",
+    }) == ("gpt-6-luna", "gpt-6.1-terra", "Custom-ID")
+
+
+@pytest.mark.parametrize(("model", "expected"), [
+    ("gpt-6-luna", "0.00002"),
+    ("gpt-6.1-terra", "0.0002"),
+    ("gpt-5-nano", "0.000013"),
+    ("gpt-5-nano-2025-08-07", "0.000013"),
+    ("gpt-5-mini", "0.000065"),
+    ("gpt-5-mini-2025-08-07", "0.000065"),
+])
+def test_tick_summary_meters_each_model_at_its_own_rate(model: str, expected: str) -> None:
+    pricing = _tick_summary_pricing(model, {})
+    assert pricing is not None
+    assert pricing.cost_for(prompt_tokens=100, completion_tokens=20) == Decimal(expected)
+
+
+def test_tick_summary_preserves_explicit_pricing_override() -> None:
+    pricing = _tick_summary_pricing("gpt-6-luna", {
+        "OPENAI_INPUT_COST_PER_MILLION_TOKENS": "2",
+        "OPENAI_OUTPUT_COST_PER_MILLION_TOKENS": "6",
+    })
+    assert pricing is not None
+    assert pricing.cost_for(prompt_tokens=100, completion_tokens=20) == Decimal("0.00032")

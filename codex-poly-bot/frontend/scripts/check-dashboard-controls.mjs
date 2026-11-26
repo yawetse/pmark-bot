@@ -43,8 +43,8 @@ for (const token of [
   "Default venue",
   "Live trading",
   "OpenAI scoring model",
-  "gpt-5-nano",
-  "gpt-5-mini",
+  "gpt-6-luna",
+  "gpt-6.1-terra",
 ]) {
   assert.match(configPaths, new RegExp(token));
 }

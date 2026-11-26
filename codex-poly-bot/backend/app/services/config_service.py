@@ -43,6 +43,7 @@ from app.services.llm_service import (
     DEFAULT_OPENAI_SCORING_MODEL,
     DEFAULT_OPENAI_SCORING_REASONING_EFFORT,
     OPENAI_SCORING_MODEL_OPTIONS,
+    cost_controlled_openai_scoring_model,
 )
 from app.services.strategy_consensus_service import DEFAULT_STRATEGY_CONSENSUS_CONFIG
 
@@ -341,10 +342,20 @@ class ConfigService:
             self._last_good_snapshots[(environment, owner)] = fallback
             return ConfigReloadResult(snapshot=fallback)
 
+        payload = self._payload_with_defaults(environment, deepcopy(row["payload"]))
+        llm = payload.get("llm")
+        openai = llm.get(ModelProvider.OPENAI.value) if isinstance(llm, dict) else None
+        settings = openai.get("settings") if isinstance(openai, dict) else None
+        if isinstance(settings, dict):
+            # Display the effective model from older saved configurations without
+            # rewriting stored configuration versions or metering records.
+            settings["model"] = cost_controlled_openai_scoring_model(settings.get("model"))
+            if settings.get("reasoning_effort") == "minimal":
+                settings["reasoning_effort"] = DEFAULT_OPENAI_SCORING_REASONING_EFFORT
         snapshot = RuntimeConfigSnapshot(
             environment=environment,
             version=row["version"],
-            payload=self._payload_with_defaults(environment, deepcopy(row["payload"])),
+            payload=payload,
         )
         self._last_good_snapshots[(environment, owner)] = snapshot
         return ConfigReloadResult(snapshot=snapshot)

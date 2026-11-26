@@ -29,27 +29,41 @@ SCORING_SYSTEM_PROMPT = (
     "USD as a decimal string, for example \"0.01\". Do not include percentages, "
     "currency symbols, ranges, units, markdown, or prose outside the JSON object."
 )
-OPENAI_SCORING_MODEL_OPTIONS = ("gpt-5-nano", "gpt-5-mini")
-DEFAULT_OPENAI_SCORING_MODEL = "gpt-5-mini"
+OPENAI_TERRA_MODEL = "gpt-6.1-terra"
+OPENAI_LUNA_MODEL = "gpt-6-luna"
+OPENAI_SCORING_MODEL_OPTIONS = (OPENAI_LUNA_MODEL, OPENAI_TERRA_MODEL)
+DEFAULT_OPENAI_SCORING_MODEL = OPENAI_TERRA_MODEL
 DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS = 4096
-DEFAULT_OPENAI_SCORING_REASONING_EFFORT = "minimal"
+DEFAULT_OPENAI_SCORING_REASONING_EFFORT = "low"
 DEFAULT_CLAUDE_SCORING_MODEL = "claude-sonnet-5"
 DEFAULT_CLAUDE_SCORING_MAX_TOKENS = 4096
 DEFAULT_SCORING_FALLBACK_COST_ESTIMATE = Decimal("0.01")
 
 
-def cost_controlled_openai_scoring_model(value: Any) -> str:
-    """Return an allowed OpenAI scoring model, defaulting away from full GPT-5."""
+_RETIRED_OPENAI_MODEL_REPLACEMENTS = {
+    "gpt-5-mini": OPENAI_TERRA_MODEL,
+    "gpt-5-mini-2025-08-07": OPENAI_TERRA_MODEL,
+    "gpt5-mini": OPENAI_TERRA_MODEL,
+    "gpt-5-nano": OPENAI_LUNA_MODEL,
+    "gpt-5-nano-2025-08-07": OPENAI_LUNA_MODEL,
+    "gpt5-nano": OPENAI_LUNA_MODEL,
+}
 
-    candidate = str(value or "").strip().lower().replace("_", "-")
-    aliases = {
-        "gpt5-nano": "gpt-5-nano",
-        "gpt5-mini": "gpt-5-mini",
-    }
-    normalized = aliases.get(candidate, candidate)
-    if normalized in OPENAI_SCORING_MODEL_OPTIONS:
-        return normalized
+
+def migrate_retired_openai_model(value: Any) -> str:
+    """Map only retired mini/nano IDs; preserve explicit other model IDs."""
+    raw = str(value or "").strip()
+    key = raw.lower().replace("_", "-")
+    return _RETIRED_OPENAI_MODEL_REPLACEMENTS.get(key, raw)
+
+
+def cost_controlled_openai_scoring_model(value: Any) -> str:
+    """Resolve saved preferences without allowing other models to score."""
+    candidate = migrate_retired_openai_model(value).lower().replace("_", "-")
+    if candidate in OPENAI_SCORING_MODEL_OPTIONS:
+        return candidate
     return DEFAULT_OPENAI_SCORING_MODEL
+
 
 SCORING_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -366,10 +380,16 @@ class OpenAIResponsesProvider:
         self.transport = transport or HttpxProviderTransport()
         self.remaining_budget = _as_decimal(remaining_budget)
         self.enabled = enabled and credential.present
-        self.model = model
+        self.model = migrate_retired_openai_model(model)
         self.base_url = base_url.rstrip("/")
         self.max_output_tokens = max_output_tokens
-        self.reasoning_effort = reasoning_effort
+        # GPT-6 has no "minimal"; low is the lowest supported reasoning setting
+        # that still enables reasoning. Preserve omitted and supported settings.
+        self.reasoning_effort = (
+            DEFAULT_OPENAI_SCORING_REASONING_EFFORT
+            if self.model in OPENAI_SCORING_MODEL_OPTIONS and reasoning_effort == "minimal"
+            else reasoning_effort
+        )
         self.usage_recorder = usage_recorder
         self.token_pricing = token_pricing
         self.last_usage_event: LlmUsageEvent | None = None
