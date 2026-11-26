@@ -163,9 +163,11 @@ def test_req_llm_001_03_configured_credentials_send_scoring_to_openai_and_claude
     }
     assert openai_transport.calls[0]["url"] == "https://api.openai.com/v1/responses"
     assert openai_transport.calls[0]["headers"]["Authorization"] == "Bearer openai-test-key"
-    assert openai_transport.calls[0]["payload"]["model"] == "gpt-5-mini"
+    assert openai_transport.calls[0]["payload"]["model"] == "gpt-6.1-terra"
     assert openai_transport.calls[0]["payload"]["max_output_tokens"] == 4096
-    assert openai_transport.calls[0]["payload"]["reasoning"] == {"effort": "minimal"}
+    assert openai_transport.calls[0]["payload"]["reasoning"] == {"effort": "low"}
+    assert openai_transport.calls[0]["payload"]["text"]["format"]["type"] == "json_schema"
+    assert openai_transport.calls[0]["payload"]["text"]["format"]["strict"] is True
     assert claude_transport.calls[0]["url"] == "https://api.anthropic.com/v1/messages"
     assert claude_transport.calls[0]["headers"]["x-api-key"] == "claude-test-key"
     assert claude_transport.calls[0]["payload"]["model"] == DEFAULT_CLAUDE_SCORING_MODEL
@@ -721,7 +723,7 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
     auth = AuthService(allowed_usernames={"yaw"}, signing_secret="test-secret")
     service = ConfigService(auth.registry)
 
-    assert default_config_payload()["llm"]["openai"]["settings"]["model"] == "gpt-5-mini"
+    assert default_config_payload()["llm"]["openai"]["settings"]["model"] == "gpt-6.1-terra"
     assert (
         default_config_payload()["llm"]["openai"]["settings"]["max_output_tokens"]
         == DEFAULT_OPENAI_SCORING_MAX_OUTPUT_TOKENS
@@ -748,7 +750,7 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
         patches=[
             ConfigPatchOperation("replace", "llm.claude.budget_usd", "30.00"),
             ConfigPatchOperation("replace", "llm.claude.settings.temperature", "0.2"),
-            ConfigPatchOperation("replace", "llm.openai.settings.model", "gpt-5-nano"),
+            ConfigPatchOperation("replace", "llm.openai.settings.model", "gpt-6-luna"),
         ],
     )
     claude_payload = result.mutation.config_version["payload"]["llm"]["claude"]
@@ -756,7 +758,7 @@ def test_req_llm_006_01_authorized_dashboard_user_changes_model_budgets_scoring_
 
     assert claude_payload["budget_usd"] == "30.00"
     assert claude_payload["settings"]["temperature"] == "0.2"
-    assert openai_payload["settings"]["model"] == "gpt-5-nano"
+    assert openai_payload["settings"]["model"] == "gpt-6-luna"
 
 
 def test_req_llm_006_04_legacy_saved_config_loads_new_llm_defaults() -> None:
@@ -821,16 +823,80 @@ def test_req_llm_006_02_openai_scoring_model_rejects_full_gpt5() -> None:
         )
 
 
-def test_req_llm_006_03_stale_full_gpt5_openai_config_uses_mini() -> None:
+def test_req_llm_006_03_stale_full_gpt5_openai_config_uses_terra() -> None:
     """TST-REQ-LLM-006-03: Validates REQ-LLM-006
 
     Given: an older saved config references full GPT-5
     When: the OpenAI scoring model is resolved
-    Then: the bot falls back to the cost-controlled mini model
+    Then: the bot falls back to the configured Terra replacement
     """
 
-    assert cost_controlled_openai_scoring_model("gpt-5") == "gpt-5-mini"
-    assert cost_controlled_openai_scoring_model("gpt5-nano") == "gpt-5-nano"
+    assert cost_controlled_openai_scoring_model("gpt-5") == "gpt-6.1-terra"
+    assert cost_controlled_openai_scoring_model("gpt5-nano") == "gpt-6-luna"
+
+
+@pytest.mark.parametrize(
+    ("old_id", "expected_model"),
+    [
+        ("gpt-5-mini", "gpt-6.1-terra"),
+        ("gpt-5-mini-2025-08-07", "gpt-6.1-terra"),
+        ("gpt-5-nano", "gpt-6-luna"),
+        ("gpt-5-nano-2025-08-07", "gpt-6-luna"),
+    ],
+)
+def test_legacy_scoring_model_uses_compatible_strict_responses_request(
+    old_id: str, expected_model: str
+) -> None:
+    transport = RecordingProviderTransport((
+        {"output_text": scoring_response_text(thesis="Fixture", cost="0.01")},
+    ))
+    provider = OpenAIResponsesProvider(
+        credential=LlmProviderCredential(api_key="fake-key"),
+        transport=transport,
+        model=old_id,
+        reasoning_effort="minimal",
+        remaining_budget=Decimal("1"),
+    )
+
+    result = run_llm_scoring((prediction_instrument(),), (provider,))
+
+    assert result.ok
+    call = transport.calls[0]
+    assert call["url"] == "https://api.openai.com/v1/responses"
+    payload = call["payload"]
+    assert payload["model"] == expected_model
+    assert payload["reasoning"] == {"effort": "low"}
+    assert payload["max_output_tokens"] == 4096
+    assert payload["text"]["format"]["name"] == "codex_poly_score"
+    assert payload["text"]["format"]["strict"] is True
+    assert payload["text"]["format"]["schema"]["additionalProperties"] is False
+    assert set(payload["text"]["format"]["schema"]["required"]) == {
+        "output_thesis", "confidence", "estimated_probability", "cost_estimate"
+    }
+
+
+def test_legacy_scoring_setting_read_normalizes_without_rewriting_saved_config() -> None:
+    service = ConfigService(RepositoryRegistry())
+    legacy = default_config_payload()
+    legacy["llm"]["openai"]["settings"].update(
+        model="gpt-5-nano-2025-08-07", reasoning_effort="minimal"
+    )
+    service.registry.shared().record_config_version(
+        environment=Environment.DEVELOPMENT,
+        username="yaw",
+        version="legacy-model",
+        payload=legacy,
+    )
+
+    snapshot = service.config_for_next_loop(Environment.DEVELOPMENT, username="yaw").snapshot
+    saved = service.registry.state.rows("shared.config_versions")[0]["payload"]
+
+    assert snapshot.version == "legacy-model"
+    assert snapshot.payload["llm"]["openai"]["settings"]["model"] == "gpt-6-luna"
+    assert snapshot.payload["llm"]["openai"]["settings"]["reasoning_effort"] == "low"
+    assert saved["llm"]["openai"]["settings"]["model"] == "gpt-5-nano-2025-08-07"
+    assert saved["llm"]["openai"]["settings"]["reasoning_effort"] == "minimal"
+    assert snapshot.payload["live_enabled"] is False
 
 
 def test_req_llm_007_01_scoring_config_changes_saved_next_trading_loop_starts() -> None:
